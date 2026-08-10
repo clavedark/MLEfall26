@@ -1,0 +1,408 @@
+---
+title: "MLE Syllabus"
+subtitle: "PLSC 606J, Fall 2026"
+bibliography: refs606.bib
+format:
+  html:
+    embed-resources: true
+  pdf: default
+---
+
+<!-- explicit PDF render -->
+<!-- quarto render mlesyllabus26.qmd --to pdf -->
+
+```{r setup, include=FALSE ,echo=FALSE}
+options(htmltools.dir.version = FALSE)
+
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center", warning=FALSE, error=FALSE, message=FALSE) 
+
+library(tidyverse)
+library(ggplot2)
+library(tibble)
+library(pander)
+
+```
+
+<!-- ::: {.grid .course-details .course-details-smaller} -->
+
+<!-- ::: g-col-6 -->
+
+::: {layout-ncol="2"}
+### Instructor
+
+-   {{< fa user >}}   [{{< var instructor.name >}}]({{< var instructor.url >}})
+-   {{< fa university >}}   {{< var instructor.office >}}
+-   {{< fa envelope >}}   <a href="mailto:dclark@binghamton.edu">dclark@binghamton.edu</a>
+-   {{< fa brands github >}}   [{{< var instructor.gitname >}}]({{< var instructor.github >}})
+-   office hours: M 1:30-3:30pm and by appt.
+
+### Course details
+
+-   {{< fa calendar-alt >}}   {{< var course.semester >}}
+-   {{< fa calendar >}}   {{< var course.day >}}
+-   {{< fa clock >}}   {{< var course.time >}}
+-   {{< fa globe >}}   {{< var course.location >}}
+:::
+
+
+## Seminar Description
+
+This 4 credit hour seminar is a survey of maximum likelihood methods and their applications to empirical political questions.  It presumes students have a detailed and intuitive knowledge of least squares, probability theory, basic skills in scalar and matrix algebra, and a basic understanding of calculus.  The course will deal mainly in understanding the principles of maximum likelihood estimation, under what conditions we move away from least squares, and what particular models are appropriate given observed data.  The seminar will focus on application and interpretation of ML models and linking theory to statistical models. The course emphasizes coding and data viz in R.
+
+The class meets one time per week for three hours. My office hours are designed to be homework help hours where I'll work in the grad lab with any of you who are working on the exercises. The most productive pathway for this class is for you to get in the habit of working together, and those office hours are a good time for this.
+
+## Course Purpose
+
+This seminar fulfills the advanced quantitative methods requirement in the Ph.D. curriculum. The method of maximum likelihood underlies a majority of quantitative models in Political Science; this class teaches students to be astute consumers of such models, and how to implement and interpret ML models. These are crucial skills for dissertations in Political Science, and for producing publishable quantitative research. 
+
+## Learning Objectives
+
+Students will encounter an array of maximum likelihood models in this course. By the end of the course, students will have mastered the theory of maximum likelihood sufficient to write and program likelihood functions in {{< fa brands r-project >}}; they will be able to choose, estimate, and interpret appropriate models, model specifications, and model evaluation tools given their data; and they will be able to produce sophisticated quantities of interest (e.g. predicted probabilities, expected values,  confidence intervals) via a variety of techniques including simulation and end point transformation. Students will also be able to present model findings verbally and graphically. 
+
+## {{< fa brands r-project >}} Resources
+
+There are lots of good, free {{< fa brands r-project >}} resources online.  Here are a few:
+
+-   [Modern Statistics with R](https://www.modernstatisticswithr.com)
+-   [R for Data Science](https://r4ds.had.co.nz/)
+-   [R Markdown: The Definitive Guide](https://bookdown.org/yihui/rmarkdown/)
+-   [R Graphics Cookbook](https://r-graphics.org/)
+-   [Advanced R](https://adv-r.hadley.nz/)
+-   [R Markdown Cookbook](https://bookdown.org/yihui/rmarkdown-cookbook/)
+-   [Data Science:A First Introduction](https://datasciencebook.ca)
+- [The Big Book of R](https://www.bigbookofr.com)
+
+## Class Meetings, Office Hours, Assignments
+
+The course will meet this fall entirely in-person in the Social Science Experiment Lab on Wednesdays 11:30am-2:30pm. 
+
+Office hours are Mondays 1:30pm-3:30pm. I'll hold these in the grad work room to help with your assignments. For an appointment, email me and we'll sort out a time. 
+
+This syllabus, slides, etc. can be found on the [course website](https://clavedark.github.io/MLEfall26). Assignments will be posted weekly to Brightspace. All assignments should be turned in on Brightspace - please submit :: 
+ 
+- PDFs generated from *LaTeX* or R Markdown (Quarto).
+- annotated R scripts.
+- where necessary, data.
+
+Assignments should be instantly replicable - running the code file should produce all models, tables, plots, etc. 
+
+
+## Reading
+
+The reading material for the course is important because it often demonstrates application of various MLE models; seeing how folks apply these and how they motivate their applications is really informative, something you cannot miss. We often won't directly discuss the readings, but don't let that imply they're not important. If I get the sense we're not keeping up with reading, expect the syllabus to change to incorporate quizzes or other accountability measures.
+
+Reading for the course will consist of several books and articles (listed by week below). The books listed below also have Amazon links - you'll find most of these cheaper used online.
+
+#### Required
+
+- [Box-Steffensmeier, Janet and Jones, Brad. 2004. Event History Modeling. Cambridge. ISBN 0521546737](https://www.amazon.com/Event-History-Modeling-Scientists-Analytical/dp/0521546737/ref=sr_1_1?crid=1XQMW395P7PK0&dchild=1&keywords=box-steffensmeier&qid=1596734468&sprefix=box+steffens%2Caps%2C166&sr=8-1)
+
+- [J. Scott Long. 1997. Regression Models for Categorical and Limited Dependent Variables. Sage Publications Inc. ISBN 0803973748](https://www.amazon.com/Regression-Categorical-Dependent-Quantitative-Techniques/dp/0803973748/ref=sr_1_1?dchild=1&keywords=scott+long&qid=1596733806&sr=8-1)
+
+- [Ward, Michael D. and John S. Ahlquist. 2018 Maximum Likelihood for Social Science. Cambridge. ISBN 978-1316636824.](https://www.amazon.com/Maximum-Likelihood-Social-Science-Strategies/dp/1316636828/ref=sr_1_1?crid=65LDKPR9JRPZ&keywords=9781107185821&qid=1657540931&sprefix=9781107185821%2Caps%2C162&sr=8-1)
+
+#### Recommended 
+
+Useful, but not required (though some required reading in the first one):
+
+- [Gary King. 1998. Unifying Political Methodology. University of Michigan Press. ISBN 0472085549](https://www.amazon.com/Unifying-Political-Methodology-Likelihood-Statistical/dp/0472085549/ref=sr_1_1?dchild=1&keywords=gary+king&qid=1596734023&s=books&sr=1-1)
+
+
+<!-- - [J. Scott Long. 2014. Regression Models for Categorical Dependent Variables Using Stata. 3rd Ed. Stata Press. ISBN 1597181110 (this book is good for practical/applied examples even if R is your primary language)](https://www.amazon.com/Regression-Models-Categorical-Dependent-Variables/dp/1597181110/ref=sr_1_3?dchild=1&keywords=j+scott+long&qid=1596733960&s=books&sr=1-3) -->
+
+
+
+Gary King's book is regarded as seminal in developing ML applications in political science.  Scott Long's is a similarly accessible treatment of a host of ML models and applications (and the Stata book is a great applied companion).  Together, these two books are probably the most important on the syllabus as they are both accessible, but comprehensive and technical enough to be useful.  Ward and Ahlquist's book is a newer overview of applied ML in a political science setting.  Box-Steffensmeier and Jones is a thorough and accessible treatment of hazard models in a variety of empirical settings.
+
+#### Additional Resources
+
+Other useful books include:
+
+- Cameron, A. Colin and Trivedi, Pravin K. 1998. Regression Analysis of Count Data. Cambridge. ISBN 0521635675
+
+- Maddala, Gregory. 1983. Limited Dependent and Qualitative Variables in Econometrics. Cambridge. ISBN 0521338255
+
+- Paul D Allison  - Event History Analysis : Regression for Longitudinal Event Data. Sage Publications Inc. ISBN 0803920555
+
+- Tim Futing Liao  - Interpreting Probability Models : Logit, Probit, and Other Generalized Linear Models. Sage Publications Inc. ISBN 0803949995
+
+- John H Aldrich and Forrest D Nelson  - Linear Probability, Logit, and Probit Models. Sage Publications Inc. ISBN 0803921330
+
+- Fred C Pampel  - Logistic Regression : A Primer. Sage Publications Inc. ISBN 0761920102
+
+- Vani Kant Borooah  - Logit and Probit : Ordered and Multinomial Models. Sage Publications Inc. ISBN 0761922423
+
+- Scott R Eliason  - Maximum Likelihood Estimation : Logic and Practice. Sage Publications Inc. ISBN 0803941072
+
+- Richard Breen  - Regression Models : Censored, Sample Selected, or Truncated Data. Sage Publications Inc. ISBN 0803957106
+
+- Krishnan Namboodiri  - Matrix Algebra : An Introduction. ISBN 0803920520
+
+
+
+## Course Requirements and Grades
+
+The seminar requires the following:
+
+-   Problem sets - 60% total
+-   Mechanism papers - 40%
+
+Please note that all written assignments must be submitted as PDFs either compiled in *LaTeX* or in R markdown (Quarto).
+
+You'll complete a series of problem sets, mostly applied. How many will depend on how things move along during the term (roughly 8-10). Regarding the problem sets - the work you turn in for the problem sets should clearly be your own, but I urge you to work together - doing so is a great way to learn and to overcome problems.
+
+The mechanism papers are a series of three short papers you'll write during the semester aimed at learning to identify and describe causal mechanisms, then at producing a causal mechanism. More on these early in the term.
+
+A word about completeness - attempt everything. To receive a passing grade in the course, you must finish all elements of the course, so all problem sets, all exams, papers, etc. To complete an element, you must at least attempt all parts of the element - so if a problem set has 10 problems, you must attempt all 10 or the assignment is incomplete, you've not completed every element of the course, and you cannot pass. I realize there may be problems you have trouble with and even get wrong, but you must try - the bottom line is don't turn in incomplete work. 
+
+
+
+
+Grades will be assigned on the following scale:
+
+```{r grades, include=FALSE}
+
+grading <- tibble::tribble(
+  ~Grade, ~Range,  ~Grade1, ~Range1,
+  "A",  "94-100%", "C+", "77-79%",
+  "A-", "90-93%",  "C", "73-76%",
+  "B+", "87-89%",  "C-",  "70-72%",
+  "B",  "83-86%",  "D", "60-69%" ,
+  "B-",  "80-82%" , "F", "<60%"
+)
+```
+
+<!-- <div class="centered-table"> -->
+
+```{r show-grades-table, echo=FALSE, results="asis"}
+grading %>%
+  pandoc.table(justify = "lclc", 
+               col.names = c("Grade", "Range", "Grade", "Range"))
+```
+
+
+
+## Course Policies
+
+### Attendance
+
+Attendance is expected, and is essential if you're to succeed in this class.
+
+### Academic Integrity
+
+Ideas are the currency in academic exchange, so acknowledging where ideas come from is important. Acknowledging the sources of ideas also helps us identify an idea's lineage which can be important for understanding how that line of thought has developed, and toward promoting future growth. As graduate students, you should have a good understanding of academic honesty and best practices. Here are details of [Binghamton's honesty policy](https://www.binghamton.edu/academics/provost/faculty-resources/honesty.html){target="_blank"}.
+
+### Artificial Intelligence and Coding Tools
+
+Generative AI can act as an incredible accelerator for research, for coding and data management in particular. Such tools are only as useful as your own mastery of coding, data management, and modeling. 
+
+Do you need to be able to write code when AI can do it for you? Yes. Three reasons:
+
+1.  *Understanding.* Code and the act of coding are the windows to seeing and understanding data, models, and predictions — how data produce models, which in turn produce predictions. Code is an explicit connection between a data matrix and a model, and facilitates your understanding of the what the model produces. AI can't hand you that understanding; you build it by doing the work yourself.
+
+2.  *Criticism.* AI will produce code. If you can code, you can read it, critique it, and evaluate its output to judge whether it's right. If you can't code, you can't do any of that — you're left trusting output you have no way to check.
+
+3.  *Inquiry.* If you don't understand the code, you probably don't understand the data and the model, and you'll not write a very good query to the AI in the first place. AI is only as good as its user. You should always know things the AI does not, in terms of your argument, your data, your model, and your code.
+
+So here is the policy for this course. Do not use generative AI to produce code. If you get stuck coding, you may use AI to get *unstuck* - this is equivalent to consulting "stackexchange" or "stackoverflow" to solve code problems and get unstuck. Anytime you consult AI, you must cite and annotate it specifically: what you asked, why you asked it, and which parts of your code came from the AI.  To this end, expect assessment where I ask you to show that you understand the data, code, models, and predictions you are producing. A bot can't fake that understanding. 
+
+You should not use generative AI tools for writing in this course. Learning to express your ideas about politics, about causal relations, about data and models, and explaining your findings are core skills for the Ph.D. Please learn to do these things without any use of generative AI. 
+
+
+## Course Schedule
+
+We meet Wednesdays. Two dates are dark: fall break (Oct 14) and Thanksgiving (Nov 25).
+
+### Part I — Foundations
+
+Week 1, Aug 19 -- Binary $y$ Variables: probit/logit, first estimation, and interpretation
+
+**Required**
+
+-  Ward \& Ahlquist, 2018. *Maximum Likelihood for Social Science*. Chapters 1, 2, 4
+-  J. Scott Long. 1997. *Regression Models for Categorical and Limited Dependent Variables*. Chapter 3.
+
+**Recommended**
+
+-  @hanmerkalkan2013
+-  @mood2010
+-  @pierskalla2013
+
+Week 2, Aug 26 -- Likelihood Theory: the log-likelihood, score, Hessian, information
+
+**Required**
+
+-  Gary King. 1998. *Unifying Political Methodology*. Chapters 1--4
+-  J. Scott Long. 1997. Chapters 1--2.
+
+**Recommended**
+
+-  @eliason1993
+
+Week 3, Sep 2 -- MLE Mechanics and Building Your Own Model: grid search, Newton--Raphson, `optim`, and programming an estimator
+
+**Required**
+
+-  Ward \& Ahlquist, 2018. Chapters 5, 6, 7
+
+Week 4, Sep 9 -- More Mechanics; Quantities of Interest (review) and Diagnostics: fit and separation
+
+**Required**
+
+-  Ward \& Ahlquist, 2018. (quantities of interest); Gary King. 1998. (simulation of quantities of interest)
+-  J. Scott Long. 1997. Chapter 5.
+-  @kingzengio01
+-  @rainey2016separation
+
+**Recommended**
+
+-  @Nagler94
+-  @rainey2024separation
+-  @zorn2005solution
+-  @clarketalajps08
+-  @kingroberts2015
+-  @greenhill2011separationplot
+-  @esareypierce2012
+-  @ward2010pvalue
+-  @rainey2014negligible
+
+### Part II — A causal lens, and binomial extensions
+
+Week 5, Sep 16 -- Causal Mechanics and Identification: potential outcomes, estimands (ATE/ATT), propensity scores, g-computation
+
+**Required**
+
+-  @keele2015
+-  [@hernanrobins2020, chapters 1--3 and 13] (potential outcomes, the g-formula)
+
+**Recommended**
+
+-  @kingnielsen2019
+-  @iacus2012cem
+-  @blackwell2013
+-  @roberts2020textmatching
+-  @kampalmer2008
+-  @hendersonchatfield2011
+
+Week 6, Sep 23 -- Binomial Extension --- Discrete-Time Hazards: the logit as a hazard, person-period (BTSCS) data, time dependence
+
+**Required**
+
+-  Ward \& Ahlquist, 2018. Chapter 11
+-  @becktuck
+-  @carter2010back
+
+**Recommended**
+
+-  @metzgerjones2022
+-  @wilsonbutler2007
+-  @svolik2008
+
+Week 7, Sep 30 -- Binomial Extension --- Interactions: multiplicative terms, compression, and marginal effects in nonlinear models
+
+**Required**
+
+-  @brambor2006understanding
+-  @berry2012improving
+-  @berry2010interaction
+-  @hainmueller2019interaction
+-  @zhirnov2023
+
+**Recommended**
+
+-  @mize2019interaction
+-  @rainey2016compression
+-  @liu2025conditional
+
+### Part III — Counts and durations as one family
+
+Week 8, Oct 7 -- Event Counts I: Poisson, rates and offsets, equidispersion
+
+**Required**
+
+-  Ward \& Ahlquist, 2018. Chapter 10
+-  J. Scott Long. 1997. Chapter 8.1--8.2.
+-  @fordhamjcr
+
+**Recommended**
+
+-  @gowa98
+-  @brandtwilliams2001
+-  @fogartymonogan2014
+
+Oct 14 -- *no class, fall break*
+
+Week 9, Oct 21 -- Event Counts II: dispersion and zeros --- negative binomial, zero-inflation, split populations
+
+**Required**
+
+-  J. Scott Long. 1997. Chapter 8.3--8.7.
+-  @clarkstrategic
+-  @bagozzi2015forecasting
+-  @casiraghi2024
+
+**Recommended**
+
+-  @zorn98
+-  @bagozzi2015ziop
+
+Week 10, Oct 28 -- Count $\leftrightarrow$ Hazard Equivalence: the same event as a count and as a duration
+
+**Required**
+
+-  Janet Box-Steffensmeier and Brad Jones. 2004. *Event History Modeling*. Chapters 1--2
+-  @boxapsr
+-  @altkingsignorino2001
+
+Week 11, Nov 4 -- Continuous-Time Hazards: parametric and semi-parametric duration models (exponential, Weibull, Cox)
+
+**Required**
+
+-  Box-Steffensmeier and Jones. 2004. Chapters 3--5
+-  @zorn2000
+
+**Recommended**
+
+-  @licht2011
+-  @kropkoharden2020
+-  @hardenkropko2019
+-  @boxsteffensmeier2007frailty
+-  @bagozzi2019splitpop
+
+### Part IV — Choice, and synthesis
+
+Week 12, Nov 11 -- Choice I: multinomial and conditional logit, and prediction
+
+**Required**
+
+-  J. Scott Long. 1997. Chapter 6.
+-  Ward \& Ahlquist, 2018. Chapter 9
+-  @alvareznaglercollide
+-  @paolino2021
+
+**Recommended**
+
+-  @hainmueller2014conjoint
+-  @signorino2003
+
+Week 13, Nov 18 -- Choice II: IIA --- assessing it, and how much to worry; alternatives (multivariate probit) and the conditional--fixed-effects equivalence
+
+**Required**
+
+-  @dowendersby2004
+-  @clarkreed2005
+
+**Recommended**
+
+-  @lacyburden
+-  @zorniia
+-  @glasgow2001
+-  @beck2020fe
+-  @abramson2022
+
+Nov 25 -- *no class, Thanksgiving*
+
+Week 14, Dec 2 -- catch up
+
+
+# References {.unnumbered}

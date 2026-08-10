@@ -1,0 +1,12 @@
+---
+title: "Maximum Likelihood, Fall 2026"
+---
+
+This is the course website for PLSC 606J, Maximum Likelihood Estimation, Fall 2026. The course is an advanced course in data science focusing on maximum likelihood methods and their applications in political science.
+
+
+-   [Syllabus](mlesyllabus26.qmd)
+
+-   [Slides](slides.qmd)
+
+-   [Code](code.qmd)

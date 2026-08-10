@@ -1,0 +1,32 @@
+author: Dave Clark
+
+instructor:
+  name: Dave Clark
+  name_no_title: Dave Clark
+  email: "dclark@binghamton.edu"
+  url: "https://clavedark.github.io"
+  gitname: clavedark
+  github: "https://github.com/clavedark"
+  office: "LNG 57; LN2430"
+  contact_policy: "Email is easiest"
+  TA: "TBD"
+  taurl: ""
+  taemail: ""
+
+course:
+  number: "PLSC 606J"
+  semester: "Fall 2026"
+  day: "Wednesday"
+  time: "11:30am-2:30pm"
+  location: "Bing SSEL - LNG 332"
+  github: "https://github.com/clavedark/MLEfall26"
+  labday: "TBD"
+  labtime: "TBD"
+  lablocation: "TBD"
+
+
+university:
+  name: "Binghamton University"
+  url: "https://www.binghamton.edu"
+
+##https://quarto.org/docs/authoring/variables.html

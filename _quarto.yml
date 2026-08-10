@@ -1,0 +1,38 @@
+project:
+  type: website
+  output-dir: docs
+  # NOTE: intentionally NO `render:` list. A website full-render PRUNES docs/ to
+  # the render list, which would delete the locally-rendered topic decks we keep
+  # in docs/ for reference. Publishing is controlled by .gitignore (only the site
+  # shell + syllabus are tracked), not by restricting what renders here.
+website:
+  title: "MLE - Fall 2026"
+  back-to-top-navigation: true
+  reader-mode: true
+  navbar:
+    background: "#005A43"
+    # foreground: "#A7DA92"
+    left:
+      - href: index.qmd
+        text: Home
+      - about.qmd
+      - slides.qmd
+      - mlesyllabus26.qmd
+      - code.qmd
+
+    tools:
+      # - icon: twitter
+        # href: https://twitter.com/clavedark
+      - icon: github
+        menu:
+          - text: repo
+            href: https://github.com/clavedark/MLEfall26
+
+format:
+  html:
+    theme:
+      light: flatly
+      dark: darkly
+    css: styles.css
+    toc: true
+    linkcolor: "#005A43"

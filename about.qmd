@@ -1,0 +1,11 @@
+---
+title: "About"
+---
+
+About this site:
+
+Created with Quarto.
+
+About me:
+
+[Professor of political science](http://clavedark.github.io), PhD Florida State 1999. I've taught this class for a long time, but never the same way twice. I study models of political violence, collect data on [protests](https://massmobilization.github.io) and repression.

@@ -1,0 +1,68 @@
+# R / RStudio state
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Quarto cache / freeze
+/.quarto/
+/_freeze/
+*_cache/
+*_files/
+
+# OS
+.DS_Store
+
+# Data files — provided to students through Brightspace, not the public repo.
+# populate-data.sh remains tracked so Dave / a TA / a future machine can re-fetch.
+data/*
+!data/.gitkeep
+!data/README.md
+
+# Reading PDFs — copyrighted journal articles; kept locally, not in the public repo.
+# Students get readings through Brightspace. See refs606.bib for the citations.
+readings/*
+!readings/.gitkeep
+
+# ---------------------------------------------------------------------------
+# PUBLISH ONLY THE SITE SHELL + SYLLABUS.
+# Topic decks, exercises, and scratch stay on disk (rendered, for reference)
+# but are held out of the public repo until released.
+# To RELEASE a deck: add matching `!<deck>.qmd` and `!docs/<deck>.html` lines
+# in the un-ignore blocks below, render it, link it in slides.qmd, then commit.
+# ---------------------------------------------------------------------------
+
+# Sources: ignore every .qmd, then re-include only the published pages.
+*.qmd
+!index.qmd
+!about.qmd
+!slides.qmd
+!code.qmd
+!mlesyllabus26.qmd
+
+# Rendered output: ignore everything under docs/, then re-include only the
+# published pages and the shared assets GitHub Pages needs to serve them.
+docs/*
+!docs/index.html
+!docs/about.html
+!docs/slides.html
+!docs/code.html
+!docs/mlesyllabus26.html
+!docs/mlesyllabus26.pdf
+!docs/styles.css
+!docs/search.json
+!docs/site_libs/
+!docs/.nojekyll
+
+# Assignment-development projects (not part of the course site)
+flock-mle-assignment/
+flock-placement/
+
+# Loose scratch / deck assets at the repo root
+Rplots.pdf
+sandbox26.R
+snoop.jpeg
+zorntweet.png
+
+# Claude Code local project config
+.claude/

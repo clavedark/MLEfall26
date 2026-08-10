@@ -1,0 +1,11 @@
+---
+title: "Code"
+---
+
+Exercises and worked examples will be linked here as the semester unfolds.
+
+<!--
+[exercise #1](ex12026answers.qmd)
+
+[exercise #2](ex22026answers.qmd)
+-->
