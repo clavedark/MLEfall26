@@ -6,6 +6,11 @@ Code will be linked here as the semester unfolds.
 
 - [Linear Model Prediction Methods](predictionOLS26.qmd) — the OLS prediction toolkit (at-means and average effects; ML, delta, and simulation-based uncertainty), previewing the methods we generalize to nonlinear models. Download the [R script](https://github.com/clavedark/MLEfall26/blob/main/predictionOLS26.R) to run the examples live.
 
+## Data
+
+- [ITT data (`ITT.csv`)](https://github.com/clavedark/MLEfall26/blob/main/data/ITT.csv) — Ill-Treatment and Torture allegation counts by country-year, merged with World Bank (WDI) and Polity covariates; for the count-model build exercise.
+  *Source: Conrad, Courtenay R., Jillienne Haglund, and Will H. Moore. 2013. "Disaggregating Torture Allegations: Introducing the Ill-Treatment and Torture (ITT) Country-Year Data." International Studies Perspectives 14(2): 199-220. [ITT project page](https://faculty.ucmerced.edu/cconrad2/Academic/ITT_Data_Collection.html).*
+
 <!--
 [exercise #1](ex12026answers.qmd)
 
