@@ -39,6 +39,8 @@ readings/*
 !slides.qmd
 !code.qmd
 !mlesyllabus26.qmd
+# released deck: linear model prediction methods
+!predictionOLS26.qmd
 
 # Rendered output: ignore everything under docs/, then re-include only the
 # published pages and the shared assets GitHub Pages needs to serve them.
@@ -49,9 +51,17 @@ docs/*
 !docs/code.html
 !docs/mlesyllabus26.html
 !docs/mlesyllabus26.pdf
+# released deck: linear model prediction methods
+!docs/predictionOLS26.html
 !docs/styles.css
 !docs/search.json
 !docs/site_libs/
+# ...but NOT these generated libs: decks embed their own resources
+# (embed-resources: true), and no served shell page references them, so they are
+# render byproducts, not site assets. Ignoring them keeps them out of commits.
+docs/site_libs/kePrint/
+docs/site_libs/lightable/
+docs/site_libs/revealjs/
 !docs/.nojekyll
 
 # Assignment-development projects (not part of the course site)
@@ -63,6 +73,11 @@ Rplots.pdf
 sandbox26.R
 snoop.jpeg
 zorntweet.png
+
+# PLSC 501 materials parked here — they belong to the 501 course, not this site.
+# Answer keys stay out of the public repo regardless.
+Coding Challenges Sp 2026.pptx
+challenge*-wage1-key.R
 
 # Claude Code local project config
 .claude/

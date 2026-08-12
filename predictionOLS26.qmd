@@ -1,0 +1,750 @@
+---
+title: "Prediction Methods in the Linear Model"
+# subtitle: "A preview of the MLE prediction toolkit, in the familiar OLS setting"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: true
+filters:
+  - parse-latex
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+# Libraries the *live* code below uses -- %>%, stargazer, rmvnorm -- kept to the
+# explicit style so the running code shows the process. Each chunk
+# then carries a commented "MORE EFFICIENT" block, so the same result
+# appears built both ways, side by side.
+library(tidyverse)
+library(patchwork)
+library(mvtnorm)
+library(stargazer)
+library(modelsummary)   # for the modern table alternative shown in comments
+
+# Binghamton palette + theme helpers (bu_green, bu_lightgreen, bu_black, ...).
+source(here::here("_common.R"))
+
+set.seed(20260811)
+```
+
+<style>
+table, th, td {
+    font-size: 18px;
+}
+tr:nth-child(odd) {
+  background-color: #f2f2f2;
+}
+</style>
+
+# Predictions in the linear model
+
+You have already seen these prediction methods in the linear model — quantities of interest from OLS three ways: predictions at means, average effects, and simulation. This page builds them in a detailed way organized around those three methods, and then around ways to measure uncertainty in any of these methods. It will be the companion to the nonlinear prediction methods slides, `prediction26` (once they're posted); the two are meant to be read together.
+
+Previewing the toolkit in OLS is useful because OLS is the simple case. In the linear model the "link" between the linear prediction $x\widehat\beta$ and the quantity of interest is the **identity** function — $\widehat y = x\widehat\beta$. In the linear model, we don't have to transform the linear prediction by the link function; the linear prediction **is** the quantity of interest.
+
+- end-point transformation is just $\widehat y \pm 1.96 \, se(\widehat y)$;
+- the maximum-likelihood standard error $\sqrt{\mathrm{diag}(\mathbf{X V X'})}$ is exactly the $se(\widehat y)$ that `predict()` produces;
+- the delta-method standard error of $\widehat y$ equals that same number;
+- the confidence interval is symmetric.
+
+Note each of these as we go. In MLE, the link is a nonlinear function that performs important functions: the transformation by $F$ bounds the interval and bends it, and the two standard errors part ways. But the techniques described below transport directly from the linear case to the nonlinear case.  
+
+::: {.callout-note icon="false"}
+## The process, up front
+
+Every quantity of interest below — and in every model we meet the rest of the semester — comes from the same sequence:
+
+1. **estimate** the model;
+2. **choose an approach** — *at-means* (hold the other covariates at central tendencies, vary the $x$ of interest) or *average effects* (set the $x$ of interest for the *whole* estimation sample, predict every case, average);
+3. **build the linear prediction** $x\widehat\beta$ for the interesting values of $x$;
+4. **transform** through the link (in OLS the link is the identity, so this step does nothing);
+5. **attach uncertainty** by an analytic standard error, by simulation, or by a bootstrap;
+6. **form the interval** and plot.
+
+Steps 2 (the *approach*) and 5 (the *technique*) are independent choices: any approach pairs with any technique. Keeping them separate organizes everything that follows.
+:::
+
+# The running model
+
+I'll use the Ill-Treatment and Torture (ITT) data — country-years, with the count of **scarring** torture allegations as $y$, and covariates for restricted access to the country in the prior year, ongoing civil war, protests in the prior year, the country's Polity score (entered as a quadratic), and GDP per capita.
+
+Here is the model. Note the code - in every chunk below, I write explicit code meant to illustrate each step in the process of building these quantities. I follow the explicit code with "efficient" code - these are better ways to write the code, but less obvious in terms of the underlying process. 
+
+```{r fit}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| results: asis
+
+itt <- read.csv("/Users/dave/Documents/teaching/501/2023/exercises/ex4/ITT/data/ITT.csv")
+
+itt$p1 <- itt$polity2 + 11          # shift Polity to 0-20 (0 = most autocratic)
+itt$p2 <- itt$p1^2                  # quadratic term in Polity
+itt$loggdp <- log(itt$wdi_gdpc)     # GDP per capita is right-skewed, so log it
+
+itt <- itt %>%
+  group_by(ccode) %>%
+  mutate(lagprotest = lag(protest), lagRA = lag(RstrctAccess), n = 1)
+
+m1 <- lm(scarring ~ lagRA + civilwar + lagprotest + p1 + p2 + loggdp, data = itt)
+
+stargazer(m1, type = "html", single.row = TRUE, digits = 3,
+          omit.stat = c("LL", "ser"),
+          dep.var.caption = "Dependent variable: scarring torture allegations",
+          dep.var.labels.include = FALSE,
+          covariate.labels = c("Restricted access, t-1", "Civil war", "Protests, t-1",
+                               "Polity", "Polity squared", "GDP per capita (log)"),
+          notes = "Standard errors in parentheses.", notes.append = FALSE)
+
+# ---- MORE EFFICIENT  -----------------------------------
+# The same model, more concisely:
+#
+#   itt <- readr::read_csv(here::here("data", "ITT.csv"))   # portable path, no absolute path
+#   itt <- itt %>%
+#     group_by(ccode) %>%
+#     mutate(lagprotest = lag(protest), lagRA = lag(RstrctAccess)) %>%
+#     ungroup() %>%
+#     mutate(p1 = polity2 + 11, p2 = p1^2, loggdp = log(wdi_gdpc))
+#   m1 <- lm(scarring ~ lagRA + civilwar + lagprotest + p1 + p2 + loggdp, data = itt)
+#   modelsummary(m1,
+#     coef_rename = c("lagRA" = "Restricted access, t-1", "civilwar" = "Civil war",
+#                     "lagprotest" = "Protests, t-1", "p1" = "Polity",
+#                     "p2" = "Polity squared", "loggdp" = "GDP per capita (log)"),
+#     statistic = "std.error", gof_omit = "AIC|BIC|RMSE|Log", output = "html")
+#
+# WHY it's better: here::here + read_csv is machine-independent (the absolute
+# path above only works on my laptop); modelsummary is actively maintained and
+# can table marginal effects, which stargazer cannot.
+```
+
+A word on what the model says, because it shapes which examples are worth showing. Restricted access, civil war, and lagged protest all move scarring, and in the expected directions. **Polity does not** — neither the linear nor the quadratic term is distinguishable from zero, and an F-test on the two terms jointly is nowhere near significant ($F = 0.04$, $p = .96$). The "more murder in the middle" pattern is quiet in this specification once the other covariates are included in the model.
+
+This shapes the examples. I plot the substantively interesting predictions over **protest**, the predictor that is significantly different from zero, and use **Polity** in the one place where a flat effect is exactly the point — the delta-method standard error of a linear combination, where the procedure is identical whether or not the effect is real. The two binaries, restricted access and civil war, drive the discrete-scenario comparisons.
+
+Keep this in mind: scarring is a **count**, so it cannot go below zero. OLS does not know that, and in the simulation section below it will produce a prediction interval that dips well below zero. This is an advertisement for the count models we'll study in a few weeks.
+
+# Approaches: at-means vs. average effects
+
+Two ways to summarize the model. They answer slightly different questions, and they are the same two choices in OLS and in every MLE model we'll meet.
+
+**At-means predictions** — set the other covariates to central tendencies (mean, median, or mode as the measurement level dictates), vary the $x$ of interest, and generate the effect. Sometimes called *adjusted predictions*. The recipe:
+
+- estimate the model;
+- build an out-of-sample data frame;
+- vary the $x$ of interest; hold the other $x$ variables at appropriate central tendencies (mode for dummies, median for skewed or categorical variables) — hence "at means";
+- generate the quantity of interest in that out-of-sample data.
+
+**Average effects** — in-sample, but a counterfactual: ask what the predictions would look like if the *entire* estimation sample took a particular value on the $x$ of interest, with everything else left as it is in the data. The recipe:
+
+- estimate the model;
+- set the variable of interest to a value for the *whole* estimation sample;
+- generate the quantity of interest for every case;
+- take the average, and save it;
+- repeat for every value of the variable of interest, and plot.
+
+Average effects are often the better choice because they use the observed distribution of the other covariates rather than freezing everything at one artificial central-tendency case. They're also essential in models using fixed effects. Average effects are more computationally intensive, though this rarely matters in practice with modern computers. We'll do both.
+
+## The estimation sample
+
+Both approaches — average effects especially — need the rows the model was actually fit on, *after* listwise deletion. `na.action(m1)` returns the indices R dropped; flag them and keep the rest. It is worth checking how many cases you actually keep, every time.
+
+```{r estsample}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+itt$used <- TRUE
+itt$used[na.action(m1)] <- FALSE
+estdata <- itt %>% filter(used == "TRUE")
+
+# central tendencies of the estimation sample, reused throughout the file
+p1med  <- median(estdata$p1)          # Polity held at its median (16 => polity2 = 5)
+p2med  <- p1med^2                     # the matching quadratic value
+gdpmed <- median(estdata$loggdp)      # log GDP per capita at its median
+promed <- median(estdata$lagprotest)  # protests at their median
+
+datasummary(scarring + lagRA + civilwar + lagprotest + p1 + loggdp ~
+              (Mean + Median + SD + Min + Max),
+            data = estdata, title = "ITT estimation sample")
+
+cat("N used:", nrow(estdata), "of", nrow(itt), "country-years\n")
+```
+
+We keep 899 of 2,128 country-years — the lags and the missing protest data cost us a lot of rows. The model we interpret is the model on the cases we *kept*, and here that is well under half the data. It's worth noting that this is a **terrible** missingness rate and not something we could tolerate in a real research project - missing data are never random; the amount of non-randomness here is bad.
+
+# Building a scenario's linear prediction
+
+Every quantity in this file starts the same way — a linear prediction $x\widehat\beta$ for some scenario, meaning one row of $x$ values — so it is worth slowing down on how we build one. The scenario is the atom here. An at-means prediction is one scenario for each value of the $x$ of interest; an average effect, as we'll see, is a whole sample of scenarios aggregated into a single number. There are three ways to build the linear prediction, and moving through them — by hand, then `model.matrix`, then `predict` — is also the move from seeing every step to trusting the machinery to do it for us. Take one scenario: a country with no restricted access, no civil war, protests and Polity and GDP at their medians.
+
+**By hand.** Write the linear predictor out, one coefficient times one value at a time, pulling coefficients by *name* so nothing depends on their order:
+
+```{r lp-byhand}
+#| echo: true
+#| code-fold: false
+
+b <- coef(m1)
+xb_hand <- b["(Intercept)"] + b["lagRA"]*0 + b["civilwar"]*0 +
+           b["lagprotest"]*promed + b["p1"]*p1med + b["p2"]*p2med + b["loggdp"]*gdpmed
+as.numeric(xb_hand)
+```
+
+This is the most transparent version — you see exactly which value each coefficient multiplies. It is also the one that gets error-prone the moment the model has an interaction, a polynomial, or a factor: you have to remember every product term yourself. (Notice we already have that risk here — the quadratic means Polity shows up as *two* products, `p1` and `p2`, and it's on you to keep them consistent.)
+
+**With `model.matrix`.** The same design row, built mechanically from the model's formula:
+
+```{r lp-mm}
+#| echo: true
+#| code-fold: false
+
+scenario <- data.frame(lagRA = 0, civilwar = 0, lagprotest = promed,
+                       p1 = p1med, p2 = p2med, loggdp = gdpmed)
+
+# model.matrix() builds the "design matrix" from a formula + data. The design
+# matrix is just X in y = Xb -- the matrix of right-hand-side variables the model
+# multiplies by the coefficients: one row per observation, one column per model
+# term, with a leading column of 1s for the intercept. (In our field we usually
+# just call it the X matrix, or the matrix of covariates.) model.matrix() builds
+# it from the formula -- adding the intercept, expanding any factors into dummy
+# columns, forming interaction/polynomial columns. Here it returns the single
+# design row (one row of X) for our scenario -- a 1 x 7 matrix in the same column
+# order as coef(m1) -- so X_row %*% coef(m1) is exactly x'b.
+X_row <- model.matrix(~ lagRA + civilwar + lagprotest + p1 + p2 + loggdp, data = scenario)
+as.numeric(X_row %*% coef(m1))
+```
+
+Same number. `model.matrix` reads the formula and assembles the row — intercept, contrasts, interactions, and all — so it stays consistent with how the model was fit. That consistency is the payoff as specifications get complicated.
+
+**With `predict`.** The fully automated route — `model.matrix` under the hood, plus the link (which in OLS is the identity, so nothing extra happens):
+
+```{r lp-predict}
+#| echo: true
+#| code-fold: false
+
+predict(m1, newdata = scenario)   # x'b, the same value -- and in OLS this IS y-hat
+```
+
+All three produce the same number, which is the point — they are three ways to do one thing. So which is *best*? For everyday work, `predict`: it reads the fitted model, builds the design row, applies the link, and returns $\widehat y$ with a standard error, and it cannot drift out of step with the model. `model.matrix` is best when we need the design matrix $X$ itself for the matrix algebra — the standard errors and the simulations below both want it. The by-hand form is best for one thing only, understanding, because it shows every product. Its own giveaway that it is not for production is right here in the quadratic: Polity enters as two products, `p1` and `p2`, and keeping them consistent is on us, where `model.matrix` and `predict` never make that mistake.
+
+One thing to note about `predict` in OLS: it returns $\widehat y$ directly, because the identity link means $\widehat y = x\widehat\beta$. In MLE, `type = "link"` and `type = "response"` return *different* numbers, and the gap between them is the link. Below I use the by-hand form where it makes the mechanics clearest — the simulations — and `model.matrix` for the matrix machinery.
+
+# At-means predictions (direct computation)
+
+Now the first real quantity of interest: expected scarring across the range of **protest**, with everything else held at central tendencies. I build an out-of-sample data frame where protest varies and the rest are fixed, ask `predict()` for the fit and its standard error, and form the interval by end-point transformation — $\widehat y \pm 1.96 \, se(\widehat y)$.
+
+```{r at-means}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# out-of-sample data: protest varies 0-37; everything else at central tendencies
+oosdata <- data.frame(lagRA = 0, civilwar = 0, p1 = p1med, p2 = p2med,
+                      loggdp = gdpmed, lagprotest = c(seq(0, 37, 1)))
+
+itt.predict <- data.frame(oosdata,
+  predict(m1, interval = "confidence", se.fit = TRUE, level = .05, newdata = oosdata))
+
+# confidence bounds by end point transformation
+itt.predict <- itt.predict %>% mutate(ub = fit.fit + 1.96*se.fit) %>%
+                               mutate(lb = fit.fit - 1.96*se.fit)
+
+atmean <- ggplot(itt.predict, aes(x = lagprotest, y = fit.fit)) +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_green, alpha = .2) +
+  xlab("Protests (t-1)") +
+  ylab("Expected scarring torture") +
+  ggtitle("At-mean effects") +
+  theme_minimal()
+
+atmean
+
+# ---- MORE EFFICIENT -----------------------------------
+# marginaleffects::predictions() does the whole thing -- grid, prediction,
+# standard error, and interval -- in one call, and returns a tidy data frame
+# you can pipe straight into ggplot:
+#
+#   library(marginaleffects)
+#   am <- predictions(m1, newdata = datagrid(lagprotest = 0:37, lagRA = 0,
+#                     civilwar = 0, p1 = p1med, p2 = p2med, loggdp = gdpmed))
+#   ggplot(am, aes(lagprotest, estimate)) +
+#     geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = bu_green, alpha = .2) +
+#     geom_line(color = bu_green, linewidth = 1) + theme_minimal()
+#
+# WHY it's better: no hand-built data frame, no by-hand +/- 1.96*se, and it
+# generalizes unchanged to logit/probit/count models -- you swap the model
+# object and marginaleffects handles the link and the delta-method SE. The
+# by-hand version above is here so you can see what predictions() automates.
+```
+
+End-point transformation is the general recipe: build the interval on the linear scale, then map the bounds through the link. In OLS the link is the identity, so mapping through it does nothing, and the interval is just $\widehat y \pm 1.96 \, se$, symmetric. In MLE, pushing the bounds through the logistic or normal CDF is what keeps a probability interval inside $[0,1]$ and makes it asymmetric. Same recipe; here it simplifies to the interval you already know.
+
+# Average effects
+
+Now the average-effects version of the same question, written as an explicit loop over the values of protest. At each value, I set protest to that value for the *whole* estimation sample, predict every case, and take the median prediction and the median standard error. (I loop over `estdata`, the estimation sample, so the counterfactual runs only on cases the model actually saw.)
+
+```{r avg-loop}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# preserve the original protest values so we can restore them
+estdata <- estdata %>% mutate(original_lagprotest = lagprotest)
+
+xb <- 0; se <- 0; pr <- 0
+
+for (i in seq(0, 37, 1)) {         # iterate by 1 across the range of protest
+  estdata$lagprotest <- i          # set protest to i for the WHOLE sample
+  ap <- data.frame(predict(m1, interval = "confidence", se.fit = TRUE,
+                           level = .05, newdata = estdata))
+  xb[i + 1] <- median(ap$fit.fit)  # index by i+1 so protest = 0 lands in row 1
+  se[i + 1] <- median(ap$se.fit)
+  pr[i + 1] <- i
+}
+
+avg.pred <- data.frame(xb, se, pr)
+avg.pred <- avg.pred %>% mutate(ub = xb + 1.96*se) %>% mutate(lb = xb - 1.96*se)
+
+# restore the estimation data to its actual protest values
+estdata <- estdata %>% mutate(lagprotest = original_lagprotest)
+
+average <- ggplot(avg.pred, aes(x = pr, y = xb)) +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_green, alpha = .2) +
+  xlab("Protests (t-1)") +
+  ylab("Expected scarring torture") +
+  ggtitle("Average effects") +
+  theme_minimal()
+
+average
+
+# ---- MORE EFFICIENT -----------------------------------
+# The loop body is one idea -- "set protest for the whole sample, predict,
+# average" -- repeated. That's what a function is for. Two tidy routes:
+#
+# (a) map over the values, no preallocated vectors, no index arithmetic.
+#   avg_curve() takes ONE protest value; it copies the estimation data (estdata,
+#   from above), sets protest to that value for every row, and returns a one-row
+#   tibble of the value and the mean prediction:
+#     avg_curve <- function(value) {
+#       cf <- estdata; cf$lagprotest <- value
+#       tibble(pr = value, xb = mean(predict(m1, newdata = cf)))
+#     }
+#   map_dfr() is the loop's replacement: it calls avg_curve() once for each
+#   element of 0:37 (so `value` is 0, then 1, ... then 37) and row-binds the 38
+#   one-row tibbles into a single data frame -- no counter, no i+1 indexing:
+#     avg <- map_dfr(0:37, avg_curve)
+#
+# (b) let marginaleffects do it -- avg_predictions IS the average effect, with
+#     a delta-method SE for free:
+#   library(marginaleffects)
+#   avg_predictions(m1, variables = list(lagprotest = 0:37))
+#
+# WHY it's better: (a) removes the fragile "i + 1" indexing and the
+# save/restore dance around the real data; (b) is one line and generalizes to
+# any model. Two small methodological notes: the standard, defensible average
+# effect uses the MEAN of the predictions, not the median the manual loop takes
+# (mean is the actual "average effect"); and averaging the case-level SEs, as
+# the loop does, is a rough uncertainty -- the delta and simulation sections
+# below compute the SE of the average *properly*.
+```
+
+Two things to note here. First, the "average effect" is properly the **mean** of the case predictions; the loop above takes the median, which is a defensible robust summary but not literally the average. Second, taking the **median of the case-level standard errors** is a rough measure of uncertainty — it is not the standard error *of the average prediction*. That quantity has a real formula, and I compute it explicitly below using two different techniques. 
+
+# Uncertainty: separating the approach from the technique
+
+So far we have point predictions and a confidence band, but not measured precisely. Measuring uncertainty is a separate issue insofar as we can match either of the approaches above with either of the uncertainty estimate techniques below. The prediction **approach** (at-means or average effects — *which* counterfactual we compute) and the uncertainty **technique** (an analytic standard error, parameter simulation, a bootstrap — *how* we bound it) are two independent choices. Any approach pairs with any technique.
+
+Below I work these by hand: the analytic standard errors (ML, then delta), then simulation. At the end I pair the average-effects approach with both a delta and a simulated interval, to show the mixing directly. (A bootstrap would slot in as a third technique; we don't work one here.) 
+
+# Analytic standard errors
+
+## The ML standard error of the linear prediction
+
+The most direct measure of uncertainty is the standard error of the linear prediction $X\widehat\beta$. It comes from the variance–covariance matrix of $\widehat\beta$:
+
+$$
+\mathrm{Var}(X\widehat\beta) = \mathbf{X}\,\mathbf{V}\,\mathbf{X}',
+$$
+
+an $N \times N$ matrix, where $\mathbf{V} = \widehat{\mathrm{Var}}(\widehat\beta) =$ `vcov(m1)`. Its diagonal holds the variances of the $N$ predictions, so
+
+$$
+se(X\widehat\beta) = \sqrt{\mathrm{diag}(\mathbf{X}\,\mathbf{V}\,\mathbf{X}')},
+$$
+
+an $N \times 1$ vector. In the MLE class this $\mathbf{V}$ is the $(-H)^{-1}$ from the likelihood notes; in OLS it is the familiar $\widehat\sigma^2 (X'X)^{-1}$. Same formula, and it produces exactly the standard error `predict()` reports. Here it is by hand, on the at-means protest grid, checked against `predict()`:
+
+```{r ml-se}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# design matrix for the at-means grid (protest varies, others held)
+Xg <- model.matrix(~ lagRA + civilwar + lagprotest + p1 + p2 + loggdp, data = oosdata)
+V  <- vcov(m1)
+
+xb     <- as.vector(Xg %*% coef(m1))        # linear prediction x'b (= y-hat in OLS)
+se_lin <- sqrt(diag(Xg %*% V %*% t(Xg)))    # ML SE of x'b, by hand
+
+# check against predict()'s SE
+data.frame(lagprotest = oosdata$lagprotest,
+           se_byhand  = se_lin,
+           se_predict = predict(m1, newdata = oosdata, se.fit = TRUE)$se.fit)[1:5, ]
+```
+
+They agree to machine precision: `predict`'s standard errors *are* this $\sqrt{\mathrm{diag}(XVX')}$ computation. Please note the value of understanding basic matrix algebra for doing this. You might ask why you'd ever need to do this - some estimation packages in R do not have `predict` functions, or have sufficiently opaque functions that computing your own quantities is preferable.
+
+## Delta-method standard errors
+
+When do we use the ML standard error, and when the delta method? Use the **ML standard error** — $\sqrt{\mathrm{diag}(\mathbf{X V X'})}$ — for the linear prediction itself, or for a quantity we can reach by transforming it: build the interval on the linear scale and map the endpoints through the link (a predicted probability from a logit or probit works this way). Use the **delta method** when the quantity of interest is a nonlinear function of the coefficients that we cannot reach by transforming a single linear prediction — a marginal effect that combines several coefficients, a ratio of coefficients, or a probability in a model like multinomial logit, where the quantity is not monotone in any one $x\widehat\beta$. In the linear model, for $\widehat y$ itself the two agree exactly, and the reason is worth seeing.
+
+::: {.callout-note icon="false"}
+## ML or delta — which, and when?
+
+**ML standard error** — $\sqrt{\mathrm{diag}(\mathbf{X V X'})}$ — for the linear prediction $x\widehat\beta$ itself, or for a quantity we reach by transforming it monotonically (build the interval on the linear scale, then map the endpoints through the link).
+
+**Delta method** — for a nonlinear function of the coefficients we cannot reach that way: a marginal effect that combines several coefficients (the polynomial below), a ratio of coefficients, or a probability that is not monotone in any one $x\widehat\beta$ (multinomial logit).
+
+In OLS, for $\widehat y$ the two produce the same number.
+:::
+
+@greene2012econometric gives the delta method's general form for a transformation $F$,
+
+$$
+\mathrm{Var}\!\left[F(X\widehat\beta)\right] = f(x'\widehat\beta)^2 \; \mathbf{x}'\,\mathbf{V}\,\mathbf{x},
+$$
+
+where $f$ is the derivative of $F$. In OLS the quantity of interest *is* the linear prediction, so $F$ is the identity, $f = 1$, and the delta standard error of $\widehat y$ is just $\sqrt{\mathbf{x}'\mathbf{V}\mathbf{x}}$ — the same `se_lin` we just built. In the linear model, delta and ML give the same number, because there is no nonlinear link to differentiate. In MLE, $f$ is the link's PDF (0.25 at the peak for the logit, 0.399 for the probit), and the two standard errors part ways.
+
+Where the delta method earns its keep *within* OLS is a nonlinear function of the coefficients — a linear combination whose standard error must carry the covariances between estimates. This is not a prediction sweep; we generate the quantities of interest over protest. It is a short worked example of *how we get the standard error of a linear combination*, and the quadratic Polity term is the natural vehicle for it. The marginal effect of Polity is not a single coefficient but
+
+$$
+\frac{\partial \, \widehat y}{\partial \, \text{polity}} = \widehat\beta_{p1} + 2\,\widehat\beta_{p2}\,\text{polity},
+$$
+
+and its standard error carries the covariance term:
+
+$$
+se = \sqrt{\mathrm{Var}(\widehat\beta_{p1}) + 4\,\text{polity}^2\,\mathrm{Var}(\widehat\beta_{p2}) + 4\,\text{polity}\,\mathrm{Cov}(\widehat\beta_{p1}, \widehat\beta_{p2})}.
+$$
+
+The variances and the covariance come straight from $\mathbf{V} =$ `vcov(m1)`:
+
+```{r delta-lincom}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+b <- coef(m1); V <- vcov(m1)
+
+# Two small functions, each taking a Polity value p (or a whole vector of them).
+# me_polity() returns the marginal effect b_p1 + 2*b_p2*p; se_polity() returns
+# its delta-method standard error. Both read the coefficient vector b and the
+# covariance matrix V from the two lines just above -- these are NOT passed in as
+# arguments, so the functions use whatever b and V currently hold. We call each
+# below on the vector `poly`, so they return one value per Polity value.
+me_polity <- function(p) b["p1"] + 2*b["p2"]*p                 # marginal effect at polity = p
+se_polity <- function(p) sqrt(V["p1","p1"] + 4*p^2*V["p2","p2"] +
+                              4*p*V["p1","p2"])                # its delta-method SE
+
+poly <- seq(0, 20, 2)
+data.frame(polity = poly,
+           marg_effect = as.numeric(me_polity(poly)),
+           se          = as.numeric(se_polity(poly))) %>%
+  mutate(lb = marg_effect - 1.96*se, ub = marg_effect + 1.96*se)
+
+# ---- MORE EFFICIENT -----------------------------------
+# marginaleffects::slopes() computes this marginal effect AND its delta-method
+# SE from the model object, with no hand-written covariance formula:
+#
+#   library(marginaleffects)
+#   slopes(m1, variables = "p1", newdata = datagrid(p1 = seq(0, 20, 2)))
+#
+# WHY it's better: you never transcribe the "b1 + 2*b2*x" derivative or the
+# variance formula, so there's nothing to get wrong -- marginaleffects
+# differentiates the prediction numerically and pulls the covariances from V
+# itself. The by-hand version is here so the covariance term is visible: that
+# middle 4*p*Cov(b1,b2) piece is exactly what a naive SE(b1) + SE(2*b2*x) would
+# miss.
+```
+
+Look at the output. The marginal effect of Polity hovers around zero and its interval covers zero everywhere, because neither Polity term is doing anything in this model. That is the point, not a defect: the procedure for the standard error of a linear combination is identical whether or not the effect is real — we compute it the same way for a null result and a strong one. And notice what the covariance term buys us. Dropping it — pretending $\mathrm{Cov}(\widehat\beta_{p1}, \widehat\beta_{p2}) = 0$ — gives the wrong standard error, because in a polynomial the two coefficients are strongly correlated by construction.
+
+## Confidence intervals by end-point transformation
+
+Either standard error can build the interval. Take the point estimate plus and minus 1.96 times the ML *or* the delta standard error, transforming the endpoints if the quantity is transformed:
+
+$$
+F(X\widehat\beta - 1.96\,se) \;\le\; F(X\widehat\beta) \;\le\; F(X\widehat\beta + 1.96\,se).
+$$
+
+The choice between the two matters only for a nonlinear quantity. An interval built on the linear predictor with the ML standard error and then transformed stays inside the natural bounds — a probability stays in $[0,1]$ — and comes out asymmetric. An interval built directly on the transformed quantity with the delta standard error is symmetric, and can fall outside those bounds. In OLS neither issue arises: $F$ is the identity, so the interval is the symmetric $\widehat y \pm 1.96\,se$ from the at-means figure, and the ML and delta standard errors are the same number to begin with. In a nonlinear model $F$ is the link, and the difference between the two intervals is real.
+
+::: {.callout-note icon="false"}
+## Either standard error builds a confidence interval
+
+Take the point estimate $\pm\,1.96 \times se$ with **either** the ML or the delta standard error, transforming the endpoints if the quantity is transformed. The choice matters only for a **nonlinear** quantity: the ML interval (built on the linear scale, then transformed) stays in bounds and is asymmetric; the delta interval (built on the response) is symmetric and can leave the bounds. In OLS they coincide.
+:::
+
+# Simulation: two approaches to uncertainty
+
+Simulation — the King–Tomz–Wittenberg approach [@kingtomz2000] — measures uncertainty by *drawing* from the sampling distribution of the estimates rather than approximating it with a formula. Throughout this section the superscript asterisk marks a **simulated draw**: $\beta^{*}$ is one draw of the coefficient vector, $\varepsilon^{*}$ one draw of the disturbance, $\widetilde y$ a simulated outcome.
+
+Simulation makes it easy to separate two quantities that are easy to conflate, and that carry different amounts of uncertainty. The distinction is King, Tomz, and Wittenberg's, and it turns on the *two different sources of randomness* in the model $y = x\beta + \varepsilon$:
+
+- **Estimation uncertainty** — we do not know $\beta$ exactly; we have an estimate $\widehat\beta$ with a sampling distribution $N(\widehat\beta, \mathbf{V})$. Drawing coefficient vectors $\beta^{*}$ from that distribution is how we carry it.
+- **Fundamental uncertainty** — even if we knew $\beta$ exactly, a single case does not sit on the line. It scatters around $x\beta$ with standard deviation $\sigma$, the disturbance. This randomness is in the world, not in our estimates, and no amount of data removes it.
+
+The two quantities use these differently:
+
+- **Expected value** — the *average* outcome at a scenario, $E[y \mid x] = x\beta$. It carries only estimation uncertainty: we are asking where the line is, and our only doubt is that we do not know $\beta$ exactly. Draw $\beta^{*}$, form $x\beta^{*}$ for each draw, and the spread of those is a **confidence interval**.
+- **Predicted value** — an *actual* outcome $\widetilde y$ we might newly observe at a scenario. It carries both sources: we are unsure of the line *and* the case scatters off it. Draw $\beta^{*}$, form $x\beta^{*}$, then add a fresh disturbance draw $\varepsilon^{*} \sim N(0, \widehat\sigma^2)$, and the spread of $\widetilde y = x\beta^{*} + \varepsilon^{*}$ is a wider **prediction interval**.
+
+That second draw is the piece to be careful about, because the $\beta^{*}$ draws are already simulated and it is easy to think the randomness is done. It is not. The $\beta^{*}$ draws vary — that is estimation uncertainty — but they only move the *line*. Adding $\varepsilon^{*}$ is a different operation: it scatters an individual observation off the line the way the disturbance does in the data. Leave it out and we have the confidence interval; put it in and we have the prediction interval.
+
+Which do we want? It depends on the question. For the systematic relationship — the average scarring at a scenario, and how sure we are of that average — the expected value and its confidence interval are the right quantity, and this is what most substantive interpretation wants. To forecast a *single new case* — where one more country-year at this scenario would actually fall — we want the predicted value and its prediction interval, because it includes the irreducible noise a real observation carries.
+
+In OLS these two map onto something you already know: `predict(interval = "confidence")` and `predict(interval = "prediction")`. So this is a good place to *see* the difference — simulate each, and check it against what `predict()` returns.  
+
+## Simulating the parameters — the expected value (confidence interval)
+
+Treat $\widehat\beta$ as the mean of a multivariate normal and $\mathbf{V}$ as its variance, draw 10,000 coefficient vectors, and for each value of protest form the 10,000 linear predictions and take the percentiles.
+
+```{r sim-expected}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+B <- data.frame(rmvnorm(n = 10000, mean = coef(m1), sigma = vcov(m1)))
+colnames(B) <- c("b0", "b_ra", "b_cw", "b_pro", "b_p1", "b_p2", "b_gdp")
+
+sim.exp <- data.frame(lb = numeric(0), med = numeric(0), ub = numeric(0), pr = numeric(0))
+
+for (i in seq(0, 37, 1)) {
+  xbR <- quantile(B$b0 + B$b_ra*0 + B$b_cw*0 + B$b_pro*i +
+                  B$b_p1*p1med + B$b_p2*p2med + B$b_gdp*gdpmed,
+                  probs = c(.025, .5, .975))
+  sim.exp[i + 1, 1:4] <- data.frame(t(xbR), i)
+}
+
+sim.exp %>% head()
+
+# ---- MORE EFFICIENT -----------------------------------
+# Draw with MASS::mvrnorm, build all the linear predictions as one matrix
+# multiply instead of looping, and skip the data.frame-row assignment:
+#
+#   sims <- MASS::mvrnorm(10000, coef(m1), vcov(m1))       # 10000 x k
+#   grid <- seq(0, 37, 1)
+#   Xg   <- model.matrix(~ lagRA + civilwar + lagprotest + p1 + p2 + loggdp,
+#             data = data.frame(lagRA = 0, civilwar = 0, lagprotest = grid,
+#                               p1 = p1med, p2 = p2med, loggdp = gdpmed))
+#   XB   <- Xg %*% t(sims)                                 # length(grid) x 10000
+#   ci   <- t(apply(XB, 1, quantile, c(.025, .5, .975)))   # one row per protest value
+#
+# WHY it's better: the matrix multiply replaces the loop and the fragile
+# "i + 1" indexing, and building x'b from model.matrix means you never re-type
+# the linear predictor by hand (where a dropped term hides). The manual loop is
+# here because writing x'b out term-by-term makes it obvious what's being
+# simulated.
+```
+
+## Simulating the quantity of interest — the predicted value (prediction interval)
+
+Same draws of the parameters, but now we also add the fundamental uncertainty: for each simulated $x\beta^{*}$ we add a disturbance draw $\varepsilon^{*} \sim N(0, \widehat\sigma^2)$, where $\widehat\sigma$ is the residual standard error, and take percentiles of the predicted value $\widetilde y = x\beta^{*} + \varepsilon^{*}$.
+
+```{r sim-predicted}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+sigma_hat <- sigma(m1)   # residual standard error -- the scatter around the line
+
+sim.pred <- data.frame(lb = numeric(0), med = numeric(0), ub = numeric(0), pr = numeric(0))
+
+for (i in seq(0, 37, 1)) {
+  xstar <- B$b0 + B$b_pro*i + B$b_p1*p1med + B$b_p2*p2med + B$b_gdp*gdpmed  # binaries = 0
+  ystar <- xstar + rnorm(length(xstar), mean = 0, sd = sigma_hat)          # add fundamental noise
+  q <- quantile(ystar, probs = c(.025, .5, .975))
+  sim.pred[i + 1, 1:4] <- data.frame(t(q), i)
+}
+
+sim.pred %>% head()
+```
+
+Now put the two intervals on one plot, and overlay what `predict()` gives directly — the simulation should reproduce the analytic confidence and prediction intervals.
+
+```{r sim-compare}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# analytic confidence and prediction intervals straight from predict()
+check <- data.frame(lagprotest = oosdata$lagprotest,
+  predict(m1, newdata = oosdata, interval = "confidence"),
+  predict(m1, newdata = oosdata, interval = "prediction")) %>%
+  rename(ci_lb = lwr, ci_ub = upr, pi_lb = lwr.1, pi_ub = upr.1)
+
+ggplot() +
+  # simulated prediction interval (wide) and confidence interval (narrow)
+  geom_ribbon(data = sim.pred, aes(x = pr, ymin = lb, ymax = ub),
+              fill = bu_lightgreen, alpha = .25) +
+  geom_ribbon(data = sim.exp,  aes(x = pr, ymin = lb, ymax = ub),
+              fill = bu_green, alpha = .35) +
+  geom_line(data = sim.exp, aes(x = pr, y = med), color = bu_green, linewidth = 1) +
+  # analytic checks, dashed, in dark ink so they read on the bands
+  geom_line(data = check, aes(lagprotest, ci_lb), color = bu_black, linetype = "dashed") +
+  geom_line(data = check, aes(lagprotest, ci_ub), color = bu_black, linetype = "dashed") +
+  geom_line(data = check, aes(lagprotest, pi_lb), color = bu_black, linetype = "dotted") +
+  geom_line(data = check, aes(lagprotest, pi_ub), color = bu_black, linetype = "dotted") +
+  geom_hline(yintercept = 0, color = bu_black, linewidth = .3) +
+  annotate("text", x = 2, y = 11, label = "confidence interval\n(expected value)",
+           hjust = 0, size = 3, color = bu_green) +
+  annotate("text", x = 20, y = 26, label = "prediction interval\n(predicted value)",
+           hjust = 0, size = 3, color = bu_black) +
+  labs(title = "Two simulations: expected value vs. predicted value",
+       subtitle = "solid/dark band = confidence interval; pale band = prediction interval; dashed/dotted = predict()",
+       x = "Protests (t-1)", y = "Scarring torture") +
+  theme_minimal()
+```
+
+The simulated bands land on the analytic ones — the dashed confidence bounds sit on the dark band, the dotted prediction bounds on the pale one. That is the payoff: the two "types of simulation" are not two techniques for the same quantity, they are two *quantities*. The confidence interval is our uncertainty about the average; the prediction interval is our uncertainty about a case, and it is much wider because it carries $\widehat\sigma$.
+
+And look where the prediction interval goes — **below zero**, for a variable that counts torture allegations and cannot be negative. OLS does not know scarring is a bounded count, so it puts real probability mass on impossible values. Nothing we do to the *uncertainty technique* fixes that; the fix is a different *model*, one whose link function keeps predictions non-negative (see count models in a few weeks)
+
+
+## Simulating combinations of binary variables
+
+Simulation also lets us compare discrete scenarios and see the *whole* predicted distribution, not just a point and an interval. Here are the four combinations of restricted access and civil war, holding protest, Polity, and GDP at their medians, each as a density of simulated expected values.
+
+```{r sim-combos}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# xb_scen() builds the simulated linear prediction for one access/war scenario.
+# Its arguments are ra (restricted access, 0/1) and cw (civil war, 0/1). The
+# other pieces come from the environment: the simulated coefficient columns
+# B$... were drawn in the simulation chunk above, and the held medians
+# promed/p1med/p2med/gdpmed in the estimation-sample chunk. It returns a full
+# column of 10,000 simulated predictions. We call it four times, once per
+# combination of ra and cw:
+xb_scen <- function(ra, cw) {
+  B$b0 + B$b_ra*ra + B$b_cw*cw + B$b_pro*promed +
+  B$b_p1*p1med + B$b_p2*p2med + B$b_gdp*gdpmed
+}
+
+combos <- data.frame(ra0cw0 = xb_scen(0, 0), ra1cw0 = xb_scen(1, 0),
+                     ra0cw1 = xb_scen(0, 1), ra1cw1 = xb_scen(1, 1))
+
+ggplot(combos) +
+  geom_density(aes(ra0cw0), fill = bu_green,      alpha = .3) +
+  geom_density(aes(ra1cw0), fill = bu_lightgreen, alpha = .3) +
+  geom_density(aes(ra0cw1), fill = bu_palegreen,  alpha = .3) +
+  geom_density(aes(ra1cw1), fill = bu_grey,       alpha = .4) +
+  annotate("text", x = 5.7,  y = .55, label = "open access,\nno civil war",   color = bu_black, size = 3) +
+  annotate("text", x = 13.6, y = .45, label = "open access,\ncivil war",      color = bu_black, size = 3) +
+  annotate("text", x = 16.8, y = .35, label = "restricted access,\nno civil war", color = bu_green, size = 3) +
+  annotate("text", x = 24.7, y = .30, label = "restricted access,\ncivil war",    color = bu_black, size = 3) +
+  labs(title = "Simulated expected scarring for four scenarios",
+       x = "Expected scarring torture", y = "density") +
+  theme_minimal()
+```
+
+Four clearly separated distributions. Restricted access shifts the whole distribution right by about eleven allegations; civil war by about eight; together they stack. And because we have the *full* simulated distribution, not just a point, we can read directly the probability that, say, a restricted-access country in civil war has higher expected scarring than an open one at peace — the overlap between two of these densities. That is the flexibility King, Tomz, and Wittenberg were after, and it is why simulation is the default when the quantity gets complicated.
+
+# Average effects, two ways
+
+The last piece ties the file together: the same average-effects **approach** from earlier, with its interval computed two different **techniques** — analytically (delta) and by simulation. This is the approach-times-technique separation made concrete, and it fixes the rough "median of the SEs" band we flagged earlier with a proper standard error of the average.
+
+**Delta.** The average prediction $\bar y = \frac1n \sum_i x_i \widehat\beta$ is a linear function of $\widehat\beta$, so its gradient is just the column means of the (counterfactual) design matrix, $\bar{\mathbf{x}}$, and $\mathrm{Var}(\bar y) = \bar{\mathbf{x}}' \mathbf{V} \bar{\mathbf{x}}$:
+
+```{r ae-delta}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+X <- model.matrix(m1)     # design matrix R built when it fit m1 (n x k)
+b <- coef(m1); V <- vcov(m1)
+
+# map_dfr (see the average-effects loop above) calls the function below once for
+# each protest value v in 0:37 and row-binds the results. That function is
+# anonymous -- defined inline, with no name -- and takes the one argument v; it
+# reads X, b, and V from the environment. For each v it copies the design matrix
+# (Xi), sets everyone's protest to v, and returns a one-row data frame with the
+# average prediction and its delta-method interval.
+ae_delta <- map_dfr(seq(0, 37, 1), function(v) {
+  Xi <- X
+  Xi[, "lagprotest"] <- v                 # set protest to v for the whole sample
+  ybar <- mean(as.vector(Xi %*% b))        # average prediction
+  g    <- colMeans(Xi)                      # gradient of the average = mean design row
+  se   <- sqrt(as.numeric(t(g) %*% V %*% g))
+  data.frame(pr = v, avg = ybar, lb = ybar - 1.96*se, ub = ybar + 1.96*se)
+})
+```
+
+**Simulation.** Draw coefficient vectors and, for each draw, take the average prediction across the sample; the percentiles of those averages are the interval. No differentiation:
+
+```{r ae-sim}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+sims <- MASS::mvrnorm(10000, coef(m1), vcov(m1))     # 10000 x k draws
+
+# Same map_dfr + inline-function pattern as the delta version above; the only
+# difference is inside the function: for each protest value v we average the
+# 10,000 simulated predictions and take their percentiles, rather than forming a
+# delta-method SE.
+ae_sim <- map_dfr(seq(0, 37, 1), function(v) {
+  Xi <- X
+  Xi[, "lagprotest"] <- v
+  draws <- colMeans(Xi %*% t(sims))                   # 10000 average predictions
+  q <- quantile(draws, c(.025, .5, .975))
+  data.frame(pr = v, avg = q[2], lb = q[1], ub = q[3])
+})
+```
+
+```{r ae-compare}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+bind_rows(mutate(ae_delta, method = "delta"),
+          mutate(ae_sim,   method = "simulation")) %>%
+  ggplot(aes(pr, avg)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub, fill = method), alpha = .3) +
+  geom_line(aes(color = method), linewidth = 1) +
+  scale_fill_manual(values = bu_two) +
+  scale_color_manual(values = bu_two) +
+  labs(title = "Average effects, two uncertainty techniques",
+       subtitle = "delta-method and simulated intervals on the same average predictions",
+       x = "Protests (t-1)", y = "average scarring torture") +
+  theme_minimal()
+```
+
+The two bands sit exactly on top of each other — and here the agreement is *exact*, not approximate. In the linear model the average prediction is a linear function of $\widehat\beta$, so the delta method's first-order Taylor approximation has no higher-order terms to drop, and simulation samples the same normal it assumes. In MLE, when the average runs through a nonlinear link, the delta interval becomes an approximation that can spill past $[0,1]$ while the simulated one cannot, and the two bands part company near the boundaries. That divergence is the whole reason the MLE class leans on simulation. Here, in OLS, the two are one.
+
+# Take-away
+
+These methods all transport directly to nonlinear models like most of the maximum likelihood models you'll ever encounter. The only difference is that in the nonlinear setting, we need to transform $x\widehat{\beta}$ by $F$, the link function, mapping the linear prediction onto the appropriate space.
+
+- **end-point transformation** was $\widehat y \pm 1.96\,se$ (symmetric, unbounded);
+- the **ML standard error** $\sqrt{\mathrm{diag}(XVX')}$ was `predict()`'s $se(\widehat y)$;
+- the **delta standard error of $\widehat y$** equaled that same ML standard error;
+- **delta and simulation** intervals agreed exactly.
+
+
+
+
+# References
+
+::: {#refs}
+:::

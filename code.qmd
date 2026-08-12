@@ -4,6 +4,8 @@ title: "Code"
 
 Exercises and worked examples will be linked here as the semester unfolds.
 
+- [Linear Model Prediction Methods](predictionOLS26.qmd) — the OLS prediction toolkit (at-means and average effects; ML, delta, and simulation-based uncertainty), previewing the methods we generalize to nonlinear models.
+
 <!--
 [exercise #1](ex12026answers.qmd)
 

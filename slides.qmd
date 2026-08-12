@@ -3,3 +3,5 @@ title: "Slides"
 ---
 
 Lecture slides and notes will be linked here as the semester proceeds.
+
+- [Linear Model Prediction Methods](predictionOLS26.qmd) — prediction and quantities of interest in the linear model (at-means and average effects; ML, delta, and simulation-based uncertainty), previewing the methods we generalize to nonlinear models.

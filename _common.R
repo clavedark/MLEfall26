@@ -18,6 +18,11 @@ bu_black       <- "#000000"
 # The two-line default (logit vs probit, y=1 vs y=0, etc.).
 bu_two <- c(bu_green, bu_lightgreen)
 
+# Convention (Dave, 2026-08): TEXT annotations inside plots use a DARK color
+# (bu_black, or bu_green where it labels a dark-green series) -- never a light
+# color (bu_lightgreen / bu_palegreen / bu_grey), which is hard to read on a
+# white panel. Light colors are fine for lines, fills, and reference segments.
+
 # ggplot conveniences ------------------------------------------------------
 # Discrete BU palette for colored/filled series.
 scale_color_bu <- function(...) ggplot2::scale_color_manual(values = unlist(bucolors), ...)

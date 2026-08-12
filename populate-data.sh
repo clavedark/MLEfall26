@@ -20,6 +20,9 @@ COPIES=(
   "${HOME}/Documents/teaching/606J-mle/2022/exercises/ex1/dp.csv|dp.csv|DP exercise version (CSV)"
   "${HOME}/Documents/teaching/606J-mle/2024/MLEfall24/dptime.csv|dptime.csv|DP with time variable, for hazards"
 
+  # --- Linear-model prediction preview (OLS; predictionOLS26) ---
+  "${HOME}/Documents/teaching/501/2023/exercises/ex4/ITT/data/ITT.csv|ITT.csv|Ill-Treatment & Torture, country-year (OLS prediction preview)"
+
   # --- ANES / CCES (binary extensions, ordered, choice) ---
   "${HOME}/Documents/teaching/606J-mle/2020/slides/L3_binaryextensions/code/anes_pilot_2016.csv|anes_pilot_2016.csv|ANES 2016 pilot"
   "${HOME}/Documents/teaching/606J-mle/2024/MLEfall24/ces.csv|ces.csv|CCES (large; consider git-lfs or .gitignore)"
