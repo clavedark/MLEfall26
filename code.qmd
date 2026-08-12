@@ -2,7 +2,7 @@
 title: "Code"
 ---
 
-Exercises and worked examples will be linked here as the semester unfolds.
+Code will be linked here as the semester unfolds.
 
 - [Linear Model Prediction Methods](predictionOLS26.qmd) — the OLS prediction toolkit (at-means and average effects; ML, delta, and simulation-based uncertainty), previewing the methods we generalize to nonlinear models. Download the [R script](https://github.com/clavedark/MLEfall26/blob/main/predictionOLS26.R) to run the examples live.
 
