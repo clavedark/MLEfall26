@@ -45,6 +45,8 @@ readings/*
 !mlesyllabus26.qmd
 # released deck: linear model prediction methods
 !predictionOLS26.qmd
+# released deck: binary response models
+!binarymodels26.qmd
 
 # Rendered output: ignore everything under docs/, then re-include only the
 # published pages and the shared assets GitHub Pages needs to serve them.
@@ -57,6 +59,8 @@ docs/*
 !docs/mlesyllabus26.pdf
 # released deck: linear model prediction methods
 !docs/predictionOLS26.html
+# released deck: binary response models
+!docs/binarymodels26.html
 !docs/styles.css
 !docs/search.json
 !docs/site_libs/
