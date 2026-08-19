@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 
-<title>Code – MLE - Fall 2026</title>
+<title>Exercises &amp; Code – MLE - Fall 2026</title>
 <style>
 code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
@@ -273,7 +273,7 @@ ul.task-list li input[type="checkbox"] {
   </li>  
   <li class="nav-item">
     <a class="nav-link active" href="./code.html" aria-current="page"> 
-<span class="menu-text">Code</span></a>
+<span class="menu-text">Exercises &amp; Code</span></a>
   </li>  
 </ul>
           </div> <!-- /navcollapse -->
@@ -307,7 +307,9 @@ ul.task-list li input[type="checkbox"] {
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#data" id="toc-data" class="nav-link active" data-scroll-target="#data">Data</a></li>
+  <li><a href="#exercises" id="toc-exercises" class="nav-link active" data-scroll-target="#exercises">Exercises</a></li>
+  <li><a href="#code" id="toc-code" class="nav-link" data-scroll-target="#code">Code</a></li>
+  <li><a href="#data" id="toc-data" class="nav-link" data-scroll-target="#data">Data</a></li>
   </ul>
 </nav>
     </div>
@@ -317,7 +319,7 @@ ul.task-list li input[type="checkbox"] {
 
 <header id="title-block-header" class="quarto-title-block default">
 <div class="quarto-title">
-<h1 class="title">Code</h1>
+<h1 class="title">Exercises &amp; Code</h1>
 </div>
 
 
@@ -334,21 +336,26 @@ ul.task-list li input[type="checkbox"] {
 </header>
 
 
-<p>Code will be linked here as the semester unfolds.</p>
+<section id="exercises" class="level2">
+<h2 class="anchored" data-anchor-id="exercises">Exercises</h2>
+<p>Exercises are posted here as they’re assigned. Turn in both your source (<code>.qmd</code>/<code>.R</code>) and the rendered document on Brightspace. Data files are on Brightspace unless linked below.</p>
+<ul>
+<li><a href="./ex12026.html">Exercise #1 — Distributions, Simulation, and the Log-Likelihood</a> — replicating figures, simulating a binary outcome, writing the log-likelihood, and reviewing the logit and probit with predicted probabilities. Uses <code>ces.csv</code> (Brightspace).</li>
+</ul>
+</section>
+<section id="code" class="level2">
+<h2 class="anchored" data-anchor-id="code">Code</h2>
+<p>Code is linked here as the semester unfolds.</p>
 <ul>
 <li><a href="./predictionOLS26.html">Linear Model Prediction Methods</a> — the OLS prediction toolkit (at-means and average effects; ML, delta, and simulation-based uncertainty), previewing the methods we generalize to nonlinear models. Download the <a href="https://github.com/clavedark/MLEfall26/blob/main/predictionOLS26.R">R script</a> to run the examples live.</li>
 <li><a href="./binarymodels26.html">Binary Response Models</a> — logit and probit from the likelihood up, with predicted probabilities, marginal effects, and odds ratios. Download the <a href="https://github.com/clavedark/MLEfall26/blob/main/binarymodels26.R">R script</a>; the democratic peace data it reads (<code>dp.dta</code>) is on Brightspace.</li>
 </ul>
+</section>
 <section id="data" class="level2">
 <h2 class="anchored" data-anchor-id="data">Data</h2>
 <ul>
 <li><a href="https://github.com/clavedark/MLEfall26/blob/main/data/ITT.csv">ITT data (<code>ITT.csv</code>)</a> — Ill-Treatment and Torture allegation counts by country-year, merged with World Bank (WDI) and Polity covariates; used in the <code>predictionOLS.R</code> script. <em>Source: Conrad, Courtenay R., Jillienne Haglund, and Will H. Moore. 2013. “Disaggregating Torture Allegations: Introducing the Ill-Treatment and Torture (ITT) Country-Year Data.” International Studies Perspectives 14(2): 199-220. <a href="https://faculty.ucmerced.edu/cconrad2/Academic/ITT_Data_Collection.html">ITT project page</a>.</em></li>
 </ul>
-<!--
-[exercise #1](ex12026answers.qmd)
-
-[exercise #2](ex22026answers.qmd)
--->
 
 
 </section>

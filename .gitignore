@@ -61,6 +61,9 @@ docs/*
 !docs/predictionOLS26.html
 # released deck: binary response models
 !docs/binarymodels26.html
+# released EXERCISE: only the rendered page. `ex12026.qmd` stays ignored above --
+# its figure chunks are the answers to questions 1-4.
+!docs/ex12026.html
 !docs/styles.css
 # Aggregate of EVERY page rendered into docs/, not just the published ones,
 # so it leaks unreleased decks and answer keys unless trimmed. Run
