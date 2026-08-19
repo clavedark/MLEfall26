@@ -5,6 +5,7 @@ title: "Code"
 Code will be linked here as the semester unfolds.
 
 - [Linear Model Prediction Methods](predictionOLS26.qmd) — the OLS prediction toolkit (at-means and average effects; ML, delta, and simulation-based uncertainty), previewing the methods we generalize to nonlinear models. Download the [R script](https://github.com/clavedark/MLEfall26/blob/main/predictionOLS26.R) to run the examples live.
+- [Binary Response Models](binarymodels26.qmd) — logit and probit from the likelihood up, with predicted probabilities, marginal effects, and odds ratios. Download the [R script](https://github.com/clavedark/MLEfall26/blob/main/binarymodels26.R); the democratic peace data it reads (`dp.dta`) is on Brightspace.
 
 ## Data
 

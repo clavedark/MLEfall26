@@ -62,6 +62,9 @@ docs/*
 # released deck: binary response models
 !docs/binarymodels26.html
 !docs/styles.css
+# Aggregate of EVERY page rendered into docs/, not just the published ones,
+# so it leaks unreleased decks and answer keys unless trimmed. Run
+# ./prune-search-index.sh after each render, before committing.
 !docs/search.json
 !docs/site_libs/
 # ...but NOT these generated libs: decks embed their own resources
@@ -70,6 +73,14 @@ docs/*
 docs/site_libs/kePrint/
 docs/site_libs/lightable/
 docs/site_libs/revealjs/
+# Same story for the htmlwidgets/plotly stack pulled in by interactive figures
+# (versioned dir names, so match by prefix).
+docs/site_libs/crosstalk*/
+docs/site_libs/htmltools-fill*/
+docs/site_libs/htmlwidgets*/
+docs/site_libs/jquery*/
+docs/site_libs/plotly-*/
+docs/site_libs/typedarray*/
 !docs/.nojekyll
 
 # Assignment-development projects (not part of the course site)
@@ -89,3 +100,6 @@ challenge*-wage1-key.R
 
 # Claude Code local project config
 .claude/
+
+# Project worklog — names unreleased decks and answer keys; this repo is public.
+worklog.md
