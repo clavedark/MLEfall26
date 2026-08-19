@@ -158,7 +158,7 @@
     "href": "code.html#data",
     "title": "Exercises & Code",
     "section": "Data",
-    "text": "Data\n\nITT data (ITT.csv) \u2014 Ill-Treatment and Torture allegation counts by country-year, merged with World Bank (WDI) and Polity covariates; used in the predictionOLS.R script. Source: Conrad, Courtenay R., Jillienne Haglund, and Will H. Moore. 2013. \u201cDisaggregating Torture Allegations: Introducing the Ill-Treatment and Torture (ITT) Country-Year Data.\u201d International Studies Perspectives 14(2): 199-220. ITT project page."
+    "text": "Data\n\nCES 2020 (ces.csv) \u2014 individual-level responses from the 2020 Cooperative Election Study, reached through the \u201cAmerican Voter Bot\u201d project; used in exercise #1. GitHub won\u2019t preview a file this size \u2014 click Download raw file. Source: Cooperative Election Study, Harvard University. CES project site.\nITT data (ITT.csv) \u2014 Ill-Treatment and Torture allegation counts by country-year, merged with World Bank (WDI) and Polity covariates; used in the predictionOLS.R script. Source: Conrad, Courtenay R., Jillienne Haglund, and Will H. Moore. 2013. \u201cDisaggregating Torture Allegations: Introducing the Ill-Treatment and Torture (ITT) Country-Year Data.\u201d International Studies Perspectives 14(2): 199-220. ITT project page."
   },
   {
     "objectID": "mlesyllabus26.html",

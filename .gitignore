@@ -20,8 +20,12 @@ data/*
 !data/README.md
 # Deliberate exception (2026-08-12): ITT.csv IS published in the repo and linked
 # from the code page, with a source credit. ITT is openly distributed data; the
-# covariates are WDI + Polity (both open). This is the one tracked data file.
+# covariates are WDI + Polity (both open).
 !data/ITT.csv
+# Deliberate exception (2026-08-19): ces.csv IS published, linked from exercise #1
+# and the Data section. CES common content is openly distributed via Harvard
+# Dataverse. 13 MB -- the largest tracked file in the repo, and deliberately so.
+!data/ces.csv
 
 # Reading PDFs — copyrighted journal articles; kept locally, not in the public repo.
 # Students get readings through Brightspace. See refs606.bib for the citations.

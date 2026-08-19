@@ -17,5 +17,7 @@ Code is linked here as the semester unfolds.
 
 ## Data
 
+- [CES 2020 (`ces.csv`)](https://github.com/clavedark/MLEfall26/blob/main/data/ces.csv) — individual-level responses from the 2020 *Cooperative Election Study*, reached through the "American Voter Bot" project; used in exercise #1. GitHub won't preview a file this size — click **Download raw file**.
+  *Source: Cooperative Election Study, Harvard University. [CES project site](https://cces.gov.harvard.edu).*
 - [ITT data (`ITT.csv`)](https://github.com/clavedark/MLEfall26/blob/main/data/ITT.csv) — Ill-Treatment and Torture allegation counts by country-year, merged with World Bank (WDI) and Polity covariates; used in the `predictionOLS.R` script.
   *Source: Conrad, Courtenay R., Jillienne Haglund, and Will H. Moore. 2013. "Disaggregating Torture Allegations: Introducing the Ill-Treatment and Torture (ITT) Country-Year Data." International Studies Perspectives 14(2): 199-220. [ITT project page](https://faculty.ucmerced.edu/cconrad2/Academic/ITT_Data_Collection.html).*
