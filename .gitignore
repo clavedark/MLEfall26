@@ -13,31 +13,27 @@
 # OS
 .DS_Store
 
-# Data files — provided to students through Brightspace, not the public repo.
-# populate-data.sh remains tracked so Dave / a TA / a future machine can re-fetch.
+# Data files stay local; populate-data.sh is tracked so a new machine can re-fetch.
+# Published data files are un-ignored by name below.
 data/*
 !data/.gitkeep
 !data/README.md
-# Deliberate exception (2026-08-12): ITT.csv IS published in the repo and linked
-# from the code page, with a source credit. ITT is openly distributed data; the
-# covariates are WDI + Polity (both open).
+# Published (2026-08-12), with a source credit on the Data page. ITT is openly
+# distributed; its covariates are WDI + Polity, both open.
 !data/ITT.csv
-# Deliberate exception (2026-08-19): ces.csv IS published, linked from exercise #1
-# and the Data section. CES common content is openly distributed via Harvard
-# Dataverse. 13 MB -- the largest tracked file in the repo, and deliberately so.
+# Published (2026-08-19), linked from the Data page. CES common content is openly
+# distributed via Harvard Dataverse. 13 MB, the largest tracked file here.
 !data/ces.csv
 
-# Reading PDFs — copyrighted journal articles; kept locally, not in the public repo.
-# Students get readings through Brightspace. See refs606.bib for the citations.
+# Reading PDFs — copyrighted, kept local. Citations are in refs606.bib.
 readings/*
 !readings/.gitkeep
 
 # ---------------------------------------------------------------------------
-# PUBLISH ONLY THE SITE SHELL + SYLLABUS.
-# Topic decks, exercises, and scratch stay on disk (rendered, for reference)
-# but are held out of the public repo until released.
-# To RELEASE a deck: add matching `!<deck>.qmd` and `!docs/<deck>.html` lines
-# in the un-ignore blocks below, render it, link it in slides.qmd, then commit.
+# Publishing is opt-in. Ignore sources and rendered output wholesale, then
+# re-include each published page by name in the blocks below.
+# To publish a page: add `!docs/<name>.html` (and `!<name>.qmd` if the source
+# should be public too), render, run ./prune-search-index.sh, link it, commit.
 # ---------------------------------------------------------------------------
 
 # Sources: ignore every .qmd, then re-include only the published pages.
@@ -52,8 +48,8 @@ readings/*
 # released deck: binary response models
 !binarymodels26.qmd
 
-# Rendered output: ignore everything under docs/, then re-include only the
-# published pages and the shared assets GitHub Pages needs to serve them.
+# Rendered output: ignore everything under docs/, then re-include the published
+# pages and the shared assets GitHub Pages needs to serve them.
 docs/*
 !docs/index.html
 !docs/about.html
@@ -69,14 +65,12 @@ docs/*
 # its figure chunks are the answers to questions 1-4.
 !docs/ex12026.html
 !docs/styles.css
-# Aggregate of EVERY page rendered into docs/, not just the published ones,
-# so it leaks unreleased decks and answer keys unless trimmed. Run
-# ./prune-search-index.sh after each render, before committing.
+# Built from every page rendered into docs/, so it needs trimming to match the
+# published set. Run ./prune-search-index.sh after each render, before committing.
 !docs/search.json
 !docs/site_libs/
-# ...but NOT these generated libs: decks embed their own resources
-# (embed-resources: true), and no served shell page references them, so they are
-# render byproducts, not site assets. Ignoring them keeps them out of commits.
+# ...but NOT these generated libs: pages embed their own resources
+# (embed-resources: true), so these are render byproducts, not site assets.
 docs/site_libs/kePrint/
 docs/site_libs/lightable/
 docs/site_libs/revealjs/
@@ -90,7 +84,7 @@ docs/site_libs/plotly-*/
 docs/site_libs/typedarray*/
 !docs/.nojekyll
 
-# Assignment-development projects (not part of the course site)
+# Side projects — not part of the course site.
 flock-mle-assignment/
 flock-placement/
 
@@ -101,12 +95,11 @@ snoop.jpeg
 zorntweet.png
 
 # PLSC 501 materials parked here — they belong to the 501 course, not this site.
-# Answer keys stay out of the public repo regardless.
 Coding Challenges Sp 2026.pptx
 challenge*-wage1-key.R
 
 # Claude Code local project config
 .claude/
 
-# Project worklog — names unreleased decks and answer keys; this repo is public.
+# Project worklog — local only.
 worklog.md

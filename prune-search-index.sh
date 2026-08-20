@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# prune-search-index.sh — hold unreleased material out of the public search index.
+# prune-search-index.sh — trim docs/search.json to the published pages.
 #
-# Quarto builds docs/search.json from EVERY page it renders into docs/, including
-# decks, exercise answer keys, and side projects that .gitignore deliberately keeps
-# out of the public repo. The index is tracked (the site search needs it), so the
-# full text of unreleased material rides along with it. This script rewrites
-# docs/search.json down to the pages that are actually published.
-#
-# The allowlist is derived from .gitignore's `!docs/<page>.html` un-ignore lines,
-# so releasing a deck stays a one-place edit: un-ignore it, render, run this, commit.
+# Quarto builds the index from every page it renders into docs/, so the tracked
+# index needs trimming to match what the site actually serves. The allowlist comes
+# from the `!docs/<page>.html` lines in .gitignore, which keeps publishing a
+# one-place edit.
 #
 # Run after every `quarto render`, before committing.
 
