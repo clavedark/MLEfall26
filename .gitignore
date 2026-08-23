@@ -47,6 +47,8 @@ readings/*
 !predictionOLS26.qmd
 # released deck: binary response models
 !binarymodels26.qmd
+# released deck: likelihood theory & estimation mechanics
+!likelihood26.qmd
 
 # Rendered output: ignore everything under docs/, then re-include the published
 # pages and the shared assets GitHub Pages needs to serve them.
@@ -61,6 +63,8 @@ docs/*
 !docs/predictionOLS26.html
 # released deck: binary response models
 !docs/binarymodels26.html
+# released deck: likelihood theory & estimation mechanics
+!docs/likelihood26.html
 # released EXERCISE: only the rendered page. `ex12026.qmd` stays ignored above --
 # its figure chunks are the answers to questions 1-4.
 !docs/ex12026.html
@@ -103,3 +107,9 @@ challenge*-wage1-key.R
 
 # Project worklog — local only.
 worklog.md
+
+# Reference copies of superseded long-form decks (see _reference/README.md).
+# Quarto ignores the directory; git should too -- the .html files are multi-MB
+# self-contained renders and the .qmd sources follow the same "ignore sources"
+# rule as every other topic deck above.
+_reference/

@@ -1,0 +1,820 @@
+---
+title: "Likelihood Theory & Estimation Mechanics"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: true
+filters:
+  - parse-latex
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+library(haven)      # read dp.dta with labels
+library(patchwork)  # paired likelihood-geometry plots
+
+# Binghamton palette + plotting helpers (bucolors, bu_green, scale_color_bu, ...)
+source(here::here("_common.R"))
+
+set.seed(20260610)
+```
+
+<style>
+table, th, td {
+    font-size: 18px;
+}
+tr:nth-child(odd) {
+  background-color: #f2f2f2;
+}
+</style>
+
+# Goals
+
+Last week we built a model for a binary $y$ from the ground up. We looked at $y$, wrote down the probability distribution that described it, took the joint probability of the whole sample, logged it, made the distribution's parameter a function of $x\beta$, and chose a link function $F$ to map the linear prediction on the appropriate (probability) space. Six steps, and at the end of them we were holding a log-likelihood function:
+
+$$
+\ell(\beta) = \sum_{i=1}^{n}\big[\, y_i \log \pi_i + (1-y_i)\log(1-\pi_i)\,\big],
+\qquad \pi_i = F(x_i\beta).
+$$
+
+Then we used `glm` to estimate the logit and generated quantities of interest.
+
+What we haven't covered is how the model got *estimated* — what goes on in the magic box when we call `glm` with a binomial family and a logit link. Filling that gap is the task here, answering these questions: 
+
+  - What *is* a likelihood, and how does it differ from a probability?
+  - Given data and a log-likelihood, how do we solve for the unknowns — and what, dimensionally, are we solving?
+  - Why are some estimates precise with small standard errors and others are not, and how does that arise from the data and the math of likelihood? 
+
+This will illustrate something we mentioned last week. In *interpretation*, a nonlinear model differs from a linear one in exactly one respect: we transform the linear prediction by $F$. In *estimation*, the two technologies are genuinely different. OLS gives you a single formula to apply to the data. Maximum likelihood, in almost every case we care about, does not — it builds a formula out of the data, then tries different "models," comparing them until it finds the one most likely to have generated what we observed. 
+
+# Technologies and machines
+
+Two terms to shape the discussion.
+
+An **estimation technology** is a principle for turning data into estimates — a rule for what makes an estimate good. Least squares makes the squared errors as small as possible; maximum likelihood makes the observed data as probable as possible; Bayesian updating folds the data into a prior to get a posterior. Structurally different procedures, same goal: the parameters behind the data. And they aren't always rivals — run least squares and maximum likelihood on the linear model and they return the *same* estimates.
+
+This course is about one technology. The reason we can work through a dozen models in a semester is that maximum likelihood runs every one of them through a single **estimation machine** — a fixed sequence of steps taking the data in and putting out an estimate and its uncertainty. Logit, Poisson, and hazard models all use the same machine with one part swapped, depending on the nature of $y$. So let's look at it now, before building any of it, so you know where each piece is going to sit.
+
+## The machine {#sec-machine}
+
+Here is the whole thing as a single chain. Read the arrows as **steps**, not as matrix operations: this is the order in which you actually do the work, from a spreadsheet on the left to a quantity of interest on the right. The top line is what *you* decide. The bottom line is what the machine does once you have decided.
+
+$$
+\begin{aligned}
+\textbf{choose:}\;&\underbrace{\text{data}}_{\text{spreadsheet}} \;\to\;
+\underbrace{X,\; y}_{n \times k,\; n \times 1} \;\to\;
+\underbrace{\theta}_{\text{what we want}} \;\to\;
+\underbrace{\bbox[#A7DA92, 3pt, border: 1px solid #005A43]{\,f(y \mid \theta)\,}}_{\textbf{swaps}} \;\to\;
+\underbrace{\bbox[#A7DA92, 3pt, border: 1px solid #005A43]{\,F\,}}_{\textbf{swaps}} \\[12pt]
+\textbf{compute:}\;&\underbrace{X\beta}_{n \times 1} \;\to\;
+\underbrace{\widehat\theta = F(X\beta)}_{n \times 1} \;\to\;
+\underbrace{\ell(\beta)}_{\text{one number}} \;\to\;
+\underbrace{\nabla\ell,\; H}_{k \times 1,\; k \times k} \;\to\;
+\underbrace{(-H)^{-1}}_{k \times k} \;\to\;
+\underbrace{\text{SE}}_{k \times 1} \;\to\; \text{QI}
+\end{aligned}
+$$
+
+**The two green boxes are the only things that change from one model to the next.** Everything else — forming $X\beta$, the derivatives, the inversion, the square roots — is identical whether we are estimating a logit, a Poisson, or a Cox model. When we move to counts in a few weeks, we swap those two boxes and nothing else moves.
+
+**What you choose:**
+
+- The **data** are a spreadsheet, $n$ rows by $k+1$ columns — one outcome and $k$ covariates, counting the constant. The first thing estimation does is split it into the design matrix $X$ ($n \times k$) and the outcome $y$ ($n \times 1$).
+- **$\theta$ is the quantity you want to model** — a probability, an expected count, a hazard rate, a time until failure. This is a substantive decision and it comes first. Notice what it does *not* settle: knowing $\theta$ is a probability tells you it has to land in $[0,1]$; it tells you nothing about which S-shaped function gets it there.
+- **$f(y \mid \theta)$ — the first swap — is the distribution** that generates $y$ given that quantity. Look at $y$ and it is nearly decided for you: a zero or a one gets the Bernoulli, whose parameter *is* the probability we wanted; a count gets the Poisson, whose parameter is a rate; a duration gets an exponential or a Weibull.
+- **$F$ — the second swap — is the link**, the function mapping the linear predictor onto the space $\theta$ has to occupy. Knowing $\theta$ is a probability tells us we need something running from the real line into $[0,1]$, and there are many such things — logit, probit, cloglog are three of them. Choosing among them is a genuinely separate decision, which is why it is a separate step.
+
+**What the machine does:**
+
+- Form the **linear predictor** $X\beta$ — an $n \times k$ matrix times a $k \times 1$ vector, one number per case. This is the part every model shares with OLS.
+- Push it through the link for the **fitted values** $\widehat\theta = F(X\beta)$, still $n \times 1$: the model's estimate of that quantity for every row. ($\theta$ up top is the quantity we set out to model; $\widehat\theta$ down here is what a particular $\beta$ predicts for it.)
+- Score those fitted values against the observed $y$ using $f$, sum the logs, and you have the **log-likelihood** $\ell(\beta)$ — one number saying how well this particular $\beta$ accounts for the whole sample. Note where $y$ went: it comes in at the far left and then sits out entirely until this step. $\ell(\beta)$ is the one place in the machine where the data and the model's predictions are compared.
+- The **gradient**, or score, $\nabla\ell(\beta)$, is $k \times 1$ — one partial derivative per parameter: a vector, not to be confused with the $k \times k$ Hessian.
+- The **Hessian** $H$ is $k \times k$ — the second derivative of $\ell$ with respect to every pair of parameters. Its negative inverse $(-H)^{-1}$ is the $k \times k$ variance–covariance matrix, and the square roots of *its diagonal* are the standard errors.
+
+The score and the Hessian probably mean nothing to you yet; the second half of these notes is about what they are. What to take from the chain now is its shape: two substantive choices, made in the order a researcher actually makes them, then a machine that runs identically every time.
+
+# Probability vs. likelihood
+
+Probability and likelihood run in opposite directions, and everything we do rests on the difference.^[In much of what follows, I'm using notation from @king1989unifying.]
+
+::: {.callout-tip title="Probability: the model is given, the data are random"}
+
+Probability theory fixes the model and treats the data as random. *Given* a fair die, what is the chance of three threes in six rolls? *Given* a standard deck, what is the chance of drawing an ace? The model is known, fixed, and given *before* we see any data, and we reason **forward** to the probability of the data. Formally, a conditional probability,
+
+$$
+Pr(y \mid \mathcal{M}) \equiv Pr(\text{data} \mid \text{model}),
+$$
+
+resting on two conditions: the data are random and unknown, and the model *is* known.
+:::
+
+::: {.callout-tip title="Likelihood: the data are given, the model is unknown"}
+
+In likelihood theory, the model and its parameters are unknown; the data are fixed and known. The question is what model or **data generating process** produced the observed data. Suppose I flip a coin to decide whether to roll a 20-sided die or a 6-sided die. You see none of this; I only tell you I rolled a 4. Which die did I roll? That is our problem exactly — many models could have produced the 4, and we want the one that most likely did. We reason **backward**, and what we would like is the *inverse probability*,
+
+$$
+Pr(\mathcal{M} \mid y),
+$$
+
+the probability of the model given the data.
+:::
+
+We can't compute inverse probability without (very) strong assumptions about the unknown model itself — its parameters $\theta$. Even Bayes can't really deliver this directly.
+
+So we work with the **likelihood** instead. We let $\theta$ take hypothetical values $\tilde\theta$ — each one a competing data-generating process that could have produced what we see — and ask which makes the observed data most probable. In King's notation, the likelihood axiom is:
+
+$$
+\mathcal{L}(\tilde\theta \mid y, \mathcal{M}) \equiv L(\tilde\theta \mid y) = k(y)\,Pr(y \mid \tilde\theta) \;\propto\; Pr(y \mid \tilde\theta),
+$$
+
+where $\tilde\theta$ is a hypothetical value of $\theta$, not its true value. The term $k(y)$ is the **constant of proportionality**: constant across all the $\tilde\theta$, so it drops out of any comparison between them, but it is the functional form through which the data $y$ shape $\tilde\theta$, and it is what makes the likelihood a measure of *relative* rather than absolute uncertainty. As King (p. 61) puts it, $k(y)$ "measures the relative likelihood of a specified hypothetical model $\tilde\beta$ producing the data we observed." At its core, this is what allows us to compare likelihoods to decide which model most likely generated the observed data.
+
+So the likelihood of the data is proportional to the probability of the data, and two consequences stay with us all term. A likelihood is *relative* evidence — its magnitude is meaningless, only comparisons across $\tilde\theta$ carry information, which is exactly what $k(y)$ dropping out means. And the maximum likelihood estimate $\widehat\theta$ is the parameter value under which the data we saw were most probable. 
+
+@fig-prob-vs-lik puts the two approaches side by side, using the same binomial expression in both panels.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-prob-vs-lik
+#| fig-width: 10
+#| fig-height: 4.4
+
+# LEFT: fix the model (pi = .3) and let the DATA
+# vary -- a probability distribution over the datasets we might have seen.
+# RIGHT: fix the DATA (we saw 3 successes in 10) and let the MODEL vary -- the
+# likelihood over candidate values of pi. The dashed line marks the same height
+# in both panels, because Pr(y=3 | pi=.3) and L(pi=.3 | y=3) are the same number.
+
+n_tr <- 10; k_obs <- 3; pi_fix <- 0.3
+shared <- dbinom(k_obs, n_tr, pi_fix)
+
+p_prob <- ggplot(tibble(k = 0:n_tr,
+                        p = dbinom(0:n_tr, n_tr, pi_fix),
+                        seen = (0:n_tr) == k_obs),
+                 aes(k, p, fill = seen)) +
+  geom_col(width = 0.72) +
+  geom_hline(yintercept = shared, linetype = "dashed", color = bu_black) +
+  scale_fill_manual(values = c(`FALSE` = bu_palegreen, `TRUE` = bu_green), guide = "none") +
+  scale_x_continuous(breaks = 0:n_tr) +
+  annotate("text", x = 7.6, y = shared, vjust = -0.8, size = 3.4, color = bu_black,
+           label = "the dataset we actually saw") +
+  labs(title = "Probability: fix the model, let the data vary",
+       subtitle = "the die is known; we reason forward to the data",
+       x = "successes in 10 trials  (the DATA vary)",
+       y = expression(Pr(y ~ "|" ~ pi == 0.3))) +
+  theme_minimal()
+
+grid_pi <- seq(0.001, 0.999, length.out = 400)
+p_lik <- ggplot(tibble(pi = grid_pi, L = dbinom(k_obs, n_tr, grid_pi)),
+                aes(pi, L)) +
+  geom_line(linewidth = 1, color = bu_green) +
+  geom_hline(yintercept = shared, linetype = "dashed", color = bu_black) +
+  geom_vline(xintercept = pi_fix, linetype = "dotted", color = bu_black) +
+  annotate("text", x = 0.62, y = shared, vjust = -0.8, size = 3.4, color = bu_black,
+           label = "same height, same number") +
+  labs(title = "Likelihood: fix the data, let the model vary",
+       subtitle = "the data are known; we reason back to the model",
+       x = expression("candidate" ~ tilde(pi) ~ " (the MODEL varies)"),
+       y = expression(L(tilde(pi) ~ "|" ~ y == 3))) +
+  theme_minimal()
+
+p_prob + p_lik
+```
+
+On the left the **model** is given — $\pi = 0.3$ — and the bars show how probable each possible dataset was; the dark bar is the one we drew. On the right the **data** are given — 3 successes out of 10 — and the curve shows how well each candidate $\tilde\pi$ accounts for it. The arithmetic didn't change between panels; what changed is which argument we hold fixed.
+
+The dashed line is the point of the figure: the dark bar's height on the left and the curve's height at $\tilde\pi = 0.3$ on the right are *the same number*. A likelihood is not a new quantity; it is the probability of the data, read as a function of the parameter. That is what proportionality means in the axiom — and it is why the level of the likelihood contains no information. The right-hand curve is not a probability distribution over $\tilde\pi$; it doesn't integrate to one, and "what is the probability that $\pi = 0.3$" is not a question it answers. All it supports is comparison among likelihoods associated with different possible models (parameters).
+
+Where do the numbers come from? Apply the axiom. Each candidate model is a die (6-sided, 20-sided), the data are the single roll $y = 4$, and a model's likelihood is proportional to the probability it assigns to what we saw. A fair $s$-sided die puts $Pr(y = 4 \mid s) = 1/s$ on every face it has:
+
+$$
+\begin{aligned}
+L(\text{6-sided} \mid y = 4)  &\;\propto\; Pr(y = 4 \mid \text{6-sided})  \;=\; \frac{1}{6}  \;=\; 0.167 \\[4pt]
+L(\text{20-sided} \mid y = 4) &\;\propto\; Pr(y = 4 \mid \text{20-sided}) \;=\; \frac{1}{20} \;=\; 0.050 .
+\end{aligned}
+$$
+
+That is the whole computation — a probability read as a function of the model. Here are the likelihoods and the ratio of likelihoods:
+
+```{r dice-lik}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+
+# The likelihood of each candidate die, given the one roll we observed (y = 4).
+# For a fair s-sided die every face has probability 1/s, so Pr(y = 4 | s) = 1/s.
+dice_L <- c(`6-sided die` = 1/6, `20-sided die` = 1/20)
+
+round(dice_L, 4)
+round(unname(dice_L[1] / dice_L[2]), 2)   # the likelihood ratio
+```
+
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-dice
+#| fig-width: 6.2
+#| fig-height: 3.4
+
+# I told you I rolled a 4. Which die? Neither probability is large; what the
+# data support is the COMPARISON between them.
+dice <- tibble(model = factor(names(dice_L), levels = names(dice_L)),
+               L     = unname(dice_L))
+
+ggplot(dice, aes(model, L, fill = model)) +
+  geom_col(width = 0.55) +
+  geom_text(aes(label = sprintf("%.3f", L)), vjust = -0.5, size = 4, color = bu_black) +
+  scale_fill_manual(values = c(bu_green, bu_lightgreen), guide = "none") +
+  coord_cartesian(ylim = c(0, 0.21)) +
+  labs(title = "I rolled a 4. Which die did I roll?",
+       subtitle = "likelihood of the observed roll under each candidate model",
+       x = NULL, y = "L(model | y = 4)") +
+  theme_minimal()
+```
+
+Neither number is big — a 4 is unremarkable either way. But the six-sided die makes it about `r round((1/6)/(1/20), 1)` times more probable than the twenty-sided one does, and that ratio is the entire evidentiary content of the observation. Maximum likelihood is that comparison, run over a continuum of candidate models instead of two.
+
+
+::: {.callout-tip title="Take away"}
+- Probability fixes the model and lets the data vary. Likelihood fixes the data and lets the model vary. Same arithmetic, opposite directions.
+- A likelihood is not a new kind of quantity. It is the probability of the data, read as a function of the parameter — which is what the dashed line in @fig-prob-vs-lik shows.
+- The *magnitude* of a likelihood carries no information. Only comparisons of the likelihoods associated with candidate parameter values do, which is exactly what the constant $k(y)$ dropping out means.
+- The maximum likelihood estimate is the parameter value under which the data we actually observed were most probable.
+:::
+
+# The likelihood
+
+We covered much of this last week, but following is brief repetition. King's notation gives us the general form:
+
+$$
+Y \sim f(y \mid \theta, \alpha), \qquad \theta = G(X, \beta).
+$$
+
+The data $Y$ follow a distribution governed by parameters $\theta$ (and ancillary $\alpha$), and $\theta$ is a function of covariates $X$ and effects $\beta$. Assuming the observations are independent, the joint density is the product of the marginals, and the log turns that product into a sum:
+
+$$
+\ell(\beta) \;=\; \log \prod_{i=1}^{n} f(y_i \mid \theta_i)
+\;=\; \sum_{i=1}^{n} \log f(y_i \mid \theta_i).
+$$
+
+Everything specific to a model lives in that one function $f$ — so be clear about what $f$ is. It is the probability distribution we assign to the outcome, and we pick it by *looking at $y$*. Zero or one gets the Bernoulli; a count of events gets the Poisson; a time until something happens gets an exponential or a Weibull. That is the whole choice: look at the data, name the distribution that generates that kind of data, write down its density. Change $f$ and you change the model; the structure around it stays put.
+
+## The binomial log-likelihood
+
+Make it concrete with the binomial. For a single binary outcome $y_i$, write $\pi_i = Pr(y_i = 1)$ for the probability of a one. The density of one observation is the Bernoulli, and we map the linear predictor $x_i\beta$ into that probability with a link function $F$:
+
+$$
+f(y_i \mid \pi_i) = \pi_i^{y_i}(1-\pi_i)^{1-y_i},
+\qquad
+\pi_i = F(x_i\beta).
+$$
+
+Those two objects *are* the two green boxes from the machine, in that order. The quantity we want is $\pi_i$, a probability. The Bernoulli $f(y_i \mid \pi_i)$ is the first box, and looking at $y$ all but picks it: the outcome is a zero or a one. The link $F$ is the second box and a separate decision — $\pi_i$ must land in $[0,1]$ and $x_i\beta$ has no such manners, it will happily return $-4.2$ or $17$. Any well-behaved CDF would discipline it; *which* one we pick is a separate argument, and one we have already had.
+
+Those are the only two substantive choices in the model. Everything downstream — forming $X\beta$, summing logs, differentiating, inverting, taking square roots — is machinery that neither knows nor cares that the outcome is binary. Build the Poisson in a few weeks and we change exactly these two lines, then run the identical remainder.
+
+Take the log of that density, sum over the $n$ observations, and substitute the link for $\pi_i$. That gives us the form we will use for the rest of the semester:
+
+$$
+\ell(\beta) \;=\; \sum_{i=1}^{n}\Big[\;
+\underbrace{y_i \log F(x_i\beta)}_{\text{the ones}}
+\;+\;
+\underbrace{(1-y_i)\log\big(1 - F(x_i\beta)\big)}_{\text{the zeros}}
+\;\Big]
+$$
+
+As we discussed last week, the two parts of this log-likelihood are mirror images, corresponding to the structure of a binary variable. The $y_i$ out front of the first term and the $(1-y_i)$ out front of the second are doing switching work: when $y_i = 1$ the second term is multiplied by zero and vanishes, and when $y_i = 0$ the first term vanishes. So every observation in the sample contributes exactly one of the two, never both. The ones contribute $\log Pr(y_i = 1)$, and the zeros contribute $\log Pr(y_i = 0)$.
+
+# The machine is general {#sec-general}
+
+Let's show how generalizable the machine is - let's use three different outcome variables, declare their distributions, and build likelihoods.
+
+The recipe is the one we just used. Look at $y$, pick $f$, write the joint probability, log it, make the parameter a function of $x\beta$ through a link, and differentiate. Only the first two steps differ across the three.
+
+**A binary outcome.** The Bernoulli, with $\pi_i = \Lambda(x_i\beta)$. We built this log-likelihood above; differentiating it with respect to $\beta$ gives
+
+$$
+\frac{\partial \ell}{\partial \beta} \;=\; \sum_{i=1}^{n}(y_i - \pi_i)\,x_i' \;=\; X'(y - \pi).
+$$
+
+**A count outcome.** Now $y$ is a count of events — disputes in a year, bills introduced, terror incidents, Snickers bars without peanuts — so we reach for the Poisson, whose single parameter $\lambda$ is the rate at which events occur. Its probability mass function, the joint probability across the sample, and the log of that product:
+
+$$
+\begin{aligned}
+f(y_i \mid \lambda_i) &= \frac{e^{-\lambda_i}\lambda_i^{\,y_i}}{y_i!} \\[6pt]
+L(\lambda \mid y) &= \prod_{i=1}^{n} \frac{e^{-\lambda_i}\lambda_i^{\,y_i}}{y_i!} \\[6pt]
+\ell(\lambda \mid y) &= \sum_{i=1}^{n}\big[\, -\lambda_i + y_i\log\lambda_i - \log(y_i!)\,\big].
+\end{aligned}
+$$
+
+Now the link. A rate cannot be negative, and $x_i\beta$ certainly can be, so we need a function that maps the whole real line onto the positive half of it. The exponential does exactly that, so set $\lambda_i = \exp(x_i\beta)$. Substituting, and using $\log \lambda_i = \log e^{x_i\beta} = x_i\beta$ to simplify the middle term:
+
+$$
+\begin{aligned}
+\ell(\beta) &= \sum_{i=1}^{n}\big[\, -e^{x_i\beta} + y_i\, x_i\beta - \log(y_i!)\,\big] \\[6pt]
+\frac{\partial \ell}{\partial \beta} &= \sum_{i=1}^{n}\big(y_i - e^{x_i\beta}\big)\,x_i'
+   \;=\; X'(y - \lambda).
+\end{aligned}
+$$
+
+Two things happened on the way through. The $\log(y_i!)$ term has no $\beta$ in it, so it vanishes the moment we differentiate — it contributes to the log-likelihood's *level*, and the level carries no information. And the derivative arrived at the same place the binomial did: $X'$ times the gap between $y$ and the fitted value.
+
+**A continuous outcome.** Finally let $y$ be continuous and call it Normal with constant variance, $y_i \sim N(\mu_i, \sigma^2)$. The density, the joint density over an independent sample, and the log:
+
+$$
+\begin{aligned}
+f(y_i \mid \mu_i, \sigma^2) &= \frac{1}{\sqrt{2\pi\sigma^2}}\,
+   \exp\!\left[-\frac{(y_i - \mu_i)^2}{2\sigma^2}\right] \\[6pt]
+L(\mu, \sigma^2 \mid y) &= \prod_{i=1}^{n} \frac{1}{\sqrt{2\pi\sigma^2}}\,
+   \exp\!\left[-\frac{(y_i - \mu_i)^2}{2\sigma^2}\right] \\[6pt]
+\ell(\mu, \sigma^2 \mid y) &= -\frac{n}{2}\log(2\pi) \;-\; \frac{n}{2}\log\sigma^2
+   \;-\; \frac{1}{2\sigma^2}\sum_{i=1}^{n}(y_i - \mu_i)^2 .
+\end{aligned}
+$$
+
+
+And now the link — the link is the identity function because $\beta$ is linear and because the effects, $x\beta$ are in the same units as the $y$ variable. Substituting and writing the sum of squares in matrix form:
+
+$$
+\ell(\beta, \sigma^2) = -\frac{n}{2}\log(2\pi) \;-\; \frac{n}{2}\log\sigma^2
+   \;-\; \frac{1}{2\sigma^2}(y - X\beta)'(y - X\beta).
+$$
+
+Only the third term contains $\beta$, so the first two are constants as far as $\beta$ is concerned and drop out when we differentiate:
+
+$$
+\frac{\partial \ell}{\partial \beta} \;=\; \frac{1}{\sigma^2}\,X'(y - X\beta).
+$$
+
+### On the linear model
+
+The Normal case deserves a moment on its own because it turns out OLS is the maximum likelihood estimator.
+
+Set that derivative to zero. The factor $1/\sigma^2$ is a positive scalar, so it divides straight out and the variance plays no part in locating $\widehat\beta$ at all — which is worth noticing, because it means the estimate would be the same whatever $\sigma^2$ turned out to be:
+
+$$
+\begin{aligned}
+\frac{1}{\sigma^2}\,X'(y - X\beta) &= 0 \\[4pt]
+X'(y - X\beta) &= 0 \\[4pt]
+X'y - X'X\beta &= 0 \\[4pt]
+X'X\beta &= X'y \\[4pt]
+\widehat\beta &= \bbox[#A7DA92, 3pt, border: 1px solid #005A43]{\;(X'X)^{-1}X'y\;}
+\end{aligned}
+$$
+
+That is the OLS estimator. Not something that resembles it, not a special case that happens to agree numerically — the same formula, arrived at from a completely different starting principle. **Least squares asks which $\beta$ makes the squared errors smallest. Maximum likelihood asks which $\beta$ makes the observed data most probable. On the linear model, under a Normal $y$, those two questions have the same answer.**
+
+Two things to note. First, **OLS is the maximum likelihood estimator for the linear model**, so maximum likelihood does not compete with least squares or replace it; it *contains* it as the special case where $y$ is Normal and the link is the identity. Everything you already know about OLS survives intact. Second — and this is the part that matters for the next section — notice *why* it solved. $\beta$ sat out in the open, multiplied by matrices we know, so a line of algebra could isolate it. Nothing was buried inside a nonlinear function. The absence of a (non-linear) link function means we can solve this algebraically. 
+
+If you want it, the variance has a closed form too: differentiating $\ell$ with respect to $\sigma^2$ and setting that to zero gives $\widehat\sigma^2 = (y - X\widehat\beta)'(y - X\widehat\beta)/n$, the mean squared residual. It is the one place ML and OLS visibly differ, since OLS divides by $n - k$ rather than $n$ to get an unbiased estimate — the ML version is biased in small samples, and consistent, which is the trade we will meet again.
+
+Now line the three up:
+
+$$
+\underbrace{X'(y - \pi)}_{\text{binary}} \qquad
+\underbrace{X'(y - \lambda)}_{\text{count}} \qquad
+\underbrace{X'(y - X\beta)}_{\text{continuous}}
+$$
+
+Three different outcomes, three different distributions, three different links — and **one shape**: $X'(\,y - \text{fitted}\,)$, the design matrix times the gap between what we observed and what the model predicts. The link decides what "fitted" means, and that is the only thing it decides. Everything else about the arithmetic is indifferent to whether $y$ is a war, a body count, or a vote share.
+
+This shows how generalizable maximum likelihood is - the machine has lots of possible applications with very minor adaptations.
+
+::: {.callout-tip title="Take away"}
+- The recipe really is the same for every model. Only $f$ and $F$ change; we changed both, twice, and the machinery downstream never moved.
+- Every derivative came out as $X'(\,y - \text{fitted}\,)$ — covariates times the model's mistakes. That form will recur all semester.
+- The work of building a new model is *substantive*, not mathematical: look at $y$, pick a distribution, pick a link. The estimator is already built.
+- **OLS is the maximum likelihood estimator for the linear model.** Run the recipe on a Normal outcome with an identity link and $(X'X)^{-1}X'y$ is the result — maximum likelihood contains least squares rather than competing with it.
+
+:::
+
+# Solving for the unknowns {#sec-solve}
+
+So once we've built a log-likelihood function, how do we actually solve for the unknowns? Let's think of this in two discrete steps. 
+
+**The first recipe takes data and returns a function.** That is what we did last week and just repeated above for the binomial:
+
+1. Look at $y$ and decide what kind of thing it is — binary, a count, a duration.
+2. Pick the distribution $f(y \mid \theta)$ that describes that kind of thing.
+3. Write the joint probability of the whole sample.
+4. Take logs, which turns that product into a sum.
+5. Make the distribution's parameter a function of the covariates, $\theta_i = F(x_i\beta)$, choosing the link $F$ so the parameter lands on the space it has to live in.
+
+This corresponds to the first line of the machine above. 
+
+**The second recipe takes that function and returns an estimate.** It takes $\ell(\beta)$ in and hands back $\widehat\beta$ and its standard errors — the second line of the machine above. Where the first recipe is the same for every model, the second is where models differ, sometimes enormously, in difficulty.
+
+This section briefly explores methods that don't work in broadly useful ways. Then, we identify two quantities that will prove to be essential parts of the method we use most commonly for estimating maximum likelihood models. That method is the Newton-Raphson method, and is what we cover in detail in the maximization notes.
+
+## Analytic methods, and closed-form solutions
+
+Take the binomial with no $x$ variables at all. Every observation shares the same probability $\pi$ — there is one unknown, a single number, and we want the value of it that makes our observed string of zeros and ones most probable. Write the log-likelihood, differentiate with respect to $\pi$, set it to zero:
+
+$$
+\begin{aligned}
+\ell(\pi) &= \sum_{i=1}^{n}\big[\, y_i\log\pi + (1-y_i)\log(1-\pi)\,\big] \\[4pt]
+          &= \Big(\textstyle\sum_i y_i\Big)\log\pi \;+\; \Big(n - \textstyle\sum_i y_i\Big)\log(1-\pi) \\[4pt]
+\frac{d\ell}{d\pi} &= \frac{\sum_i y_i}{\pi} \;-\; \frac{n - \sum_i y_i}{1-\pi} \;=\; 0 \\[4pt]
+(1-\pi)\textstyle\sum_i y_i &= \pi\Big(n - \textstyle\sum_i y_i\Big) \\[4pt]
+\textstyle\sum_i y_i &= \pi\, n \\[4pt]
+\widehat\pi &= \bbox[#A7DA92, 3pt, border: 1px solid #005A43]{\;\frac{\sum_i y_i}{n} \;=\; \bar y\;}
+\end{aligned}
+$$
+
+The second line just counts: $\sum_i y_i$ observations contribute a $\log\pi$, the remaining $n - \sum_i y_i$ contribute a $\log(1-\pi)$. Two steps of algebra from there, and the answer is the sample mean of $y$. No software, no starting value, no algorithm — a formula.
+
+On the dispute data, that formula says the maximum likelihood estimate of $\pi$ is the observed dispute rate:
+
+```{r closed-bernoulli}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+dp <- read_dta(here::here("data", "dp.dta"))
+dp$lncaprat <- log(dp$caprat)   # a capability ratio is multiplicative, so model it on the log scale
+
+round(mean(dp$dispute), 4)
+```
+
+Two names for what we just did, because you will meet both constantly. Solving a model by taking a derivative, setting it to zero, and rearranging is an **analytic method** — algebra and calculus. When an analytic method works, what it produces is a **closed-form solution**: an explicit formula for the estimate in terms of the data, like $\widehat\pi = \bar y$. No starting values, no iteration, just straightforward computation.
+
+@fig-closed-forms draws the log-likelihood this formula maximizes, with the closed-form answer marked on it; it uses the democratic peace $y$ variable, presence or absence of a dispute.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-closed-forms
+#| fig-width: 6.5
+#| fig-height: 4.2
+
+# The log-likelihood over its one unknown, with the value the algebra produced
+# marked. I plot RELATIVE log-likelihood (subtracting the maximum) because the
+# level carries no information -- only comparisons across values of pi do.
+
+pi_hat <- mean(dp$dispute)
+g_pi   <- seq(0.030, 0.070, length.out = 400)
+ll_pi  <- sum(dp$dispute) * log(g_pi) + sum(1 - dp$dispute) * log(1 - g_pi)
+
+ggplot(tibble(pi = g_pi, rel = ll_pi - max(ll_pi)), aes(pi, rel)) +
+  geom_line(linewidth = 1, color = bu_green) +
+  geom_vline(xintercept = pi_hat, linetype = "dashed", color = bu_black) +
+  annotate("text", x = pi_hat, y = -95, hjust = -0.1, size = 3.6, color = bu_black,
+           label = paste0("hat(pi) == ", round(pi_hat, 4)), parse = TRUE) +
+  labs(title = "Bernoulli: militarized disputes",
+       subtitle = expression(hat(pi) == bar(y) ~ ", the sample proportion, found by algebra"),
+       x = expression(pi), y = "relative log-likelihood") +
+  theme_minimal()
+```
+
+One smooth hill with a single top: that shape is the structural fact that lets the calculus work. And hold onto its *width*. This hill is built on nearly 21,000 dyad-years, and by the end of these notes the width of a log-likelihood at its top will *be* the standard error.
+
+If maximum likelihood always went like this, it would be a footnote in a calculus course rather than a semester-long class. It doesn't, and it's worth being precise about where it falls apart.
+
+### Where the analytic method fails
+
+We don't actually want a single $\pi$ for the whole sample. We want it to *vary* with covariates; that is the entire point of a regression. So we **parameterize** — $\pi_i = \Lambda(x_i\beta)$ — and differentiate again, now with respect to $\beta$ rather than $\pi$.
+
+Put the two derivatives we built earlier side by side, the binomial's and the Normal's, and set each to zero. They are as close to identical as two expressions can be:
+
+$$
+\begin{aligned}
+\text{binomial:}\quad
+  \frac{\partial \ell}{\partial \beta} &= X'\big(y - \Lambda(X\beta)\big) \;=\; 0 \\[8pt]
+\text{Normal:}\quad
+  \frac{\partial \ell}{\partial \beta} &= X'\big(y - X\beta\big) \;=\; 0
+\end{aligned}
+$$
+
+Same $X'$, same $y$, same "observed minus fitted" in the middle. The only difference is the four characters wrapped around $X\beta$ on the top line — and that difference decides everything.
+
+On the bottom line, $\beta$ sits out in the open, multiplied by matrices we already know. Distribute, collect, invert, and it comes free: $X'y = X'X\beta$, so $\widehat\beta = (X'X)^{-1}X'y$. We did exactly this a few pages ago, and the answer was OLS.
+
+On the top line, try the same moves. Distribute the $X'$ and you get $X'y = X'\Lambda(X\beta)$ — and then you are stuck, because there is no way to peel $\Lambda$ off the right-hand side and leave $\beta$ standing alone. It is inside a nonlinear function, wrapped up with the data, and no rearranging extracts it. The same is true of the Poisson's $X'(y - e^{X\beta})$. **There is no closed form.** Not one we have failed to find — one that does not exist.
+
+What we use instead is a **numerical method**: a procedure that *searches* for the answer by evaluating the function over and over, rather than solving for it. Guess a $\beta$, see what the function says, use that to make a better guess, repeat until you stop improving. The particular numerical method this course uses is **Newton–Raphson**; we'll build it in the maximization notes. 
+
+To prepare for the Newton-Raphson, let's assemble two things Newton–Raphson needs — the first and second derivatives of the log-likelihood — and show what they tell us about the estimate quite apart from any algorithm.
+
+
+::: {.callout-tip title="Take away"}
+- Writing down a log-likelihood and solving it are two different jobs. The first recipe always works the same way; the second is where models differ in difficulty.
+- An **analytic method** — differentiate, set to zero, rearrange — gives a **closed-form solution** when it works: an explicit formula, like $\widehat\pi = \bar y$. No starting values, no iteration.
+- Add covariates and it stops working. $\beta$ ends up buried inside a nonlinear link, $\Lambda(x\beta)$, and no rearranging gets it out.
+- The linear model is the exception, and it is worth knowing exactly why: its link is the identity, so $\beta$ sits out in the open and one line of algebra frees it.
+- We use a **numerical method** instead: search rather than solve. 
+:::
+
+# Derivatives of the log-likelihood function
+
+Before any notation, be clear about what we are doing and why. We have a log-likelihood $\ell(\beta)$ — a function that takes any candidate $\beta$ and returns one number, how probable our sample is under it. We have just established that we cannot solve for the $\beta$ that maximizes it. So we are going to have to **guess** the values of $\beta$, and the question becomes: *given a guess, what can we learn from that guessed point on the log-likelihood function?*
+
+We can learn quite a bit using the first and second derivatives of $\ell$ **evaluated at that guess**. These are the derivatives at the particular point on the likelihood surface picked out by whatever $\beta$ we are currently examining.
+
+- The **first derivative** is the slope of $\ell$ at that point. If it is positive, $\ell$ is still rising as $\beta$ increases, so the maximum lies somewhere to the right and our guess is too low. If it is negative, the maximum is to the left and our guess is too high. Either way it tells us *where the maximum isn't*, which is most of what we need.
+
+- The **second derivative** is the rate at which that slope is changing. Two jobs. First, it confirms we are on a hill rather than in a valley - this is maximum, not minimum likelihood, after all. The flat spot we're hunting is a maximum only if the surface is bending downward there. Second, it tells us how sharply the surface is bending, which tells us how precisely the data pin $\beta$ down.
+
+So what we are looking for is a $\beta$ where the **first derivative is zero** — no direction left to improve in — **and the second derivative is negative**, confirming that flat spot is a peak and not a trough or a shoulder. Those two conditions together are what "maximum likelihood estimate" means operationally.
+
+We're going to work through these two derivatives now, then put them to use in the maximization notes where we use them iteratively in the Newton-Raphson optimization process. We're also going to spend a little time on the second derivatives to see they measure how much the data actually tell us about $\beta$; those derivatives are the basis of our standard errors.
+
+The two derivatives have names. The first derivative is the **score**, or equivalently the **gradient**; the second derivative is the **Hessian**. 
+
+
+## The first derivative (score, gradient)
+
+The first derivative of the log-likelihood goes by two names we use interchangeably — the **score**, or the **gradient** — written $\nabla\ell(\beta)$ either way.
+
+The log-likelihood assigns one number to every candidate value of $\beta$: how probable this sample is under it. The score asks a question about that number, one coefficient at a time — *nudge this coefficient up a hair, holding the others still; does the sample get more probable or less?* One answer per coefficient, so the score is a $k \times 1$ vector. Positive says raise it, negative says lower it, and when every entry is zero at once — no nudge to anything helps — we are on top of the hill.
+
+For the logit, the score is:
+
+$$
+\nabla\ell(\beta) \;=\; \sum_{i=1}^{n}(y_i - \pi_i)\,x_i' \;=\; X'(y - \pi).
+$$
+
+This should look familiar. $(y - \pi)$ is the model's mistakes, one per row; multiplying by $X'$ runs each covariate's column against those mistakes and sums, one number per covariate. So:
+
+> **each element of the score is the leftover association between one covariate and what the model is currently getting wrong.**
+
+Say the model systematically under-predicts disputes in bordering dyads. Then the mistakes are positive in exactly the rows where `border` is 1, their products are positive, and the `border` score comes out positive: this coefficient is too small, and that column still has unused information in it.
+
+Think of finding the maximum the same way. Setting $\nabla\ell(\beta) = 0$ says there is **no** leftover association between any covariate and the mistakes — every column of $X$ is used up.
+
+
+Let's see that at work. @fig-derivatives stands at three candidate values of $\beta_0$ — one too low, one too high, one right — and reads the first derivative at each.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-derivatives
+#| fig-width: 8
+#| fig-height: 7
+
+
+# What a single guess tells you. Three candidate values of beta-0 on the
+# intercept-only dispute hill: one too low, one too high, one right. At each we
+# read the FIRST derivative and ask what it says about where the maximum is.
+sy <- sum(dp$dispute); nn <- nrow(dp)
+ll0   <- function(b) sy * log(plogis(b)) + (nn - sy) * log(1 - plogis(b))
+d1_0  <- function(b) sy - nn * plogis(b)                 # score
+d2_0  <- function(b) -nn * plogis(b) * (1 - plogis(b))   # Hessian
+b_mle <- qlogis(mean(dp$dispute))
+
+guess <- tibble(b = c(-4.0, b_mle, -2.2),
+                lab = c("guess too low", "the answer", "guess too high")) %>%
+  mutate(ll = ll0(b), score = d1_0(b))
+
+gb   <- seq(-4.6, -1.8, length.out = 400)
+hill <- tibble(b = gb, ll = ll0(gb), score = d1_0(gb))
+
+# short tangent at each guess, so the slope is visible ON the curve
+tang <- guess %>% rowwise() %>%
+  do(tibble(b = .$b + c(-0.32, 0.32), lab = .$lab,
+            y = ll0(.$b) + d1_0(.$b) * c(-0.32, 0.32))) %>% ungroup()
+
+p_top <- ggplot(hill, aes(b, ll)) +
+  geom_line(linewidth = 1.1, color = bu_green) +
+  geom_line(data = tang, aes(b, y, group = lab), color = bu_black,
+            linewidth = 0.9, linetype = "dotted") +
+  geom_point(data = guess, aes(b, ll), size = 3, color = bu_lightgreen) +
+  geom_vline(xintercept = b_mle, linetype = "dashed", color = bu_grey) +
+  annotate("text", x = -4.05, y = ll0(-4.0), hjust = 1.05, vjust = 1.9, size = 3.2,
+           color = bu_black, label = "guess too low:\nstill climbing") +
+  annotate("text", x = b_mle, y = ll0(b_mle), vjust = -0.9, size = 3.2,
+           color = bu_black, label = "the answer: flat") +
+  annotate("text", x = -2.35, y = ll0(-2.2), hjust = 1, vjust = 2.4, size = 3.2,
+           color = bu_black, label = "guess too high:\nalready falling") +
+  coord_cartesian(ylim = c(min(hill$ll), max(hill$ll) + 190)) +
+  labs(title = "Stand at a guess and look at the slope",
+       subtitle = "dotted lines are the tangent -- the first derivative -- at three candidate values",
+       x = NULL, y = "log-likelihood") +
+  theme_minimal()
+
+p_bot <- ggplot(hill, aes(b, score)) +
+  geom_hline(yintercept = 0, color = bu_black, linewidth = 0.5) +
+  geom_line(linewidth = 1.1, color = bu_lightgreen) +
+  geom_point(data = guess, aes(b, score), size = 3, color = bu_green) +
+  geom_vline(xintercept = b_mle, linetype = "dashed", color = bu_grey) +
+  geom_segment(data = guess %>% filter(lab != "the answer"),
+               aes(x = b, xend = b, y = 0, yend = score),
+               color = bu_grey, linetype = "dotted") +
+  annotate("text", x = -4.0, y = d1_0(-4.0), vjust = -1.0, size = 3.2, color = bu_black,
+           label = "score > 0: the answer is to the RIGHT") +
+  annotate("text", x = -2.2, y = d1_0(-2.2), vjust = 1.9, size = 3.2, color = bu_black,
+           label = "score < 0: the answer is to the LEFT") +
+  annotate("text", x = b_mle, y = 0, vjust = -1.2, hjust = -0.05, size = 3.2,
+           color = bu_black, label = "score = 0: stop") +
+  labs(title = "Read that slope as a number: the score",
+       subtitle = "what matters here is where the curve CROSSES zero, not the curve's own slope",
+       x = expression("intercept," ~ beta[0]), y = "score (first derivative)") +
+  theme_minimal()
+
+p_top / p_bot
+```
+
+In the top panel we stand at each of the three guesses and look at the slope of the hill underneath us — the dotted tangent lines. At $\beta_0 = -4$ the hill is still rising, so the answer is further right. At $-2.2$ it is falling, so we have gone past and the answer is back to the left. At the dashed line the tangent is flat, and there is no direction left that improves anything, so we're at a flat point, hopefully a maximum.
+
+The bottom panel is the same first derivative but presented as a *number* rather than a tangent line: this is the score at each of the three values of $\beta$. This is a plot of the first derivatives, NOT of the likelihood (compare the y-axes in the two panels). What matters in the bottom panel is where the curve crosses zero, not whether the curve itself looks flat. The score is a steeply sloping line through most of this range — that's fine and expected, since the slope of the hill really is changing fast. The estimate is the single place the score's *value* hits zero. A positive score says the maximum is to the right; a negative score says it is to the left; a zero score says stop.
+
+## The Hessian and information: how much the data actually tell us
+
+The second derivative of the log-likelihood at $\beta$ is called the Hessian. It counts how much each observation tells us about $\beta$; adding that up over the sample is what produces the standard errors. It measures the curvature of the function at $\beta$ - it measures information, and indicates precision.
+
+The **Hessian**, $H(\beta)$ is the rate at which the slope itself changes, which is the *curvature* of the hill at the point we're standing on - the log-likelihood value on the function associated with the values of $\beta$ we guessed. There is a curvature for every pair of coefficients, so it is a $k \times k$ matrix, not a vector. For the logit it works out to
+
+$$
+H(\beta) = -\sum_{i=1}^{n}\pi_i(1-\pi_i)\,x_i'x_i \;=\; -X'WX,
+\qquad W = \mathrm{diag}\big(\pi_i(1-\pi_i)\big).
+$$
+
+That sum explains the word *information*. Each observation contributes one term: its covariates ($x_i'x_i$) scaled by the weight $\pi_i(1-\pi_i)$. You should note that $\pi_i(1-\pi_i)$ is the variance of the binomial, so we're weighting by variances. Two things determine how much curvature the sample delivers:
+
+1. **How much the covariates move.** A column that barely varies contributes almost nothing to $x_i'x_i$, and a column that doesn't vary at all contributes nothing whatsoever — there is no information about a coefficient in a variable that never changes.
+2. **How uncertain the model is about each row.** The weight $\pi_i(1-\pi_i)$ is largest — $0.25$ — when $\pi_i = 0.5$, and it falls toward zero as $\pi_i$ approaches either 0 or 1. A row the model already calls at $\pi = 0.99$ contributes essentially nothing: it is telling us what we already know. The rows that teach us about $\beta$ are the ones the model finds hard to call.
+
+Because the terms add over observations, information *accumulates with the sample*: more rows, more curvature, sharper hill. That is the mechanical reason big samples give small standard errors.
+
+If we take the negative of this matrix, $-H = X'WX$, the result is called the **information matrix**. It is a running total of how the sample informs us about $\beta$.
+
+If $-H$ measures how much we know, then its *inverse* measures how much we don't — and that is the variance of the guess at $\beta$. It's important to understand the second derivative (Hessian) provides these measures of uncertainty.
+
+@fig-information draws the weight — the second ingredient — and then shows where the dispute data actually sit on it.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-information
+#| fig-width: 9.5
+#| fig-height: 4.2
+
+# How much does one observation contribute to the information? The weight
+# pi*(1-pi) peaks at pi = .5 and vanishes at either extreme. The rug shows the
+# fitted probabilities from the real dispute logit -- disputes are rare, so
+# nearly every row sits in the low-weight corner on the left.
+
+m_full <- glm(dispute ~ lncaprat + border + deml, family = binomial, data = dp)
+pi_i   <- fitted(m_full)
+w_i    <- pi_i * (1 - pi_i)
+
+curve_d <- tibble(p = seq(0.001, 0.999, length.out = 400), w = p * (1 - p))
+
+p_w <- ggplot(curve_d, aes(p, w)) +
+  geom_line(linewidth = 1.1, color = bu_green) +
+  geom_vline(xintercept = 0.5, linetype = "dotted", color = bu_black) +
+  annotate("text", x = 0.5, y = 0.295, size = 3.4, color = bu_black,
+           label = "a coin-flip row carries the most: 0.25") +
+  annotate("text", x = 0.99, y = 0.012, size = 3.4, color = bu_black, hjust = 1,
+           label = "a near-certain row carries almost nothing") +
+  coord_cartesian(ylim = c(0, 0.32)) +
+  labs(title = "What one observation contributes",
+       subtitle = expression("the weight " ~ pi[i](1 - pi[i]) ~ " in " ~ X*minute*W*X),
+       x = expression("fitted probability," ~ pi[i]), y = "weight") +
+  theme_minimal()
+
+p_rug <- ggplot(tibble(p = pi_i), aes(p)) +
+  geom_histogram(bins = 60, fill = bu_lightgreen, color = NA) +
+  geom_vline(xintercept = 0.5, linetype = "dotted", color = bu_black) +
+  annotate("text", x = 0.20, y = Inf, vjust = 1.8, hjust = 0, size = 3.4, color = bu_black,
+           label = "almost every dyad-year is\na near-certain zero") +
+  coord_cartesian(xlim = c(0, 1)) +
+  labs(title = "Where the dispute data actually sit",
+       subtitle = "fitted probabilities from the three-covariate logit",
+       x = expression("fitted probability," ~ pi[i]), y = "dyad-years") +
+  theme_minimal()
+
+p_w + p_rug
+```
+
+Together the panels show a fact the sample size conceals. There are `r format(nrow(dp), big.mark = ",")` dyad-years in `dp`, but disputes are rare, so nearly every row is one the model calls a near-certain zero and contributes almost no weight. The weights sum to `r round(sum(w_i), 1)`, against the `r format(round(nrow(dp)/4), big.mark = ",")` we would have if every row were a coin flip — under a fifth of the curvature the row count advertises. The sample is large; the information in it is a good deal smaller than large. More on this when we get to rare events.
+
+The second derivative does not lend itself to that kind of picture — there is no tangent to draw, and the useful thing about it is not its shape but its *sign* and its *size*. Take the sign first. It is negative everywhere on this likelihood, which is what guarantees the flat spot the score finds is a peak rather than a trough, and that there is only one of them. (If it went positive somewhere, the score could cross zero more than once and "set the derivative to zero" would stop identifying a unique answer. For the binomial it cannot happen.) The size is what the rest of this section is about, and @fig-information is the closest thing to a picture of it: not the second derivative itself, but the per-observation weight that the sum in $-X'WX$ is built from.
+
+That the weights are strictly positive is what makes this true in general: it makes $X'WX$ positive definite and $H$ negative definite *everywhere*, so there is one hill, one top, and no false summits. Note the qualifier above — *when it exists*. There are data configurations for which no top exists at all, and we take those up later in the term.
+
+One last thing to know about the Hessian - it is the source of every standard error in the model:
+
+$$
+\widehat{\text{SE}}(\widehat\beta) = \sqrt{\text{diag}\big[(-H)^{-1}\big]} = \sqrt{\text{diag}\big[(X'WX)^{-1}\big]},
+$$
+
+the square roots of the diagonal of the negated, inverted Hessian. Nothing new has to be computed and no extra assumption gets made; the uncertainty was already sitting inside the curvature. The next section is about why that is so, and what it means.
+
+::: {.callout-tip title="Take away"}
+- The **score** $\nabla\ell(\beta)$ is the slope of the log-likelihood, one entry per coefficient. Each entry is the leftover association between one covariate and what the model is currently getting wrong.
+- Setting the score to zero says there is nothing left in any column of $X$ that the model hasn't used — the same condition OLS imposes with $X'e = 0$.
+- The **Hessian** measures curvature, a $k \times k$ matrix because there is a curvature for every *pair* of coefficients. Negate it and it is the **information** matrix: it measures how much this sample has to say about $\beta$.
+- Information accumulates over observations, and each observation's contribution is weighted by $\pi_i(1-\pi_i)$. Rows the model already calls confidently teach us almost nothing; the informative rows are the ones it can't call.
+- These two derivatives are what any numerical method, Newton–Raphson included, runs on — and they also stand on their own: between them they say where the estimate is and how much to trust it.
+:::
+
+# The shape of the likelihood determines the standard errors {#sec-geometry}
+
+
+The matrix $-H$ is the curvature at the peak of the log-likelihood function, and it *is* the information. Invert it and you have the variance: $\widehat{\mathrm{Var}}(\widehat\beta) = (-H)^{-1}$. So the standard error is literally a measure of how wide the cap on top of the likelihood function is. A sharply curved peak pins $\widehat\beta$ down; a flat one leaves many values nearly as plausible as the best. **The flatter the likelihood, the more uncertain the estimate**.
+
+Two simulated binary datasets make the point: one with a large sample, one with a small one, each log-likelihood plotted over its slope and shifted to peak at zero.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-geometry
+#| fig-width: 9.5
+#| fig-height: 4.2
+set.seed(20260610)
+sim <- function(n, slope) {
+  x <- rnorm(n)
+  y <- rbinom(n, 1, plogis(-0.2 + slope * x))
+  tibble(x, y)
+}
+ll <- function(s, d) sum(dbinom(d$y, 1, plogis(-0.2 + s * d$x), log = TRUE))
+
+d_sharp <- sim(4000, 1.0)   # strong signal, large n
+d_flat  <- sim(40,   0.3)   # weak signal, small n
+
+grid <- seq(-1.5, 2.5, length.out = 200)
+prof <- function(d) {
+  v <- sapply(grid, ll, d = d)          # log-lik over the slope grid
+  tibble(slope = grid, rel = v - max(v))
+}
+
+se_sharp <- sqrt(diag(vcov(glm(y ~ x, binomial, d_sharp))))[2]
+se_flat  <- sqrt(diag(vcov(glm(y ~ x, binomial, d_flat))))[2]
+
+# the peak of each curve, so the +/- 1.96 SE arrow can be drawn around it
+bh_sharp <- coef(glm(y ~ x, binomial, d_sharp))[2]
+bh_flat  <- coef(glm(y ~ x, binomial, d_flat))[2]
+
+p1 <- ggplot(prof(d_sharp), aes(slope, rel)) +
+  geom_line(linewidth = 1, color = bu_green) +
+  annotate("segment", x = bh_sharp - 1.96 * se_sharp, xend = bh_sharp + 1.96 * se_sharp,
+           y = -7, yend = -7, color = bu_black,
+           arrow = arrow(ends = "both", length = unit(0.12, "cm"), type = "closed")) +
+  annotate("text", x = bh_sharp + 1.96 * se_sharp + 0.10, y = -7, hjust = 0,
+           size = 3.2, color = bu_black, label = "+/- 1.96 SE") +
+  coord_cartesian(ylim = c(-8, 0)) +
+  labs(title = "Sharp likelihood", subtitle = paste0("n = 4000, SE = ", round(se_sharp, 3)),
+       x = expression(beta), y = "relative log-likelihood") +
+  theme_minimal()
+
+p2 <- ggplot(prof(d_flat), aes(slope, rel)) +
+  geom_line(linewidth = 1, color = bu_lightgreen) +
+  annotate("segment", x = bh_flat - 1.96 * se_flat, xend = bh_flat + 1.96 * se_flat,
+           y = -7, yend = -7, color = bu_black,
+           arrow = arrow(ends = "both", length = unit(0.12, "cm"), type = "closed")) +
+  annotate("text", x = bh_flat, y = -6.55, size = 3.2, color = bu_black,
+           label = "+/- 1.96 SE") +
+  coord_cartesian(ylim = c(-8, 0)) +
+  labs(title = "Flat likelihood", subtitle = paste0("n = 40, SE = ", round(se_flat, 3)),
+       x = expression(beta), y = NULL) +
+  theme_minimal()
+
+p1 + p2
+```
+
+The panels represent the same estimator, same model, but with very different precision. The sharp likelihood narrows to a spike: the data rule out everything but a small neighborhood, and the standard error is tiny. The flat one is a gentle mound, a wide range of slopes fitting nearly as well, and the standard error an order of magnitude larger.
+
+
+
+**What flattens a likelihood?** Each cause below is the data supplying too little curvature:
+
+- **Small $n$.** Information accumulates with the sample; fewer observations, less curvature.
+- **Little variation in $X$.** A covariate that barely moves can't sharply distinguish values of its coefficient.
+- **Collinearity.** When columns of $X$ move together, the data can pin down what the pair of coefficients is worth jointly while saying little about how to split it between them — and both standard errors inflate accordingly.
+- **Separation.** If an $x$ variable perfectly predicts the outcome, the likelihood continues rising as $\beta \to \infty$, so there is no maximum and no curvature at the top to invert. This is called "separation" - we'll cover this in a couple of weeks.
+
+
+
+::: {.callout-tip title="Take away"}
+- The curvature at the peak of the likelihood tells the algorithm how far to step, and it *is* the variance of the estimate: $\widehat{\mathrm{Var}}(\widehat\beta) = (-H)^{-1}$.
+- The standard error arises directly from the 2nd derivatives.
+- A sharp peak pins $\widehat\beta$ down; a flat one leaves many values nearly as plausible. **The flatter the likelihood, the more uncertain the estimate.** The confidence interval you report is a measurement of how wide the top of the hill is.
+- Flat likelihoods result from models/samples that lack sufficient information; in most cases, flat likelihoods are a data problem.
+
+:::
+
+# Notes
+
+- The closed-form result above — $\widehat\pi = \bar y$ — is the exception, not the rule. Once a model carries covariates, the parameter of interest sits inside a nonlinear link and the analytic method stops. Nearly everything we estimate this semester is in that second category, which is why the maximization notes come next.
+- The machine is the recurring object of this course. Each later model — counts, durations, choices — swaps the link and the distribution and reuses the same chain. We will restate it for each only to show that nothing structural changed.
+
