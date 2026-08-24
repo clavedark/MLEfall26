@@ -1,0 +1,82 @@
+---
+title: "Codebook — `ces.csv`"
+subtitle: "PLSC 606J, Fall 2026"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+date-format: long
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+---
+
+<style>
+table, th, td { font-size: 16px; vertical-align: top; }
+tr:nth-child(odd) { background-color: #f2f2f2; }
+</style>
+
+`ces.csv` holds 61,000 respondents from the 2020 *Cooperative Election Study* common content, one
+row per respondent, subset to twenty columns. Everything except `age` and the row index arrives as
+a character string, so nothing is ordered, coded, or labeled for you.
+
+Two general cautions before the variable list. The extract carries **no survey weights** — the
+CES `commonweight` is not among these columns — so anything you compute here is an unweighted
+sample statistic, not an estimate of the 2020 electorate. And on the policy items, the labels tell
+you which *side* a respondent took, not what the side means: on three of them "Support" is the
+conservative answer and on three others it is the liberal one. The direction column below is the
+part of this document to read twice.
+
+# Identifiers and demographics
+
+| Variable | Description | Values | Notes |
+|---|---|---|---|
+| `...1` | Unnamed row index written by `write.csv()`. | 1–61,000 | Not a CES respondent ID and carries no information. Drop it (`select(-1)`). |
+| `state` | State of residence. | 51 full state names (50 states + District of Columbia) | Spelled-out names, not abbreviations or FIPS codes. No missing. |
+| `sex` | Respondent sex, as fielded. | `Male`, `Female` | The 2020 instrument asked a binary item. No missing. |
+| `age` | Age in years at the time of the survey. | 18–95 | Numeric. Not top-coded. No missing. |
+| `educ` | Highest level of education completed. | `No HS`, `High school graduate`, `Some college`, `2-year`, `4-year`, `Post-grad` | Ordinal, and that is the correct order. R will sort it alphabetically into nonsense — order it yourself. No missing. |
+| `race` | Self-identified race. | `White`, `Black`, `Hispanic`, `Asian`, `Native American`, `Middle Eastern`, `Other race` | 928 missing. Hispanic appears here *and* as its own follow-up item; see `hispanic`. |
+| `hispanic` | Follow-up item on Hispanic or Latino origin. | `Yes`, `No` | Not asked of everyone. Most respondents who chose `Hispanic` in `race` are missing here, so **`NA` does not mean "not Hispanic."** Build the indicator from both columns: `race == "Hispanic" | hispanic == "Yes"`. |
+| `religion` | Religious affiliation. | `Protestant`, `Roman Catholic`, `Nothing in particular`, `Atheist`, `Agnostic`, `Something else`, `Jewish`, `Mormon`, `Buddhist`, `Muslim`, `Eastern or Greek Orthodox`, `Hindu` | 34 missing. "Nothing in particular," "Atheist," and "Agnostic" are three separate categories; a "no religion" indicator combines all three. |
+
+# Politics, knowledge, and vote
+
+| Variable | Description | Values | Notes |
+|---|---|---|---|
+| `pid7` | Seven-point party identification. | `Strong Democrat`, `Not very strong Democrat`, `Lean Democrat`, `Independent`, `Lean Republican`, `Not very strong Republican`, `Strong Republican`, `Not sure` | Ordinal Democrat → Republican in the order listed. `Not sure` is a non-response, **not** the midpoint — don't fold it into `Independent` without saying so. No missing. |
+| `ideo5` | Ideological self-placement. | `Very liberal`, `Liberal`, `Moderate`, `Conservative`, `Very conservative`, `Not sure` | Ordinal liberal → conservative in the order listed. `Not sure` is again a non-response, not a midpoint, and there are a lot of them. 40 missing. |
+| `know_governor` | The party the respondent **names** as their state's governor. | `Democrat`, `Republican`, `Other Party / Independent`, `Not sure`, `Never Heard of Person` | A knowledge item recorded as the *answer given*, not as right or wrong. To make it political knowledge you have to merge in each state's actual 2020 governor and compare. 242 missing. |
+| `votechoice` | 2020 presidential vote choice. | `Joe Biden (Democrat)`, `Donald J. Trump (Republican)`, `Other`, `Not sure`, `I did not vote in this race`, `I did not vote` | 15,349 missing. A two-party vote binary sends `Other`, both non-vote categories, `Not sure`, **and** the `NA`s to missing — not to zero. |
+| `newsint` | Self-reported attention to news and public affairs. | `Most of the time`, `Some of the time`, `Only now and then`, `Hardly at all`, `Don't know` | Ordinal most → least attentive in the order listed; `Don't know` is not the bottom of the scale. 46 missing. |
+
+# Policy items
+
+All seven are binary, and all seven have fewer than 150 missing. The direction column is what the
+named response *means* — read it before coding anything here.
+
+| Variable | Description | Values | Direction and notes |
+|---|---|---|---|
+| `conceal` | Allow citizens to carry concealed handguns. | `Support`, `Oppose` | `Support` = allow concealed carry — the **conservative** side. |
+| `prochoice` | Always allow a woman to obtain an abortion as a matter of choice. | `Support`, `Oppose` | `Support` = allow — the **liberal** side. |
+| `cleanair` | Strengthen environmental and clean-air enforcement. | `Support`, `Oppose` | `Support` = stronger enforcement — the **liberal** side. |
+| `wall` | Build the wall on the U.S.–Mexico border. | `Support`, `Oppose` | `Support` = build it — the **conservative** side. |
+| `mandmin` | **Eliminate** mandatory minimum sentences for nonviolent drug offenders. | `Support`, `Oppose` | `Support` = eliminate them — the **liberal** side. The variable name suggests the opposite; it isn't. |
+| `aca` | **Repeal** the Affordable Care Act. | `Support`, `Oppose` | `Support` = repeal the ACA — the **conservative** side. A respondent who likes the ACA answers `Oppose`. |
+| `minwage` | Raise the federal minimum wage. | `Favor`, `Oppose` | `Favor` = raise it — the **liberal** side. Note the label is `Favor`, not `Support`, so code that keys on `== "Support"` will silently return all zeros. |
+
+::: {.callout-note}
+## Where the directions come from
+The extract shipped with labels but no question wordings, so the direction of each policy item was
+established from the data — each item cross-tabulated against party identification and 2020 vote.
+The clearest case is `aca`: 83% of Trump voters and 10% of Biden voters chose `Support`, which only
+reads one way. If you need to quote a question verbatim, get the wording from the 2020 CES Guide on
+Harvard Dataverse rather than from this page.
+:::
+
+## Source
+
+Cooperative Election Study, Harvard University, 2020 common content.
+[https://cces.gov.harvard.edu](https://cces.gov.harvard.edu). Twenty columns, 61,000 rows, no
+survey weights.

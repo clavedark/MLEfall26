@@ -49,6 +49,8 @@ readings/*
 !binarymodels26.qmd
 # released deck: likelihood theory & estimation mechanics
 !likelihood26.qmd
+# released: codebook for the CES data used in exercise #1
+!cescodebook26.qmd
 
 # Rendered output: ignore everything under docs/, then re-include the published
 # pages and the shared assets GitHub Pages needs to serve them.
@@ -65,6 +67,8 @@ docs/*
 !docs/binarymodels26.html
 # released deck: likelihood theory & estimation mechanics
 !docs/likelihood26.html
+# released: codebook for the CES data used in exercise #1
+!docs/cescodebook26.html
 # released EXERCISE: only the rendered page. `ex12026.qmd` stays ignored above --
 # its figure chunks are the answers to questions 1-4.
 !docs/ex12026.html
