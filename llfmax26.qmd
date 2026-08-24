@@ -1,0 +1,861 @@
+---
+title: "Maximizing the Log-Likelihood Function"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: true
+filters:
+  - parse-latex
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+library(haven)
+library(patchwork)
+library(plotly)      # the one interactive figure: the NR climb, animated
+
+# Binghamton palette + plotting helpers (bucolors, bu_green, scale_color_bu, ...)
+source(here::here("_common.R"))
+
+set.seed(20260610)
+```
+
+<style>
+table, th, td {
+    font-size: 18px;
+}
+tr:nth-child(odd) {
+  background-color: #f2f2f2;
+}
+</style>
+
+# Goals
+
+The [likelihood notes](likelihood26.html) began to introduce how we produce maximum likelihood estimates:
+
+  - guess some values for the $\beta$s.
+  - evaluate the log-likelihood at those values of $\beta$. 
+  - evaluate the first derivative of the log-likelihood function at that log-likelihood value.
+  - evaluate the second derivative of the function at that log-likelihood value. 
+  
+So what do we do with these parts to generate estimates? We use those two derivatives to determine how far we are from a maximum and what direction we need to move to go to that maximum. We use that information to make another, more informed guess at the values of $\beta$, and we do this again.
+
+These notes describe the general algorithm, the Newton-Raphson method. Newton-Raphson is a numerical optimization method originating with Newton's root finding technique; it iterates over increasingly refined guesses at $\beta$ until guesses are not producing different, improved estimates. 
+
+This allows us to execute the second line of the machine we developed in the likelihood notes: 
+
+
+$$
+\begin{aligned}
+\textbf{choose:}\;&\underbrace{\text{data}}_{\text{spreadsheet}} \;\to\;
+\underbrace{X,\; y}_{n \times k,\; n \times 1} \;\to\;
+\underbrace{\theta}_{\text{what we want}} \;\to\;
+\underbrace{\bbox[#A7DA92, 3pt, border: 1px solid #005A43]{\,f(y \mid \theta)\,}}_{\textbf{swaps}} \;\to\;
+\underbrace{\bbox[#A7DA92, 3pt, border: 1px solid #005A43]{\,F\,}}_{\textbf{swaps}} \\[12pt]
+\textbf{compute:}\;&\underbrace{X\beta}_{n \times 1} \;\to\;
+\underbrace{\widehat\theta = F(X\beta)}_{n \times 1} \;\to\;
+\underbrace{\ell(\beta)}_{\text{one number}} \;\to\;
+\underbrace{\nabla\ell,\; H}_{k \times 1,\; k \times k} \;\to\;
+\underbrace{(-H)^{-1}}_{k \times k} \;\to\;
+\underbrace{\text{SE}}_{k \times 1} \;\to\; \text{QI}
+\end{aligned}
+$$
+
+You'll recognize the gradient (or score) $\nabla\ell$, and the Hessian - the two derivatives from the likelihood notes.
+
+We'll continue to work with the binomial log-likelihood for familiarity, but recall the generality of the machine. Newton-Raphson operates the same way regardless of the log-likelihood function we use, so it too is incredibly general. 
+
+We've previously written down a set of steps to build the likelihood based on the data we have. Now, we'll write a second "recipe" describing the maximization process (started above). This is the process by which we use the data, the model, the log-likelihood, and the two derivatives to generate $\beta$ and the standard errors. 
+
+::: {.callout-note title="Maximization using Newton-Raphson"}
+1. **Choose starting values for $\beta$**, call them $\beta^{(0)}$. Any values will do; all zeros is the usual choice, and it's the one we use below.
+2. **Evaluate the likelihood at those starting values.** Form $X\beta^{(t)}$, push it through the link to get the fitted values, and from those compute the first and second derivatives of the log-likelihood: the **score** or gradient (which direction is up toward a maximum) and the **Hessian** (how sharply the surface is curving).
+3. **Take a step.** Feed the score and the Hessian into the Newton–Raphson update rule, which returns a new set of values, $\beta^{(t+1)}$.
+4. **Check whether we're done.** There are two tests here and it is worth keeping them apart, because they ask different questions. **(a) Has the answer stopped moving?** Compare $\beta^{(t+1)}$ with $\beta^{(t)}$; if the change is effectively zero, another step isn't buying us anything. **(b) Is the surface actually flat here?** Evaluate the score at the new values; at a maximum every element of $\nabla\ell$ should be zero, or near enough. Test (b) is the mathematical condition for a maximum — it is "set the derivative to zero," checked numerically. If we're done, those values are $\widehat\beta$, the maximum likelihood estimates.
+5. **If the change isn't small enough, go back to step 2** with the new values in hand and do it again.
+6. **When the loop stops, take the standard errors from the Hessian** at the answer: invert it, negate it, and take the square roots of the diagonal.
+:::
+
+That list is the map for everything that follows. The rest of this section explains where the rule in step 3 comes from and what its two halves do; then we run steps 1 through 3 once, by hand; then we hand the whole thing to a loop and watch steps 4 and 5 run it to convergence.
+
+# The Newton–Raphson step
+
+## Where the method comes from
+
+Newton–Raphson is a general method for solving equations numerically, and it predates statistics by about two centuries: Newton described a version of it in the 1660s, and Joseph Raphson published the cleaner iterative form we still use in 1690. It has been used ever since for anything where an equation resists algebra — computing square roots by hand, locating planetary orbits, solving systems in engineering. Its use is very general.
+
+The idea behind it is this. If you can evaluate a function at a point, and you can evaluate its slope at that point, then you can pretend the function is a straight line, follow that line to where it would cross zero, and jump there. The pretense is wrong, so you don't land on the answer — but you land closer than you were, and you can do it again from the new point. Repeat until the jumps are so small that they don't matter.
+
+Most estimation software uses Newton-Raphson as the basis for optimization. Stata's `ml` uses a modified Newton–Raphson as its default. R's `glm` runs iteratively reweighted least squares, which for the logit is these same steps. Other methods you'll see include Fisher scoring, and BFGS. All are based in Newton-Raphson method. 
+
+
+## Iteration
+
+Previously, we've studied the two derivatives of the binomial log-likelihood function. The first derivative (gradient) is: 
+
+$$
+\nabla\ell(\beta) \;=\;  X'(y - \pi).
+$$
+
+and the second derivative (Hessian) is:
+
+$$
+H(\beta) =  -X'WX,
+\qquad W = \mathrm{diag}\big(\pi_i(1-\pi_i)\big).
+$$
+
+
+
+The general form of the Newton-Raphson (for each step) is: 
+
+$$
+\beta^{(t+1)} \;=\; \beta^{(t)} \;-\; H\big(\beta^{(t)}\big)^{-1}\,\nabla\ell\big(\beta^{(t)}\big),
+$$
+
+which holds for any log-likelihood at all (emphasizing the generality of the machine). Now substitute the two derivatives above, $\nabla\ell(\beta) = X'(y - \pi)$ and $H(\beta) = -X'WX$:
+
+$$
+\begin{aligned}
+\beta^{(t+1)} &= \beta^{(t)} - \big(-X'WX\big)^{-1}X'(y-\pi) \\[6pt]
+              &= \bbox[#A7DA92, 3pt, border: 1px solid #005A43]{\;\beta^{(t)} + (X'WX)^{-1}X'(y - \pi)\;},
+\qquad W = \mathrm{diag}\big(\pi_i(1-\pi_i)\big).
+\end{aligned}
+$$
+
+The two minus signs cancelled which is why the update ends up *adding* the correction rather than subtracting it.
+
+This is the Newton-Raphson step we iterate to find the values of $\beta$ associated with the maximum of the likelihood function. Note that the parts are familiar.  $\pi$ is $F(X\beta)$ from inside the log-likelihood, $X'(y-\pi)$ is its first derivative, and $W$ collects its second derivative. The log-likelihood is not missing from the update rule. It is the only thing in it.
+
+## Which way, and how far
+
+So what does the Newton-Raphson step *mean*? This is usually described as "hill climbing." To reach the top of the hill, we need to know two things: which way is the top? How far away is the top? The **gradient** tells us which direction is up. The **Hessian** tells us how sharply the slope is changing, and therefore how far to go without stepping over the top: sharply curved, step conservatively; nearly flat, step boldly.
+
+$$
+\beta^{(t+1)} = \beta^{(t)} + \underbrace{(X'WX)^{-1}}_{\text{how far}}\underbrace{X'(y-\pi)}_{\text{which way}},
+$$
+
+We iterate this function until the score is essentially zero. The gradient points the direction and the Hessian scales the size of our steps up the hill.
+
+Let's focus just briefly on why the Hessian-supplied size of the step ("how far") is so important. @fig-which-how shows two hills with an *identical* slope at the current guess, so the score prescribes the same direction up the hill on both.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-which-how
+#| fig-width: 10
+#| fig-height: 4.2
+
+# Same slope at the starting point, different curvature. The score says "go
+# right" in both panels and says it equally loudly. Only the second derivative
+# knows that the sharp hill's top is close and the flat hill's top is far.
+
+peak  <- 4
+slope <- 3
+
+one_hill <- function(a, ttl, sub, col) {
+  start <- peak - slope / (2 * a)                 # point where the slope equals `slope`
+  step  <- slope / (2 * a)                        # the Newton step from there
+  g     <- seq(peak - 6, peak + 6, length.out = 400)
+  d     <- tibble(b = g, y = -a * (g - peak)^2)
+  tg    <- tibble(b = g, y = -a * (start - peak)^2 + slope * (g - start))
+
+  ggplot(d, aes(b, y)) +
+    geom_line(data = tg, aes(b, y), color = bu_grey, linewidth = 0.7) +
+    geom_line(linewidth = 1.1, color = col) +
+    geom_point(x = start, y = -a * (start - peak)^2, size = 3, color = bu_black) +
+    geom_vline(xintercept = peak, linetype = "dotted", color = bu_black) +
+    annotate("segment", x = start, xend = start + step, y = -34, yend = -34,
+             arrow = arrow(length = unit(0.18, "cm"), type = "closed"), color = bu_black) +
+    annotate("text", x = start + step / 2, y = -34, vjust = -0.7, size = 3.4,
+             color = bu_black, label = paste0("step = ", round(step, 2))) +
+    coord_cartesian(xlim = c(peak - 6, peak + 4), ylim = c(-38, 3)) +
+    labs(title = ttl, subtitle = sub, x = expression(beta), y = "log-likelihood") +
+    theme_minimal()
+}
+
+one_hill(2.0, "Sharp hill: step small",
+         "steep curvature -- the top is close, so don't overshoot", bu_green) +
+one_hill(0.3, "Flat hill: step big",
+         "gentle curvature -- the top is far, so cover ground", bu_lightgreen)
+```
+
+The grey tangent has the same slope in both panels, so the gradient says the same thing in both — and says nothing about distance. What separates them is the second derivative. On the sharp hill the slope falls away fast, so the peak is near and a large step would sail over it. On the flat hill the slope barely changes, so the peak is far and we need to take a larger step. That is the job of $(X'WX)^{-1}$ — the inverted Hessian — telling us how far to travel.
+
+I'll work the whole way through on the dispute data, using the same model we carried through the likelihood notes: dispute onset as a function of the logged capability ratio, shared border, and the lower democracy score in the dyad.
+
+```{r load}
+#| echo: false
+dp <- read_dta(here::here("data", "dp.dta"))
+dp$lncaprat <- log(dp$caprat)   # a capability ratio is multiplicative, so model it on the log scale
+```
+
+## Example - calculating one step
+
+Let's take a sample of the dispute data small enough to look at. Disputes are rare — about 4.5% of dyad-years — so a plain random draw of ten rows would almost certainly come back all zeros, and a logit with no ones in it has nothing to estimate. So I sample deliberately: four rows with a dispute, six without. That gives us a design matrix $X$ and an outcome vector $y$ we can print in full and check by hand:
+
+```{r slice-b}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+set.seed(20260610)
+sl <- bind_rows(
+  dp %>% filter(dispute == 1) %>% slice_sample(n = 4),
+  dp %>% filter(dispute == 0) %>% slice_sample(n = 6)
+)
+
+X <- model.matrix(~ lncaprat + border + deml, data = sl)   # 10 x 4
+y <- sl$dispute                                            # 10 x 1
+
+tibble(y, X)
+```
+
+Now take one step, by hand, on numbers small enough to look at. The **Newton–Raphson** step for the logit, once more:
+
+$$
+\underbrace{\beta^{(t+1)}}_{\text{next guess}} \;=\;
+\underbrace{\beta^{(t)}}_{\text{current guess}} \;+\;
+\underbrace{(X'WX)^{-1}\,X'(y - \pi)}_{\text{the correction}},
+\qquad W = \mathrm{diag}\big(\pi_i(1-\pi_i)\big).
+$$
+
+I'll reiterate this is a formula for one step, **the next guess**, written entirely in terms of the guess we already have. Everything on the right is either data ($X$, $y$) or computable from the current guess ($\pi$, $W$) — nothing there requires knowing the answer.  
+
+The pieces:
+
+- **$\beta^{(t)}$ is where we are now**, and the superscript is just a counter. Start anywhere; $\beta = 0$ is usual and is what we use below.
+- **$y - \pi$ is the model's mistakes.** Run our current guess, $\beta^{(t)}$, through the likelihood to get $X\beta^{(t)}$, transform  through the link, $\Lambda$  and we get $\pi$. This is what the current guess predicts, giving us one predicted probability per row. Subtract it from $y$ and you have one mistake per row, large and positive where we saw a dispute the model called unlikely. This is the only place the observed outcome enters the step.
+- **$X'(y - \pi)$ turns those mistakes into a verdict on each coefficient.** Multiplying by $X'$ weights each row's mistake by that row's covariate values and sums, one number per covariate. If the rows where a covariate is large are the rows being under-predicted, that entry is positive: raise this coefficient. This is the **which way** part, and it is the score $\nabla\ell$.
+- **$(X'WX)^{-1}$ converts direction into distance** — the **how far** part. The weights $W_i = \pi_i(1-\pi_i)$ are largest at $\pi_i = 0.5$ and shrink toward zero as $\pi_i$ approaches 0 or 1: a row the model already calls confidently has little to teach us.^[The correction term should look familiar: $(X'WX)^{-1}X'(y-\pi)$ has the shape of $(X'X)^{-1}X'y$, with the mistakes replacing the $y$ variable. Rescale those mistakes by the weights and it is exactly a weighted least-squares regression of them on $X$ — which is why the algorithm `glm` runs is called *iteratively reweighted least squares*.]
+
+Let our first set of guesses be $\beta = 0$. Every linear prediction is then zero, so every $\pi_i$ is $\Lambda(0) = 0.5$ — the model knows nothing and puts even odds on everything — and every weight is at its maximum of $0.25$, so every row counts equally. Let's run this by hand:
+
+
+```{r dev2-step}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+b0 <- rep(0, ncol(X))
+pi <- plogis(as.vector(X %*% b0))      # fitted probs at b = 0: all 0.5, n x 1
+W  <- pi * (1 - pi)                     # weights, n x 1
+score <- t(X) %*% (y - pi)             # k x 1
+negH  <- t(X) %*% (X * W)              # X'WX, k x k
+b1 <- b0 + solve(negH, score)          # one Newton step
+
+round(as.vector(b1), 4)
+```
+
+
+These are our new estimates of the vector $\beta$, but they're just the next step - we would need to assess whether we've reached the top of the hill, and if not, use these as the new "current guess" and estimate another step.
+
+That step was in four dimensions (four $\beta$s). Here is the same thing looking for just one $\beta$ so I can draw the first two steps. This is an intercept-only model of disputes; let's start again with $\beta_0 = 0$:
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-two-steps
+#| fig-width: 9.5
+#| fig-height: 4.8
+
+# Two Newton steps, drawn. At each guess the tangent is the score and the
+# curvature is the Hessian; those two numbers fit a parabola, and the step jumps
+# to the top of THAT parabola, not the top of the hill. Refit at the new guess
+# and go again -- the second step is much shorter than the first.
+
+
+sy <- sum(dp$dispute); nn <- nrow(dp)
+ll0  <- function(b) sy * log(plogis(b)) + (nn - sy) * log(1 - plogis(b))  # two-part ll
+d1_0 <- function(b) sy - nn * plogis(b)                 # score
+d2_0 <- function(b) -nn * plogis(b) * (1 - plogis(b))   # Hessian (a scalar here)
+
+b_start <- 0
+step1   <- -d1_0(b_start) / d2_0(b_start)
+b_next  <- b_start + step1
+step2   <- -d1_0(b_next) / d2_0(b_next)
+b_next2 <- b_next + step2
+b_mle   <- qlogis(mean(dp$dispute))
+
+# two more steps, quoted in the prose below but not drawn
+step3   <- -d1_0(b_next2) / d2_0(b_next2)
+step4   <- -d1_0(b_next2 + step3) / d2_0(b_next2 + step3)
+
+gb   <- seq(-4.2, 0.6, length.out = 400)
+hill <- tibble(b = gb, ll = ll0(gb))
+
+# tangent (the score) and fitted parabola at any guess
+tangent  <- function(b0, w = 0.9) {
+  g <- seq(b0 - w, b0 + w, length.out = 60)
+  tibble(b = g, y = ll0(b0) + d1_0(b0) * (g - b0))
+}
+parabola <- function(b0) tibble(b = gb, y = ll0(b0) + d1_0(b0) * (b - b0) +
+                                            0.5 * d2_0(b0) * (b - b0)^2)
+# height of the parabola's own peak -- where the step lands before we climb back to the hill
+p_top <- function(b0, st) ll0(b0) + d1_0(b0) * st + 0.5 * d2_0(b0) * st^2
+
+ggplot(hill, aes(b, ll)) +
+  geom_line(data = tangent(b_start), aes(b, y), color = bu_grey, linewidth = 0.7) +
+  geom_line(data = tangent(b_next),  aes(b, y), color = bu_grey, linewidth = 0.7) +
+  geom_line(data = parabola(b_start), aes(b, y), color = bu_lightgreen,
+            linewidth = 0.8, linetype = "dashed") +
+  geom_line(data = parabola(b_next), aes(b, y), color = bu_palegreen,
+            linewidth = 0.8, linetype = "dashed") +
+  geom_line(linewidth = 1.1, color = bu_green) +
+  annotate("segment", x = b_next, xend = b_next, y = p_top(b_start, step1), yend = ll0(b_next),
+           color = bu_grey, linewidth = 0.4, linetype = "dotted") +
+  annotate("segment", x = b_next2, xend = b_next2, y = p_top(b_next, step2), yend = ll0(b_next2),
+           color = bu_grey, linewidth = 0.4, linetype = "dotted") +
+  geom_point(x = b_next,  y = p_top(b_start, step1), size = 2.2, color = bu_lightgreen) +
+  geom_point(x = b_next2, y = p_top(b_next,  step2), size = 2.2, color = bu_palegreen) +
+  geom_point(x = b_start, y = ll0(b_start), size = 3, color = bu_black) +
+  geom_point(x = b_next,  y = ll0(b_next),  size = 3, color = bu_black) +
+  geom_point(x = b_next2, y = ll0(b_next2), size = 3, color = bu_black) +
+  geom_vline(xintercept = b_mle, linetype = "dotted", color = bu_black) +
+  annotate("segment", x = b_start, xend = b_next, y = -13300, yend = -13300,
+           arrow = arrow(length = unit(0.18, "cm"), type = "closed"), color = bu_black) +
+  annotate("text", x = (b_start + b_next) / 2, y = -13300, vjust = -0.7,
+           size = 3.4, color = bu_black, label = paste0("step 1: ", round(step1, 2))) +
+  annotate("segment", x = b_next, xend = b_next2, y = -14300, yend = -14300,
+           arrow = arrow(length = unit(0.18, "cm"), type = "closed"), color = bu_black) +
+  annotate("text", x = (b_next + b_next2) / 2, y = -14300, vjust = -0.7,
+           size = 3.4, color = bu_black, label = paste0("step 2: ", round(step2, 2))) +
+  annotate("text", x = b_start, y = ll0(b_start), hjust = 1.35, vjust = 0.2,
+           size = 3.4, color = bu_black, label = "start") +
+  annotate("text", x = -4.25, y = -5900, hjust = 0, size = 3.1, color = bu_black,
+           label = "parabola refit after step 1") +
+  annotate("text", x = -3.1, y = -9500, hjust = 1, size = 3.1, color = bu_black,
+           label = "parabola fit at the start") +
+  annotate("text", x = b_next, y = ll0(b_next), hjust = 1.15, vjust = 1.6,
+           size = 3.2, color = bu_black, label = "after step 1") +
+  annotate("text", x = b_next2, y = ll0(b_next2), hjust = 1.1, vjust = -1.1,
+           size = 3.2, color = bu_black, label = "after step 2") +
+  annotate("text", x = b_mle, y = -14900, hjust = -0.08, size = 3.4, color = bu_black,
+           label = paste0("MLE = ", round(b_mle, 2))) +
+  coord_cartesian(xlim = c(-4.3, 0.65), ylim = c(-15000, -3000)) +
+  labs(title = "Two Newton steps on the intercept-only hill",
+       subtitle = "grey = the tangent (the score) at each guess;  dashed = the parabola Newton fits there;  each step lands at that parabola's peak",
+       x = expression("intercept," ~ beta[0]), y = "log-likelihood") +
+  theme_minimal()
+```
+
+At $\beta_0 = 0$ we measure the slope (the grey tangent — the score) and how fast it is changing (the curvature — the Hessian). Using those, fit a parabola through the point, in bright dashed green, and Newton jumps to the top of *that parabola*, not of the hill — a move of `r round(step1, 2)`. You can see the gap between the likelihood function and the parabola, so we're not there yet. So take another step, generate tangent and curvature *at the new guess* — the second grey tangent, the pale parabola — and jump again: `r round(step2, 2)`, less than half the first, landing within `r round(abs(b_next2 - b_mle), 2)` of the answer.
+
+The steps shrink fast because the parabola becomes a better stand-in as we near the top — up there the hill very nearly *is* a parabola. Keep going and this one takes steps of `r round(step1, 2)`, `r round(step2, 2)`, `r round(step3, 2)`, `r round(step4, 2)`, converging on `r round(b_mle, 2)`.
+
+The process, again, is iterative - step, recompute $\pi$ and $W$, step again, stop when the change is effectively zero — and the guesses converge on the maximum. 
+
+
+<!-- # Why not just try every value? -->
+
+<!-- The obvious thing is a **grid search**: lay down a fine grid of candidate values, evaluate the log-likelihood at every one of them, and keep whichever candidate scored highest. It works. For a one-parameter problem it works well enough that we'll run one in class, and you should see it once, because it makes concrete what "the value that makes the data most probable" means — you are literally checking them. -->
+
+<!-- It is also the wrong tool, for four reasons, and the reasons are worth more than the demonstration. -->
+
+<!-- **The grid's resolution is your accuracy ceiling.** A grid doesn't find the maximum of the function; it finds the best candidate *you thought to include*. Space the grid at 0.001 and your estimate is accurate to 0.001, no matter how much computing you throw at it. Newton–Raphson converges to machine precision because it isn't choosing from a list. -->
+
+<!-- **You have to know where to look.** A probability has natural walls — $\pi$ lives in $[0,1]$, so a grid can cover all of it. A coefficient has none. Grid $\beta_0$ over $[-3, 3]$ when the truth is $-7$ and the search returns $-3$, confidently, with nothing in the output to say it was pinned at the edge. Newton–Raphson works out which way is up from the derivatives and goes. -->
+
+<!-- **The arithmetic explodes.** This is the fatal one. A grid over one parameter at $m$ values costs $m$ evaluations. Two parameters at the same resolution cost $m^2$, three cost $m^3$, and $k$ cost $m^k$. @fig-curse puts numbers on that exponent. -->
+
+<!-- ```{r} -->
+<!-- #| echo: true -->
+<!-- #| code-fold: true -->
+<!-- #| code-summary: "code" -->
+<!-- #| label: fig-curse -->
+<!-- #| fig-width: 8.5 -->
+<!-- #| fig-height: 4.4 -->
+
+<!-- # What a grid costs as parameters are added, at 100 candidate values each. -->
+<!-- # Times assume a generous 1 microsecond per log-likelihood evaluation. -->
+<!-- curse <- tibble(k = 1:8, evals = 100^k, secs = evals / 1e6) %>% -->
+<!--   mutate(lab = case_when(secs < 60          ~ paste0(round(secs, 2), " sec"), -->
+<!--                          secs < 3600        ~ paste0(round(secs / 60), " min"), -->
+<!--                          secs < 86400 * 365 ~ paste0(round(secs / 86400), " days"), -->
+<!--                          TRUE               ~ paste0(format(round(secs / (86400 * 365)), -->
+<!--                                                             big.mark = ","), " years"))) -->
+
+<!-- ggplot(curse, aes(k, evals)) + -->
+<!--   geom_col(fill = bu_palegreen, width = 0.62) + -->
+<!--   geom_text(aes(label = lab), vjust = -0.55, size = 3.4, color = bu_black) + -->
+<!--   geom_vline(xintercept = 4, linetype = "dashed", color = bu_green) + -->
+<!--   annotate("text", x = 4.1, y = 1e14, hjust = 0, size = 3.5, color = bu_green, -->
+<!--            fontface = "bold", label = "our model has 4 parameters") + -->
+<!--   scale_y_log10(labels = scales::label_log()) + -->
+<!--   scale_x_continuous(breaks = 1:8) + -->
+<!--   labs(title = "What a grid search costs as you add parameters", -->
+<!--        subtitle = "100 candidate values per parameter; 1 microsecond per evaluation", -->
+<!--        x = "number of parameters (k)", y = "log-likelihood evaluations (log scale)") + -->
+<!--   theme_minimal() -->
+<!-- ``` -->
+
+<!-- Our four-parameter model would need `r format(100^4, big.mark = ",", scientific = FALSE)` evaluations at a coarse 100 values per coefficient — about a minute and a half, which sounds survivable until you notice that 100 values per coefficient is a terrible resolution and that a realistic model has eight or ten covariates, at which point we are into geological time. -->
+
+<!-- **And it gives you no standard errors.** No amount of computing power rescues this one. A grid returns a best candidate and nothing else: everything the [likelihood notes](likelihood26.html) built out of the curvature at the peak is unavailable, because a grid never computes a derivative. It has no idea whether the hill it climbed is a spike or a plateau. Newton–Raphson gets the standard errors free, having computed the Hessian anyway to decide how far to step. -->
+
+
+# The full Newton-Raphson
+
+Before we do this to recover 4 parameters, let's look at just one across all the steps to convergence. The model "converges" when the Newton-Raphson updates are not different from the previous values (ie, further iteration isn't improving or changing our guesses at $\beta$). @fig-nr-anim is a real Newton–Raphson hill-climb, one step per frame — press play, or drag the slider through it by hand. The hill is a small simulated intercept-only logit (200 observations, $Pr(y=1) = 0.35$), kept small so the whole climb stays visible on one scale.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-nr-anim
+
+# The NR climb, animated. Each frame: the current guess on the hill, the tangent
+# (the score) at that guess, and every guess made so far. Watch the tangent go
+# flat -- that flattening IS the convergence criterion.
+#
+# A simulated intercept-only logit, so the hill is one-dimensional and the answer
+# is known: 200 draws with Pr(y = 1) = .35.
+set.seed(20260610)
+n_s   <- 200
+y_s   <- rbinom(n_s, 1, 0.35)
+sy_s  <- sum(y_s)
+ll_b  <- function(b) sy_s * log(plogis(b)) + (n_s - sy_s) * log(1 - plogis(b))
+d1_b  <- function(b) sy_s - n_s * plogis(b)                  # score
+d2_b  <- function(b) -n_s * plogis(b) * (1 - plogis(b))      # Hessian (scalar)
+mle_s <- qlogis(mean(y_s))                                   # the answer
+
+# the real NR path, starting well off to the right at 1.5
+bb <- 1.5; path_s <- bb
+for (i in 1:8) {
+  st <- -d1_b(bb) / d2_b(bb)
+  bb <- bb + st
+  path_s <- c(path_s, bb)
+  if (abs(st) < 1e-10) break
+}
+
+grid_s <- seq(-2.4, 2.2, length.out = 400)
+hill_s <- tibble(b = grid_s) %>% mutate(ll = ll_b(b))
+
+# FIRST derivative, drawn ON the curve: a short tangent at the current guess.
+tan_seg <- function(b0, half = 0.5) {
+  tibble(b = c(b0 - half, b0 + half), y = ll_b(b0) + d1_b(b0) * (b - b0))
+}
+
+# SECOND derivative, drawn as the parabola Newton actually fits -- the 2nd-order
+# Taylor expansion at the current guess. Curvature can't be drawn honestly on its
+# own where the slope is steep, but this can, and its PEAK is the next guess.
+para_seg <- function(b0) {
+  tibble(b = grid_s, y = ll_b(b0) + d1_b(b0) * (grid_s - b0) +
+                         0.5 * d2_b(b0) * (grid_s - b0)^2)
+}
+
+pts_s   <- tibble(iter = seq_along(path_s) - 1, b = path_s, ll = ll_b(path_s))
+tans_s  <- map_dfr(seq_along(path_s), \(i) tan_seg(path_s[i]) %>% mutate(iter = i - 1))
+paras_s <- map_dfr(seq_along(path_s), \(i) para_seg(path_s[i]) %>% mutate(iter = i - 1))
+trail_s <- map_dfr(seq_along(path_s),
+                   \(i) tibble(iter = i - 1, b = path_s[1:i], ll = ll_b(path_s[1:i])))
+
+# the parabola's peak: b - d1/d2, which is exactly where the next step lands
+vtx_s <- tibble(iter = seq_along(path_s) - 1,
+                b = path_s - d1_b(path_s) / d2_b(path_s),
+                y = ll_b(path_s) - d1_b(path_s)^2 / (2 * d2_b(path_s)))
+
+# The readout. `next step` is -slope/curvature, printed with %.3g so it drops into
+# scientific notation as it collapses -- which is why the dot appears to stop
+# moving after iteration 4 while the algorithm is still working.
+se_s <- 1 / sqrt(-d2_b(path_s[length(path_s)]))     # SE from the curvature at the answer
+
+labs_s <- pts_s %>%
+  mutate(txt = paste0("iteration ", iter, ":   b = ", sprintf("%.4f", b), "<br>",
+                      "slope = ", sprintf("%.3g", d1_b(b)),
+                      "     curvature = ", sprintf("%.3g", d2_b(b)),
+                      "     next step = ", sprintf("%.3g", -d1_b(b) / d2_b(b))),
+         txt = ifelse(iter == max(iter),
+                      paste0(txt, "<br>converged.   SE = 1/sqrt(",
+                             sprintf("%.2f", -d2_b(b)), ") = ", sprintf("%.3f", se_s)),
+                      txt),
+         x = -2.3, y = min(hill_s$ll) + 0.13 * diff(range(hill_s$ll)))
+
+plot_ly() %>%
+  add_lines(data = hill_s, x = ~b, y = ~ll, name = "log-likelihood",
+            line = list(color = bu_green, width = 3), hoverinfo = "skip") %>%
+  add_lines(data = paras_s, x = ~b, y = ~y, frame = ~iter,
+            name = "the parabola Newton fits",
+            line = list(color = bu_lightgreen, width = 2, dash = "dash"),
+            hoverinfo = "skip") %>%
+  add_lines(data = tans_s, x = ~b, y = ~y, frame = ~iter, name = "tangent (the score)",
+            line = list(color = bu_black, width = 4, dash = "dot"), hoverinfo = "skip") %>%
+  add_trace(data = trail_s, type = "scatter", mode = "markers", x = ~b, y = ~ll,
+            frame = ~iter, marker = list(color = bu_palegreen, size = 7,
+                                         line = list(color = bu_grey, width = 1)),
+            showlegend = TRUE, hoverinfo = "skip") %>%
+  add_trace(data = vtx_s, type = "scatter", mode = "markers", x = ~b, y = ~y,
+            frame = ~iter, marker = list(color = "white", size = 11,
+                                         line = list(color = bu_lightgreen, width = 3)),
+            showlegend = TRUE, hoverinfo = "skip") %>%
+  add_trace(data = pts_s, type = "scatter", mode = "markers", x = ~b, y = ~ll,
+            frame = ~iter, marker = list(color = bu_lightgreen, size = 13,
+                                         line = list(color = bu_black, width = 1)),
+            showlegend = TRUE, hoverinfo = "skip") %>%
+  add_text(data = labs_s, x = ~x, y = ~y, frame = ~iter, text = ~txt,
+           textposition = "middle right", showlegend = FALSE,
+           textfont = list(color = bu_black, size = 13), hoverinfo = "skip") %>%
+  layout(xaxis = list(title = "intercept (beta-0)", range = c(-2.4, 2.2), zeroline = FALSE),
+         yaxis = list(title = "log-likelihood", zeroline = FALSE,
+                      range = c(min(hill_s$ll) - 5,
+                                max(c(hill_s$ll, vtx_s$y)) + 8)),
+         legend = list(orientation = "h", y = -0.18),
+         title = list(text = "Newton-Raphson climbing, one step per frame")) %>%
+  animation_opts(frame = 900, transition = 300, redraw = FALSE) %>%
+  animation_slider(currentvalue = list(prefix = "iteration ")) %>%
+  # add_trace() drops `name` on animated marker traces, so set them here
+  style(name = "guesses so far",               traces = 4) %>%
+  style(name = "top of parabola = next guess", traces = 5) %>%
+  style(name = "current guess",                traces = 6)
+```
+
+Three things move in this figure, and each is a piece of the update rule.
+
+**The black dotted tangent is the first derivative**, the score at the current guess. At iteration 0 it is steep — slope about `r round(d1_b(path_s[1]), 0)` — and the step is correspondingly large; by the third pass it is visibly flat and the printed slope is a fraction of one. **That flattening is the convergence criterion**, and what we expect as we approach the maximum (which should be flat).
+
+**The dashed green parabola is where the second derivative appears.** Slope and curvature together define exactly one parabola through the current point. Think of the parabola as the Newton-Raphson's working model of the hill. It can't see the hill, so it jumps to the top of *that parabola*, the open ring, and the ring is where the dot will be next frame. It is $\beta^{(t)} - H^{-1}\nabla\ell$.
+
+Remember, the score determines which direction we move in. The step is $-\nabla\ell / H$, and since $H$ is negative, $-1/H$ is positive, so the step always carries the *sign of the score*. Iteration 0's slope is negative and the step goes left; the guess overshoots to $-1.37$, so the slope flips positive and the step goes right.
+
+What curvature decides is **how far**:
+
+> the step is the distance at which the current slope, falling at the current rate, would run out to zero.
+
+At iteration 0 the slope is $-85.5$, falling at $29.8$ per unit of $\beta$, so it runs out in $85.5/29.8 = 2.87$ units — exactly the step. Newton–Raphson extrapolates the slope in a straight line and jumps to its zero. Sharp curvature kills the slope fast, so the top is close and the step short; flat curvature barely touches it, so the top is far away and the step long.
+
+The curvature's *sign* does matter for direction. If $H$ were positive, $-1/H$ would be negative, the step would run *against* the score, and Newton would walk downhill to a minimum — it has no idea whether the $\nabla\ell = 0$ it hunts is a peak or a trough. Global concavity is what makes this climb a climb.
+
+**Watch the parabola tighten onto the hill.** Early it is a poor stand-in — at iteration 0 its peak sits well above and left of the true summit — so the step lands short. As the guesses close in, parabola and hill become almost indistinguishable near the top, which is why the last steps are both small and accurate. It takes `r length(path_s) - 1` steps.
+
+After iteration 4 the dot stops visibly moving. That is the algorithm finishing, not the animation stalling — read the `next step` field instead of the dot: $-0.00393$, then $-1.69\times10^{-6}$, then $-3.14\times10^{-13}$. The movement is still there, below anything a screen can render.
+
+The last frame provides both the coefficient estimate, and the material we need for the standard error. At convergence the curvature is $\ell''(\widehat\beta) = -`r sprintf("%.2f", -d2_b(path_s[length(path_s)]))`$, so the negated curvature $-\ell''$ is $`r sprintf("%.2f", -d2_b(path_s[length(path_s)]))`$, and
+
+$$
+\widehat{\text{SE}} \;=\; \frac{1}{\sqrt{-\ell''(\widehat\beta)}} \;=\; \frac{1}{\sqrt{`r sprintf("%.2f", -d2_b(path_s[length(path_s)]))`}} \;=\; `r sprintf("%.3f", 1/sqrt(-d2_b(path_s[length(path_s)])))`,
+$$
+
+This is the *reciprocal* square root of the *negated* curvature: sharper hill, bigger $-\ell''$, smaller standard error. The number the algorithm used to decide how far to step is one square root from the number in your table.
+
+<!-- One readout is worth a second look, because it cuts against something we say a few pages on. The curvature *grows* here, from about `r round(d2_b(path_s[1]), 0)` to about `r round(d2_b(path_s[length(path_s)]), 0)`; on the dispute data it shrinks. Both are right. The weight $\pi_i(1-\pi_i)$ is largest at $\pi = 0.5$, this sample has $\widehat\pi = `r round(mean(y_s), 2)`$, so the climb moves *toward* the most informative region — while disputes are rare, so that climb moves *away* from it. -->
+
+## Newton-Raphson for multiple unknowns
+
+Let's do this once more for a real logit with four coefficients using the same update rule from above, run in a loop. We start somewhere, compute the gradient $\nabla\ell$ and the Hessian $H$ at that point, take the step, and repeat until the step stops changing anything — that last part is the convergence check.
+
+We'll also have the loop record what it's doing on each pass: the log-likelihood it has reached, the largest element of the gradient $\nabla\ell$ (which measures how far from flat, and so how far from the top, we still are), the size of the step it just took, and the coefficients themselves. Storing that history lets us watch the climb after the fact.
+
+```{r nr}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+X <- model.matrix(~ lncaprat + border + deml, data = dp)
+y <- dp$dispute
+
+loglik <- function(b, X, y) {
+  p <- plogis(as.vector(X %*% b))
+  sum(y * log(p) + (1 - y) * log(1 - p))
+}
+
+b    <- rep(0, ncol(X))      # start at zero
+hist <- list()
+for (it in 1:50) {
+  p    <- plogis(as.vector(X %*% b))
+  g    <- t(X) %*% (y - p)              # score, k x 1
+  XtWX <- t(X) %*% (X * (p * (1 - p)))  # -H, k x k
+  step <- solve(XtWX, g)
+
+  hist[[it]] <- c(iter = it, loglik = loglik(b, X, y),
+                  max_grad = max(abs(g)), max_step = max(abs(step)),
+                  setNames(b, colnames(X)))
+
+  b <- b + step
+  if (max(abs(step)) < 1e-8) break      # converged
+}
+
+# The loop's XtWX was computed BEFORE the last step, so recompute -H at the
+# final estimates. Here the difference is ~1e-13, but the habit matters: the
+# standard errors belong at b-hat, not one step behind it.
+p_hat <- plogis(as.vector(X %*% b))
+XtWX  <- t(X) %*% (X * (p_hat * (1 - p_hat)))
+se    <- sqrt(diag(solve(XtWX)))        # SEs from -H at b-hat
+n_it  <- it
+```
+
+It converges in `r n_it` iterations and recovers exactly what `glm` reports.
+
+
+```{r nr-compare}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+m <- glm(dispute ~ lncaprat + border + deml, family = binomial("logit"), data = dp)
+
+tibble(term = colnames(X),
+       nr_coef  = as.vector(b),   nr_se  = se,
+       glm_coef = coef(m),        glm_se = sqrt(diag(vcov(m)))) %>%
+  mutate(across(where(is.numeric), \(x) round(x, 5)))
+```
+
+
+
+@fig-paths shows what those fifteen lines actually did: four coefficients, all starting at zero, all walking to their estimates at once.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-paths
+#| fig-width: 9.5
+#| fig-height: 5
+
+# Every coefficient's journey from 0 to its estimate. They move TOGETHER -- one
+# step of the algorithm updates the whole vector, which is what it means for the
+# Hessian to be a k x k matrix rather than k separate numbers.
+log_tbl <- as_tibble(do.call(rbind, hist))
+
+paths <- log_tbl %>%
+  select(iter, all_of(colnames(X))) %>%
+  pivot_longer(-iter, names_to = "term", values_to = "estimate") %>%
+  mutate(term = factor(term, levels = colnames(X)))
+
+finals <- tibble(term = factor(colnames(X), levels = colnames(X)),
+                 estimate = as.vector(b))
+
+ggplot(paths, aes(iter, estimate)) +
+  geom_hline(data = finals, aes(yintercept = estimate),
+             linetype = "dashed", color = bu_black) +
+  geom_line(linewidth = 0.9, color = bu_green) +
+  geom_point(size = 1.8, color = bu_green) +
+  facet_wrap(~ term, scales = "free_y") +
+  labs(title = "All four coefficients climb at once",
+       subtitle = "dashed line = the converged estimate; every coefficient starts at 0",
+       x = "iteration", y = "estimate") +
+  theme_minimal()
+```
+
+Look at how *little* happens after the first few passes. Every coefficient makes almost its entire journey in the first three or four iterations and then settles onto the dashed line. That pattern — enormous early progress, then fine-tuning — is characteristic, and the reason is visible in the update rule itself. The step is the gradient divided by the curvature. As we climb, the gradient collapses toward zero far faster than the curvature changes, so the ratio shrinks fast. The steps get small not because the hill gets steeper near the top, but because the slope runs out.
+
+# The iteration log
+
+The history the loop stored is an *iteration log* — one row per step. This can be informative in part because more iterations means the model had to work hard to estimate coefficients (to find a maximum), suggesting perhaps that the likelihood function is flat. Here's the iteration log from the model above: 
+
+```{r nr-history}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+log_tbl %>%
+  select(iter, loglik, max_grad, max_step) %>%
+  mutate(loglik = round(loglik, 3),
+         max_grad = signif(max_grad, 4),
+         max_step = signif(max_step, 4))
+```
+
+@fig-itlog plots the log-likelihood and gradient at each step. The **log-likelihood** rises fast and then flattens — it gains almost everything in the first few steps and barely moves after. The **gradient** $\nabla\ell$ falls toward zero, which is the actual stopping condition: we are at the top when the slope is flat.  
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-itlog
+#| fig-width: 10
+#| fig-height: 4
+
+p1 <- ggplot(log_tbl, aes(iter, loglik)) +
+  geom_line(color = bu_green) + geom_point(color = bu_green) +
+  labs(title = "The log-likelihood climbs, then flattens",
+       x = "iteration", y = "log-likelihood") +
+  theme_minimal()
+
+p2 <- ggplot(log_tbl, aes(iter, max_grad)) +
+  geom_line(color = bu_lightgreen) + geom_point(color = bu_lightgreen) +
+  scale_y_log10() +
+  labs(title = "The gradient collapses to zero",
+       subtitle = "log scale: each step drops it by an order of magnitude or more",
+       x = "iteration", y = "max |gradient|") +
+  theme_minimal()
+
+p1 + p2
+```
+
+
+
+# Does the starting value matter?
+
+For binomial models, the short answer is no, not really. In the examples so far, we've started at $\beta = 0$ for all the $\beta$s.  What if we'd started somewhere else? @fig-starts examines 5 different starting values:
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-starts
+#| fig-width: 8.5
+#| fig-height: 4.6
+
+# Five very different starting vectors, same destination. This is global
+# concavity doing its job: one hill, one top, so it does not matter where on the
+# hillside you begin.
+climb <- function(start, maxit = 40) {
+  bb <- start; out <- tibble(iter = 0, ll = loglik(bb, X, y))
+  for (i in 1:maxit) {
+    p  <- plogis(as.vector(X %*% bb))
+    # guard: a wild enough start saturates every fitted probability, which drives
+    # the weights to zero and leaves X'WX singular. Stop rather than error.
+    st <- try(solve(t(X) %*% (X * (p * (1 - p))), t(X) %*% (y - p)), silent = TRUE)
+    if (inherits(st, "try-error")) break
+    bb <- bb + st
+    out <- bind_rows(out, tibble(iter = i, ll = loglik(bb, X, y)))
+    if (max(abs(st)) < 1e-8) break
+  }
+  out
+}
+
+set.seed(20260610)
+starts <- list("all zero" = rep(0, ncol(X)),
+               "start B"  = c(-1, 0.2, 0.5, 0.05),
+               "start C"  = c(1, 0.1, -0.5, 0.03),
+               "start D"  = c(-5, 0.5, 1.5, 0.1),
+               "start E"  = c(-3, 0.2, -0.5, 0.06))
+
+runs <- imap_dfr(starts, \(s, nm) climb(s) %>% mutate(start = nm))
+
+ggplot(runs, aes(iter, ll, color = start)) +
+  geom_line(linewidth = 0.9) + geom_point(size = 1.6) +
+  geom_hline(yintercept = as.numeric(logLik(m)), linetype = "dashed", color = bu_black) +
+  scale_color_manual(values = c(bu_green, bu_lightgreen, bu_palegreen, bu_grey, bu_black),
+                     name = NULL) +
+  coord_cartesian(ylim = c(as.numeric(logLik(m)) - 4000, as.numeric(logLik(m)) + 300)) +
+  labs(title = "Five starting points, one answer",
+       subtitle = "dashed line = the maximized log-likelihood; every run lands on it",
+       x = "iteration", y = "log-likelihood") +
+  theme_minimal() + theme(legend.position = "bottom")
+```
+
+Every model lands on the same log-likelihood, and recovers the same coefficients. This is because the binomial log-likelihood is globally concave: it is one hill with a single top, so it doesn't matter which side of the hill you start on. For the models in this family, starting values are a convenience — they affect how many iterations you burn, not what you get.
+
+This is a property of *the binomial* likelihood, not of maximum likelihood in general, and we'll meet models later in the term where starting values matter a great deal.
+
+Is it possible to choose starting values that will fail (that Newton-Raphson cannot reach a maximum from)? Sure, but this is why optimization algorithms always start somewhere sensible (zeros, or OLS estimates) and usually check whether the step they just took *improved* the function.  
+
+
+
+
+# Optimization packages
+
+I wrote the loop out by hand to see inside it — to make the point that nothing magical happens between the data and the estimates. In practice, you'll likely never do this, because you'll use a built-in optimizer.
+
+Base R's `optim` is one such optimizer. You give it the function to maximize and a starting point; you tell it to maximize rather than minimize (it minimizes by default, so we flip the sign with `fnscale = -1`); and you ask it to return the Hessian at the solution, which gives us the standard errors the same way the hand-rolled loop did:
+
+```{r optim}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+o <- optim(rep(0, ncol(X)), loglik, X = X, y = y, method = "BFGS",
+           control = list(fnscale = -1), hessian = TRUE)
+
+tibble(term = colnames(X),
+       optim_coef = round(o$par, 5),
+       optim_se   = round(sqrt(diag(solve(-o$hessian))), 5))
+```
+
+You'll see we've achieved the same estimates as above.  `optim` uses a "quasi-Newton method" (BFGS) that *approximates* the Hessian rather than computing it exactly — useful when the analytic second derivatives are painful, which is often. The `maxLik` package contains several optimization alternatives, useful if you have particularly difficult maximum likelihood problems.
+
+# Recovering the model log-likelihood
+
+One more quantity before we leave the maximizer: the maximized log-likelihood itself, the height of the hill at its top. We want it later for fit statistics like the log-likelihood ratio $\chi^2$, and for information criteria (AIC and BIC are both functions of it). It comes from the `glm` model with the `logLik` function, and to show there's nothing mysterious in it we can rebuild it by hand — predicted probabilities, plugged into the log-likelihood, summed:
+
+```{r recover-ll}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+pred      <- predict(m, type = "response")
+ll_byhand <- sum(y * log(pred) + (1 - y) * log(1 - pred))
+
+c(logLik = round(as.numeric(logLik(m)), 3),
+  by_hand = round(ll_byhand, 3),
+  from_our_loop = round(loglik(as.vector(b), X, y), 3))
+```
+
+You'll see these all report the same log-likelihood from the model we estimated above.
+
+
+# Properties of MLEs
+
+We have the estimates and the machinery that produced them. One thing is still owed: why believe any of it. The properties below justify maximum likelihood as an estimator, and each ties back to machinery we built rather than arriving as a separate act of faith.
+
+- **Consistency.** As $n$ grows, $\widehat\beta$ converges to the true $\beta$. MLEs are not generally unbiased in small samples, but they are consistent — which is why "large $n$" reasoning runs through everything here. Defining *large* is not at all straightforward, and we'll worry about it more than once this term.
+- **Asymptotic normality.** Because the log-likelihood is locally quadratic at its peak, $\widehat\beta \sim N\big(\beta,\,(-H)^{-1}\big)$ in large samples — *whatever* distribution we assumed for $y$. Read that again: the coefficients are normally distributed even when the outcome is a binary, a count, or a duration. This is what licenses $z$-tests on coefficients from any ML model, and it is the local quadratic shape of the log-likelihood at its peak — the same curvature the [likelihood notes](likelihood26.html) turned into a standard error — restated as a sampling distribution.
+Those first two properties are claims about what happens across *repeated samples*, which is exactly the kind of claim a simulation can show you. In @fig-asymptotics I generate 400 datasets at each of four sample sizes, fit a logit to every one, and collect the estimated slope.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-asymptotics
+#| fig-width: 10
+#| fig-height: 5.4
+#| cache: true
+
+# Consistency and asymptotic normality in one picture. For each n, fit 400
+# logits to fresh data from a known DGP and keep the slope. The dashed line is
+# the truth; the black curve is the normal density implied by the mean and SD of
+# the estimates themselves -- NOT fitted to the histogram, just drawn from them.
+
+set.seed(20260610)
+truth <- 1.0
+reps  <- 400
+ns    <- c(50, 200, 1000, 5000)
+
+one_fit <- function(n) {
+  x <- rnorm(n)
+  y <- rbinom(n, 1, plogis(-0.3 + truth * x))
+  coef(glm(y ~ x, family = binomial))[2]
+}
+
+sims <- map_dfr(ns, \(n) tibble(n = n, bhat = map_dbl(1:reps, \(i) one_fit(n)))) %>%
+  mutate(n = factor(paste0("n = ", n), levels = paste0("n = ", ns)))
+
+# The normal curve implied by each panel's own mean and SD -- drawn from the
+# estimates, not fitted to the histogram.
+norms <- sims %>%
+  group_by(n) %>%
+  reframe(bhat = seq(min(bhat), max(bhat), length.out = 200),
+          dens = dnorm(seq(min(bhat), max(bhat), length.out = 200),
+                       mean(bhat), sd(bhat)))
+
+ggplot(sims, aes(bhat)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 34,
+                 fill = bu_palegreen, color = "white", linewidth = 0.2) +
+  geom_line(data = norms, aes(bhat, dens), color = bu_green, linewidth = 0.9) +
+  geom_vline(xintercept = truth, linetype = "dashed", color = bu_black) +
+  facet_wrap(~ n, scales = "free", nrow = 2) +
+  labs(title = "Consistency and asymptotic normality, simulated",
+       subtitle = paste0(reps, " logits per sample size; dashed line is the true slope of ", truth),
+       x = expression("estimated slope," ~ hat(beta)), y = "density") +
+  theme_minimal()
+```
+
+Three things to read off that figure, one for each property. First, the distributions **tighten** as $n$ grows — at $n = 50$ the estimates are scattered across a wide range, and by $n = 5000$ they are packed around the truth. That's consistency: more data, less scatter, converging on the right answer.
+
+Second, look carefully at the small-$n$ panel. The distribution is not centered on the dashed line; it sits a little to the right, and it's visibly skewed. That is the small-sample bias of the MLE, and it's the reason we say maximum likelihood estimators are *consistent* rather than unbiased. The bias doesn't vanish because we were careful; it vanishes because $n$ got large.
+
+Third, the shape. At the larger sample sizes the distributions are symmetric and bell-shaped — and remember what the outcome is. Every one of those models has a **binary** $y$, a variable that could not look less normal. The coefficients are normally distributed anyway. That is asymptotic normality, and it is what lets us put a $z$-statistic next to a logit, Poisson, or hazard coefficient without ever asking whether $y$ is normal.
+
+- **Efficiency.** Among consistent, asymptotically normal estimators, the MLE attains the smallest asymptotic variance. See King, p. 80.
+- **Invariance.** If $\widehat\beta$ is the MLE, then $g(\widehat\beta)$ is the MLE of $g(\beta)$ for continuous $g$. This is what the quantities-of-interest work relies on: we can transform coefficients into predicted probabilities, marginal effects, and other quantities, and they remain maximum likelihood estimates.
+
+# Notes
+
+- This file and the [likelihood notes](likelihood26.html) are a pair. There we built the log-likelihood and the two derivatives that describe it, and said what they tell us about the estimate and its precision; here we put them in a loop and watched it climb.
+- Everything here was the binomial. Swapping the link and the distribution gives the maximizer for any model in the course — only `loglik`, the gradient, and the weights change. That is the next move, and it's what the build-your-own-estimator work is about.
+- The one-step figure and the Newton–Raphson animation both run on the intercept-only model — the same one-parameter hill we solved with algebra in the likelihood notes. Two treatments of one object: solve it outright, then climb it.

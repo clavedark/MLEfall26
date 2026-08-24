@@ -421,7 +421,7 @@ This corresponds to the first line of the machine above.
 
 **The second recipe takes that function and returns an estimate.** It takes $\ell(\beta)$ in and hands back $\widehat\beta$ and its standard errors — the second line of the machine above. Where the first recipe is the same for every model, the second is where models differ, sometimes enormously, in difficulty.
 
-This section briefly explores methods that don't work in broadly useful ways. Then, we identify two quantities that will prove to be essential parts of the method we use most commonly for estimating maximum likelihood models. That method is the Newton-Raphson method, and is what we cover in detail in the maximization notes.
+This section briefly explores methods that don't work in broadly useful ways. Then, we identify two quantities that will prove to be essential parts of the method we use most commonly for estimating maximum likelihood models. That method is the Newton-Raphson method, and is what we cover in detail in the [maximization notes](llfmax26.html).
 
 ## Analytic methods, and closed-form solutions
 
@@ -508,7 +508,7 @@ On the bottom line, $\beta$ sits out in the open, multiplied by matrices we alre
 
 On the top line, try the same moves. Distribute the $X'$ and you get $X'y = X'\Lambda(X\beta)$ — and then you are stuck, because there is no way to peel $\Lambda$ off the right-hand side and leave $\beta$ standing alone. It is inside a nonlinear function, wrapped up with the data, and no rearranging extracts it. The same is true of the Poisson's $X'(y - e^{X\beta})$. **There is no closed form.** Not one we have failed to find — one that does not exist.
 
-What we use instead is a **numerical method**: a procedure that *searches* for the answer by evaluating the function over and over, rather than solving for it. Guess a $\beta$, see what the function says, use that to make a better guess, repeat until you stop improving. The particular numerical method this course uses is **Newton–Raphson**; we'll build it in the maximization notes. 
+What we use instead is a **numerical method**: a procedure that *searches* for the answer by evaluating the function over and over, rather than solving for it. Guess a $\beta$, see what the function says, use that to make a better guess, repeat until you stop improving. The particular numerical method this course uses is **Newton–Raphson**; we'll build it in the [maximization notes](llfmax26.html). 
 
 To prepare for the Newton-Raphson, let's assemble two things Newton–Raphson needs — the first and second derivatives of the log-likelihood — and show what they tell us about the estimate quite apart from any algorithm.
 
@@ -533,7 +533,7 @@ We can learn quite a bit using the first and second derivatives of $\ell$ **eval
 
 So what we are looking for is a $\beta$ where the **first derivative is zero** — no direction left to improve in — **and the second derivative is negative**, confirming that flat spot is a peak and not a trough or a shoulder. Those two conditions together are what "maximum likelihood estimate" means operationally.
 
-We're going to work through these two derivatives now, then put them to use in the maximization notes where we use them iteratively in the Newton-Raphson optimization process. We're also going to spend a little time on the second derivatives to see they measure how much the data actually tell us about $\beta$; those derivatives are the basis of our standard errors.
+We're going to work through these two derivatives now, then put them to use in the [maximization notes](llfmax26.html) where we use them iteratively in the Newton-Raphson optimization process. We're also going to spend a little time on the second derivatives to see they measure how much the data actually tell us about $\beta$; those derivatives are the basis of our standard errors.
 
 The two derivatives have names. The first derivative is the **score**, or equivalently the **gradient**; the second derivative is the **Hessian**. 
 
@@ -815,6 +815,6 @@ The panels represent the same estimator, same model, but with very different pre
 
 # Notes
 
-- The closed-form result above — $\widehat\pi = \bar y$ — is the exception, not the rule. Once a model carries covariates, the parameter of interest sits inside a nonlinear link and the analytic method stops. Nearly everything we estimate this semester is in that second category, which is why the maximization notes come next.
+- The closed-form result above — $\widehat\pi = \bar y$ — is the exception, not the rule. Once a model carries covariates, the parameter of interest sits inside a nonlinear link and the analytic method stops. Nearly everything we estimate this semester is in that second category, which is why the [maximization notes](llfmax26.html) come next.
 - The machine is the recurring object of this course. Each later model — counts, durations, choices — swaps the link and the distribution and reuses the same chain. We will restate it for each only to show that nothing structural changed.
 

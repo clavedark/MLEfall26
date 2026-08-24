@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Dave Clark">
-<meta name="dcterms.date" content="2026-08-23">
+<meta name="dcterms.date" content="2026-08-24">
 
 <title>Likelihood Theory &amp; Estimation Mechanics – MLE - Fall 2026</title>
 <style>
@@ -4253,7 +4253,7 @@ window.Quarto = {
       <div>
       <div class="quarto-title-meta-heading">Published</div>
       <div class="quarto-title-meta-contents">
-        <p class="date">August 23, 2026</p>
+        <p class="date">August 24, 2026</p>
       </div>
     </div>
     
@@ -4693,7 +4693,7 @@ Take away
 </ol>
 <p>This corresponds to the first line of the machine above.</p>
 <p><strong>The second recipe takes that function and returns an estimate.</strong> It takes <span class="math inline">\(\ell(\beta)\)</span> in and hands back <span class="math inline">\(\widehat\beta\)</span> and its standard errors — the second line of the machine above. Where the first recipe is the same for every model, the second is where models differ, sometimes enormously, in difficulty.</p>
-<p>This section briefly explores methods that don’t work in broadly useful ways. Then, we identify two quantities that will prove to be essential parts of the method we use most commonly for estimating maximum likelihood models. That method is the Newton-Raphson method, and is what we cover in detail in the maximization notes.</p>
+<p>This section briefly explores methods that don’t work in broadly useful ways. Then, we identify two quantities that will prove to be essential parts of the method we use most commonly for estimating maximum likelihood models. That method is the Newton-Raphson method, and is what we cover in detail in the <a href="llfmax26.html">maximization notes</a>.</p>
 <section id="analytic-methods-and-closed-form-solutions" class="level2">
 <h2 class="anchored" data-anchor-id="analytic-methods-and-closed-form-solutions">Analytic methods, and closed-form solutions</h2>
 <p>Take the binomial with no <span class="math inline">\(x\)</span> variables at all. Every observation shares the same probability <span class="math inline">\(\pi\)</span> — there is one unknown, a single number, and we want the value of it that makes our observed string of zeros and ones most probable. Write the log-likelihood, differentiate with respect to <span class="math inline">\(\pi\)</span>, set it to zero:</p>
@@ -4774,7 +4774,7 @@ Figure 3
 <p>Same <span class="math inline">\(X&#39;\)</span>, same <span class="math inline">\(y\)</span>, same “observed minus fitted” in the middle. The only difference is the four characters wrapped around <span class="math inline">\(X\beta\)</span> on the top line — and that difference decides everything.</p>
 <p>On the bottom line, <span class="math inline">\(\beta\)</span> sits out in the open, multiplied by matrices we already know. Distribute, collect, invert, and it comes free: <span class="math inline">\(X&#39;y = X&#39;X\beta\)</span>, so <span class="math inline">\(\widehat\beta = (X&#39;X)^{-1}X&#39;y\)</span>. We did exactly this a few pages ago, and the answer was OLS.</p>
 <p>On the top line, try the same moves. Distribute the <span class="math inline">\(X&#39;\)</span> and you get <span class="math inline">\(X&#39;y = X&#39;\Lambda(X\beta)\)</span> — and then you are stuck, because there is no way to peel <span class="math inline">\(\Lambda\)</span> off the right-hand side and leave <span class="math inline">\(\beta\)</span> standing alone. It is inside a nonlinear function, wrapped up with the data, and no rearranging extracts it. The same is true of the Poisson’s <span class="math inline">\(X&#39;(y - e^{X\beta})\)</span>. <strong>There is no closed form.</strong> Not one we have failed to find — one that does not exist.</p>
-<p>What we use instead is a <strong>numerical method</strong>: a procedure that <em>searches</em> for the answer by evaluating the function over and over, rather than solving for it. Guess a <span class="math inline">\(\beta\)</span>, see what the function says, use that to make a better guess, repeat until you stop improving. The particular numerical method this course uses is <strong>Newton–Raphson</strong>; we’ll build it in the maximization notes.</p>
+<p>What we use instead is a <strong>numerical method</strong>: a procedure that <em>searches</em> for the answer by evaluating the function over and over, rather than solving for it. Guess a <span class="math inline">\(\beta\)</span>, see what the function says, use that to make a better guess, repeat until you stop improving. The particular numerical method this course uses is <strong>Newton–Raphson</strong>; we’ll build it in the <a href="llfmax26.html">maximization notes</a>.</p>
 <p>To prepare for the Newton-Raphson, let’s assemble two things Newton–Raphson needs — the first and second derivatives of the log-likelihood — and show what they tell us about the estimate quite apart from any algorithm.</p>
 <div class="callout callout-style-default callout-tip callout-titled" title="Take away">
 <div class="callout-header d-flex align-content-center">
@@ -4807,7 +4807,7 @@ Take away
 <li><p>The <strong>second derivative</strong> is the rate at which that slope is changing. Two jobs. First, it confirms we are on a hill rather than in a valley - this is maximum, not minimum likelihood, after all. The flat spot we’re hunting is a maximum only if the surface is bending downward there. Second, it tells us how sharply the surface is bending, which tells us how precisely the data pin <span class="math inline">\(\beta\)</span> down.</p></li>
 </ul>
 <p>So what we are looking for is a <span class="math inline">\(\beta\)</span> where the <strong>first derivative is zero</strong> — no direction left to improve in — <strong>and the second derivative is negative</strong>, confirming that flat spot is a peak and not a trough or a shoulder. Those two conditions together are what “maximum likelihood estimate” means operationally.</p>
-<p>We’re going to work through these two derivatives now, then put them to use in the maximization notes where we use them iteratively in the Newton-Raphson optimization process. We’re also going to spend a little time on the second derivatives to see they measure how much the data actually tell us about <span class="math inline">\(\beta\)</span>; those derivatives are the basis of our standard errors.</p>
+<p>We’re going to work through these two derivatives now, then put them to use in the <a href="llfmax26.html">maximization notes</a> where we use them iteratively in the Newton-Raphson optimization process. We’re also going to spend a little time on the second derivatives to see they measure how much the data actually tell us about <span class="math inline">\(\beta\)</span>; those derivatives are the basis of our standard errors.</p>
 <p>The two derivatives have names. The first derivative is the <strong>score</strong>, or equivalently the <strong>gradient</strong>; the second derivative is the <strong>Hessian</strong>.</p>
 <section id="the-first-derivative-score-gradient" class="level2">
 <h2 class="anchored" data-anchor-id="the-first-derivative-score-gradient">The first derivative (score, gradient)</h2>
@@ -5102,7 +5102,7 @@ Take away
 <section id="notes" class="level1">
 <h1>Notes</h1>
 <ul>
-<li>The closed-form result above — <span class="math inline">\(\widehat\pi = \bar y\)</span> — is the exception, not the rule. Once a model carries covariates, the parameter of interest sits inside a nonlinear link and the analytic method stops. Nearly everything we estimate this semester is in that second category, which is why the maximization notes come next.</li>
+<li>The closed-form result above — <span class="math inline">\(\widehat\pi = \bar y\)</span> — is the exception, not the rule. Once a model carries covariates, the parameter of interest sits inside a nonlinear link and the analytic method stops. Nearly everything we estimate this semester is in that second category, which is why the <a href="llfmax26.html">maximization notes</a> come next.</li>
 <li>The machine is the recurring object of this course. Each later model — counts, durations, choices — swaps the link and the distribution and reuses the same chain. We will restate it for each only to show that nothing structural changed.</li>
 </ul>
 
