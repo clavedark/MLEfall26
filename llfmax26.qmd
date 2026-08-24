@@ -307,11 +307,15 @@ p_top <- function(b0, st) ll0(b0) + d1_0(b0) * st + 0.5 * d2_0(b0) * st^2
 ggplot(hill, aes(b, ll)) +
   geom_line(data = tangent(b_start), aes(b, y), color = bu_grey, linewidth = 0.7) +
   geom_line(data = tangent(b_next),  aes(b, y), color = bu_grey, linewidth = 0.7) +
-  geom_line(data = parabola(b_start), aes(b, y), color = bu_lightgreen,
-            linewidth = 0.8, linetype = "dashed") +
-  geom_line(data = parabola(b_next), aes(b, y), color = bu_palegreen,
-            linewidth = 0.8, linetype = "dashed") +
   geom_line(linewidth = 1.1, color = bu_green) +
+  # the parabolas are drawn ON TOP of the hill on purpose. Near the point each
+  # one is fitted at, the parabola and the hill agree to within a fraction of a
+  # log-likelihood unit -- so if the hill is painted over them, the dashed curve
+  # vanishes exactly where it matters and looks like it misses the start point.
+  geom_line(data = parabola(b_start), aes(b, y), color = bu_lightgreen,
+            linewidth = 0.9, linetype = "dashed") +
+  geom_line(data = parabola(b_next), aes(b, y), color = bu_palegreen,
+            linewidth = 0.9, linetype = "dashed") +
   annotate("segment", x = b_next, xend = b_next, y = p_top(b_start, step1), yend = ll0(b_next),
            color = bu_grey, linewidth = 0.4, linetype = "dotted") +
   annotate("segment", x = b_next2, xend = b_next2, y = p_top(b_next, step2), yend = ll0(b_next2),
@@ -342,14 +346,14 @@ ggplot(hill, aes(b, ll)) +
            size = 3.2, color = bu_black, label = "after step 2") +
   annotate("text", x = b_mle, y = -14900, hjust = -0.08, size = 3.4, color = bu_black,
            label = paste0("MLE = ", round(b_mle, 2))) +
-  coord_cartesian(xlim = c(-4.3, 0.65), ylim = c(-15000, -3000)) +
+  coord_cartesian(xlim = c(-4.3, 0.65), ylim = c(-15600, -3000)) +
   labs(title = "Two Newton steps on the intercept-only hill",
        subtitle = "grey = the tangent (the score) at each guess;  dashed = the parabola Newton fits there;  each step lands at that parabola's peak",
        x = expression("intercept," ~ beta[0]), y = "log-likelihood") +
   theme_minimal()
 ```
 
-At $\beta_0 = 0$ we measure the slope (the grey tangent — the score) and how fast it is changing (the curvature — the Hessian). Using those, fit a parabola through the point, in bright dashed green, and Newton jumps to the top of *that parabola*, not of the hill — a move of `r round(step1, 2)`. You can see the gap between the likelihood function and the parabola, so we're not there yet. So take another step, generate tangent and curvature *at the new guess* — the second grey tangent, the pale parabola — and jump again: `r round(step2, 2)`, less than half the first, landing within `r round(abs(b_next2 - b_mle), 2)` of the answer.
+At $\beta_0 = 0$ we measure the slope (the grey tangent — the score) and how fast it is changing (the curvature — the Hessian). Those two numbers fit exactly one parabola through the point, drawn in bright dashed green. Notice that it *starts on the hill*: at $\beta_0 = 0$ the parabola and the log-likelihood have the same height and the same slope, which is why the dashed curve runs along the hill near the start and only peels away once we get some distance from it. Newton jumps to the top of *that parabola*, not of the hill — a move of `r round(step1, 2)`. You can see the gap between the likelihood function and the parabola, so we're not there yet. So take another step, generate tangent and curvature *at the new guess* — the second grey tangent, the pale parabola — and jump again: `r round(step2, 2)`, less than half the first, landing within `r round(abs(b_next2 - b_mle), 2)` of the answer.
 
 The steps shrink fast because the parabola becomes a better stand-in as we near the top — up there the hill very nearly *is* a parabola. Keep going and this one takes steps of `r round(step1, 2)`, `r round(step2, 2)`, `r round(step3, 2)`, `r round(step4, 2)`, converging on `r round(b_mle, 2)`.
 
