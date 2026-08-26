@@ -14,6 +14,20 @@ filters:
   - parse-latex
 ---
 
+<!-- ===========================================================================
+     TEMPORARY (2026-08-25): three chunks are set `echo: false` so their code is
+     not rendered -- `dev2-step`, `nr`, and the fig-starts chunk. They are the
+     answer to Exercise #2, which asks students to write the Newton-Raphson
+     logit themselves. The code is still IN this file and still RUNS; only the
+     display is suppressed, so every figure, number, and inline `r` value on the
+     page is unchanged.
+
+     RESTORE after the exercise is due (2026-09-02): grep for
+     "HIDDEN FOR EXERCISE #2", set each back to `echo: true`, re-render, and run
+     ./prune-search-index.sh. This deck is the reference students come back to;
+     it should not stay amputated past the due date.
+     ======================================================================== -->
+
 ```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
 options(htmltools.dir.version = FALSE)
 knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
@@ -243,7 +257,7 @@ Let our first set of guesses be $\beta = 0$. Every linear prediction is then zer
 
 
 ```{r dev2-step}
-#| echo: true
+#| echo: false   # HIDDEN FOR EXERCISE #2 -- restore to `true` after 2026-09-02
 #| code-fold: true
 #| code-summary: "code"
 b0 <- rep(0, ncol(X))
@@ -560,7 +574,7 @@ Let's do this once more for a real logit with four coefficients using the same u
 We'll also have the loop record what it's doing on each pass: the log-likelihood it has reached, the largest element of the gradient $\nabla\ell$ (which measures how far from flat, and so how far from the top, we still are), the size of the step it just took, and the coefficients themselves. Storing that history lets us watch the climb after the fact.
 
 ```{r nr}
-#| echo: true
+#| echo: false   # HIDDEN FOR EXERCISE #2 -- restore to `true` after 2026-09-02
 #| code-fold: true
 #| code-summary: "code"
 X <- model.matrix(~ lncaprat + border + deml, data = dp)
@@ -699,7 +713,7 @@ p1 + p2
 For binomial models, the short answer is no, not really. In the examples so far, we've started at $\beta = 0$ for all the $\beta$s.  What if we'd started somewhere else? @fig-starts examines 5 different starting values:
 
 ```{r}
-#| echo: true
+#| echo: false   # HIDDEN FOR EXERCISE #2 -- restore to `true` after 2026-09-02
 #| code-fold: true
 #| code-summary: "code"
 #| label: fig-starts

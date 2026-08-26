@@ -106,6 +106,14 @@ sandbox26.R
 snoop.jpeg
 zorntweet.png
 
+# Companion .R scripts that ARE the answer to exercise #2 (hand-rolled Newton-
+# Raphson for the logit: log-likelihood, score, Hessian, the loop, the SEs).
+# Unlike binarymodels26.R these must never be published -- a single `git add -A`
+# would put the graded work in the public repo as a plain script.
+llfmax26.R
+nr-logit.R
+compare-hand-glm.R
+
 # PLSC 501 materials parked here — they belong to the 501 course, not this site.
 Coding Challenges Sp 2026.pptx
 challenge*-wage1-key.R
