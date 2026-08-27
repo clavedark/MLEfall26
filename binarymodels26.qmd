@@ -2,7 +2,7 @@
 title: "Binary Response Models"
 author: "Dave Clark"
 institute: "Binghamton University"
-date: today
+date: August 19, 2026
 bibliography: refs606.bib
 title-block-banner: TRUE
 format:
@@ -236,7 +236,7 @@ This is what makes the link function not arbitrary: **$F$ is the CDF of the late
 - $\varepsilon \sim \text{Logistic}(0,1)$ $\longrightarrow$ **logit**, $F = \Lambda$
 - $\varepsilon \sim \text{Gumbel}$ $\longrightarrow$ **complementary log-log**
 
-@fig-latent-threshold illustrates this for a normal (probit) error. Think of the latent variable $y^* = x\beta + \varepsilon$ as a distribution sitting over the real line, centered at $x\beta$, with the threshold fixed at zero; $Pr(y=1)$ is the share of it lying to the right of zero. Raising $x\beta$ slides the whole distribution rightward, so more of it clears the threshold and $Pr(y=1)$ rises; lowering $x\beta$ slides it left. Imagine $x\beta$ at values ranging across the x-axis, and that share accumulates from zero up to one — which is exactly what a CDF does, and why $F$ is one. So the link is no arbitrary sigmoid: **choosing $F$ is choosing a distribution for the error.**
+@fig-latent-threshold illustrates this for a normal (probit) error. Think of the latent variable $y^* = x\beta + \varepsilon$ as a distribution sitting over the real line, centered at $x\beta$, with the threshold fixed at zero; $Pr(y=1)$ is the share of it lying to the right of zero. Raising $x\beta$ slides the whole distribution rightward, so more of it clears the threshold and $Pr(y=1)$ rises; lowering $x\beta$ slides it left. Imagine $x\beta$ at values ranging across the x-axis, and that share accumulates from zero up to one — which is exactly what a CDF does, and why $F$ is one. So the link is no arbitrary sigmoid: **choosing $F$ is choosing a distribution for the error.**^[I used Claude Code to generate Figures 2 and 4 in these slides.]
 
 ```{r latent-threshold}
 #| echo: true

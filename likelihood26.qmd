@@ -2,7 +2,7 @@
 title: "Likelihood Theory & Estimation Mechanics"
 author: "Dave Clark"
 institute: "Binghamton University"
-date: today
+date: August 24, 2026
 bibliography: refs606.bib
 title-block-banner: TRUE
 format:
@@ -657,7 +657,7 @@ If we take the negative of this matrix, $-H = X'WX$, the result is called the **
 
 If $-H$ measures how much we know, then its *inverse* measures how much we don't — and that is the variance of the guess at $\beta$. It's important to understand the second derivative (Hessian) provides these measures of uncertainty.
 
-@fig-information draws the weight — the second ingredient — and then shows where the dispute data actually sit on it.
+@fig-information draws the weight — the second ingredient — and then shows where the dispute data actually sit on it.^[I used Claude Code to build figures 5 and 6 in this slide deck.]
 
 ```{r}
 #| echo: true

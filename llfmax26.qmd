@@ -2,7 +2,7 @@
 title: "Maximizing the Log-Likelihood Function"
 author: "Dave Clark"
 institute: "Binghamton University"
-date: today
+date: August 25, 2026
 bibliography: refs606.bib
 title-block-banner: TRUE
 format:
@@ -161,7 +161,7 @@ $$
 
 We iterate this function until the score is essentially zero. The gradient points the direction and the Hessian scales the size of our steps up the hill.
 
-Let's focus just briefly on why the Hessian-supplied size of the step ("how far") is so important. @fig-which-how shows two hills with an *identical* slope at the current guess, so the score prescribes the same direction up the hill on both.
+Let's focus just briefly on why the Hessian-supplied size of the step ("how far") is so important. @fig-which-how shows two hills with an *identical* slope at the current guess, so the score prescribes the same direction up the hill on both.^[I used Claude Code to generate Figures 1, 2, 3, and 7 in these slides.]
 
 ```{r}
 #| echo: true
