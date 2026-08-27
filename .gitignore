@@ -76,6 +76,9 @@ docs/*
 # released EXERCISE: only the rendered page. `ex12026.qmd` stays ignored above --
 # its figure chunks are the answers to questions 1-4.
 !docs/ex12026.html
+# released EXERCISE: only the rendered page. `ex22026.qmd` stays ignored above, and
+# `ex22026answers.qmd`/`docs/ex22026answers.html` stay ignored permanently.
+!docs/ex22026.html
 !docs/styles.css
 # Built from every page rendered into docs/, so it needs trimming to match the
 # published set. Run ./prune-search-index.sh after each render, before committing.
@@ -113,6 +116,7 @@ zorntweet.png
 llfmax26.R
 nr-logit.R
 compare-hand-glm.R
+maximization26.R
 
 # PLSC 501 materials parked here — they belong to the 501 course, not this site.
 Coding Challenges Sp 2026.pptx

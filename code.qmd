@@ -7,6 +7,7 @@ title: "Exercises & Code"
 Exercises are posted here as they're assigned. Turn in both your source (`.qmd`/`.R`) and the rendered document on Brightspace. Data files are on Brightspace unless linked below.
 
 - [Exercise #1 — Distributions, Simulation, and the Log-Likelihood](ex12026.qmd) — replicating figures, simulating a binary outcome, writing the log-likelihood, and reviewing the logit and probit with predicted probabilities. Uses `ces.csv` (Brightspace).
+- [Exercise #2 — Write the Maximizer](ex22026.qmd) — building a Newton–Raphson logit from scratch in four functions (log-likelihood, score, Hessian, and the estimator), testing each one against a closed form, then fitting a real model with it. Uses `ces.csv` (Brightspace).
 
 ## Code
 

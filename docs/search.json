@@ -137,14 +137,14 @@
     "href": "code.html",
     "title": "Exercises & Code",
     "section": "",
-    "text": "Exercises are posted here as they\u2019re assigned. Turn in both your source (.qmd/.R) and the rendered document on Brightspace. Data files are on Brightspace unless linked below.\n\nExercise #1 \u2014 Distributions, Simulation, and the Log-Likelihood \u2014 replicating figures, simulating a binary outcome, writing the log-likelihood, and reviewing the logit and probit with predicted probabilities. Uses ces.csv (Brightspace)."
+    "text": "Exercises are posted here as they\u2019re assigned. Turn in both your source (.qmd/.R) and the rendered document on Brightspace. Data files are on Brightspace unless linked below.\n\nExercise #1 \u2014 Distributions, Simulation, and the Log-Likelihood \u2014 replicating figures, simulating a binary outcome, writing the log-likelihood, and reviewing the logit and probit with predicted probabilities. Uses ces.csv (Brightspace).\nExercise #2 \u2014 Write the Maximizer \u2014 building a Newton\u2013Raphson logit from scratch in four functions (log-likelihood, score, Hessian, and the estimator), testing each one against a closed form, then fitting a real model with it. Uses ces.csv (Brightspace)."
   },
   {
     "objectID": "code.html#exercises",
     "href": "code.html#exercises",
     "title": "Exercises & Code",
     "section": "",
-    "text": "Exercises are posted here as they\u2019re assigned. Turn in both your source (.qmd/.R) and the rendered document on Brightspace. Data files are on Brightspace unless linked below.\n\nExercise #1 \u2014 Distributions, Simulation, and the Log-Likelihood \u2014 replicating figures, simulating a binary outcome, writing the log-likelihood, and reviewing the logit and probit with predicted probabilities. Uses ces.csv (Brightspace)."
+    "text": "Exercises are posted here as they\u2019re assigned. Turn in both your source (.qmd/.R) and the rendered document on Brightspace. Data files are on Brightspace unless linked below.\n\nExercise #1 \u2014 Distributions, Simulation, and the Log-Likelihood \u2014 replicating figures, simulating a binary outcome, writing the log-likelihood, and reviewing the logit and probit with predicted probabilities. Uses ces.csv (Brightspace).\nExercise #2 \u2014 Write the Maximizer \u2014 building a Newton\u2013Raphson logit from scratch in four functions (log-likelihood, score, Hessian, and the estimator), testing each one against a closed form, then fitting a real model with it. Uses ces.csv (Brightspace)."
   },
   {
     "objectID": "code.html#code",
@@ -495,5 +495,19 @@
     "title": "Maximizing the Log-Likelihood Function",
     "section": "Footnotes",
     "text": "Footnotes\n\n\nThe correction term should look familiar: \\((X'WX)^{-1}X'(y-\\pi)\\) has the shape of \\((X'X)^{-1}X'y\\), with the mistakes replacing the \\(y\\) variable. Rescale those mistakes by the weights and it is exactly a weighted least-squares regression of them on \\(X\\) \u2014 which is why the algorithm glm runs is called iteratively reweighted least squares.\u21a9\ufe0e"
+  },
+  {
+    "objectID": "ex22026.html",
+    "href": "ex22026.html",
+    "title": "Exercise #2 \u2014 Write the Maximizer",
+    "section": "",
+    "text": "Please answer the following questions. All answers should be coded in R and submitted as a rendered PDF or HTML built in Quarto (or R Markdown / LaTeX). Turn in both your .qmd/.R source and the rendered document on Brightspace, so I can run what you ran.\nFor this assignment the only R library you need is tidyverse, for data management and plotting. There is no modeling package and no optimizer in this assignment \u2014 no glm inside your estimator, no optim, no maxLik. You will call glm twice, in questions 9 and 10, and only ever to check an answer you have already produced yourself.\nThis is the assignment where you build the machine. Up to now you have written a log-likelihood and we\u2019ve climbed it in class; here I\u2019m asking you to write the functions that estimate the unknowns. When you are done you will have a working maximum likelihood estimator that you wrote yourself, and \u2014 more to the point \u2014 you will have the four pieces every estimator you ever write again is made of.\nThe math you need is in the maximization notes and the likelihood notes. The code is not. Finding the right formula in the notes and turning it into a function is the assignment.\nOn AI tools. Per the course policy: if you get stuck coding you may use AI to get unstuck, but you must cite and annotate it \u2014 what you asked, why, and which lines are the bot\u2019s. A bot can easily write a Newton-Raphson logit. What it cannot do is sit in my office and tell me why the step is \\((X'WX)^{-1}X'(y-\\pi)\\) rather than something else, or which of your four functions is broken when the estimates come out wrong. I will ask. The checks in Part II are there so that you can find your own errors."
+  },
+  {
+    "objectID": "ex22026.html#notes",
+    "href": "ex22026.html#notes",
+    "title": "Exercise #2 \u2014 Write the Maximizer",
+    "section": "Notes",
+    "text": "Notes\n\nThe maximization notes have the update rule, the score, and the Hessian for the logit. The likelihood notes have where the standard errors come from and why the curvature at the peak is the right thing to invert.\nWork with each other \u2014 that is essential \u2014 but the work you turn in must be your own."
   }
 ]
