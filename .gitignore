@@ -79,6 +79,11 @@ docs/*
 # released EXERCISE: only the rendered page. `ex22026.qmd` stays ignored above, and
 # `ex22026answers.qmd`/`docs/ex22026answers.html` stay ignored permanently.
 !docs/ex22026.html
+# released ANSWER KEY, after exercise #1 was submitted. Only the rendered page --
+# `ex12026answers.qmd` stays ignored above. Release a key only once the exercise
+# it answers is in; `docs/ex22026answers.html` is NOT released (ex #2 is due
+# 2026-09-02).
+!docs/ex12026answers.html
 !docs/styles.css
 # Built from every page rendered into docs/, so it needs trimming to match the
 # published set. Run ./prune-search-index.sh after each render, before committing.
