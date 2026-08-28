@@ -2,12 +2,15 @@
 
 This folder holds the data files used in the course `.qmd` topic files. **Contents are intentionally not tracked in git** — see `MLEfall26/.gitignore`.
 
-**Two deliberate exceptions**, both tracked, published, and linked from the [Exercises & Code page](../code.qmd) with a source credit:
+**Three deliberate exceptions**, all tracked, published, and linked from the [Exercises & Code page](../code.qmd) with a source credit:
 
 - **`ITT.csv` (2026-08-12).** The ITT country-year data (Conrad, Haglund, and Moore 2013) is openly distributed, and its merged covariates are World Bank WDI and Polity — both open — so redistributing this derived file with attribution is fine.
 - **`ces.csv` (2026-08-19).** Individual-level 2020 Cooperative Election Study responses (20 columns, 61,000 rows), used in exercise #1. CES common content is openly distributed via Harvard Dataverse. At 13 MB it is the largest tracked file in the repo; that cost was accepted so the exercise can hand students a working link instead of sending them to Brightspace.
 
-Those two are the whole `.gitignore` allowlist (`!data/ITT.csv`, `!data/ces.csv`).
+- **`dp.dta` (2026-08-28).** The Oneal and Russett (1997) dyad-year extract behind the binary models,
+  likelihood, and maximization decks. 460 KB, and the decks are unusable without it.
+
+Those three are the whole `.gitignore` allowlist (`!data/ITT.csv`, `!data/ces.csv`, `!data/dp.dta`).
 
 Two reasons the *rest* stay untracked:
 
@@ -27,7 +30,7 @@ The script copies known data files from their canonical homes on Dave's machine 
 
 ## How students get the data
 
-Students download data files from Brightspace, not this repo. The `.qmd` files reference data via `here::here("data", "filename")`, so students who download into a `data/` subfolder of the project root can render the documents themselves.
+Students download the published files from the links on the Exercises & Code page; nothing course-related is distributed through Brightspace except assignment submissions. Any data file a topic needs must therefore be added to the allowlist above before that topic is released. The `.qmd` files reference data via `here::here("data", "filename")`, so students who download into a `data/` subfolder of the project root can render the documents themselves.
 
 ## What's expected to live here
 

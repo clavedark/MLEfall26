@@ -151,14 +151,14 @@
     "href": "code.html#code",
     "title": "Exercises & Code",
     "section": "Code",
-    "text": "Code\nStandalone R scripts, for slides that have one.\n\npredictionOLS26.R \u2014 R script from the linear model prediction slides.\nbinarymodels26.R \u2014 R script from the binary models slides. Reads dp.dta (Brightspace)."
+    "text": "Code\nStandalone R scripts, for slides that have one.\n\npredictionOLS26.R \u2014 R script from the linear model prediction slides.\nbinarymodels26.R \u2014 R script from the binary models slides. Reads dp.dta, below."
   },
   {
     "objectID": "code.html#data",
     "href": "code.html#data",
     "title": "Exercises & Code",
     "section": "Data",
-    "text": "Data\n\nCES 2020 (ces.csv) \u2014 individual-level responses from the 2020 Cooperative Election Study, reached through the \u201cAmerican Voter Bot\u201d project; used in exercises #1 and #2. GitHub won\u2019t preview a file this size \u2014 click Download raw file. Variable descriptions are in the codebook. Source: Cooperative Election Study, Harvard University. CES project site.\nITT data (ITT.csv) \u2014 Ill-Treatment and Torture allegation counts by country-year, merged with World Bank (WDI) and Polity covariates; used in the predictionOLS.R script. Source: Conrad, Courtenay R., Jillienne Haglund, and Will H. Moore. 2013. \u201cDisaggregating Torture Allegations: Introducing the Ill-Treatment and Torture (ITT) Country-Year Data.\u201d International Studies Perspectives 14(2): 199-220. ITT project page."
+    "text": "Data\n\nCES 2020 (ces.csv) \u2014 individual-level responses from the 2020 Cooperative Election Study, reached through the \u201cAmerican Voter Bot\u201d project; used in exercises #1 and #2. GitHub won\u2019t preview a file this size \u2014 click Download raw file. Variable descriptions are in the codebook. Source: Cooperative Election Study, Harvard University. CES project site.\nDemocratic peace (dp.dta) \u2014 dyad-year data, 1951\u20131985, 20,990 rows: militarized dispute onset (dispute) with a shared border, the capability ratio, the lower of the two Polity scores (deml), an alliance indicator, and joint IGO memberships. Used in the binary models, likelihood, and maximization slides. Stata format \u2014 read it with haven::read_dta(). Click Download raw file. Source: Oneal, John R., and Bruce M. Russett. 1997. \u201cThe Classic Liberals Were Right: Democracy, Interdependence, and Conflict, 1950-1985.\u201d International Studies Quarterly 41(2): 267-294.\nITT data (ITT.csv) \u2014 Ill-Treatment and Torture allegation counts by country-year, merged with World Bank (WDI) and Polity covariates; used in the predictionOLS.R script. Source: Conrad, Courtenay R., Jillienne Haglund, and Will H. Moore. 2013. \u201cDisaggregating Torture Allegations: Introducing the Ill-Treatment and Torture (ITT) Country-Year Data.\u201d International Studies Perspectives 14(2): 199-220. ITT project page."
   },
   {
     "objectID": "mlesyllabus26.html",

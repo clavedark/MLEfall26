@@ -24,6 +24,9 @@ data/*
 # Published (2026-08-19), linked from the Data page. CES common content is openly
 # distributed via Harvard Dataverse. 13 MB, the largest tracked file here.
 !data/ces.csv
+# Published (2026-08-28), linked from the Data page. The Oneal & Russett (1997)
+# dyad-year extract used in the binary, likelihood, and maximization decks.
+!data/dp.dta
 
 # Reading PDFs — copyrighted, kept local. Citations are in refs606.bib.
 readings/*
