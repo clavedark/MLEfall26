@@ -4,24 +4,21 @@ title: "Exercises & Code"
 
 ## Exercises
 
-Exercises are posted here as they're assigned. Turn in both your source (`.qmd`/`.R`) and the rendered document on Brightspace. Data files are on Brightspace unless linked below.
+Posted as they're assigned. Turn in both your source (`.qmd`/`.R`) and the rendered document on Brightspace. The data these use are in the [Data](#data) section below.
 
-- [Exercise #1 — Distributions, Simulation, and the Log-Likelihood](ex12026.qmd) — replicating figures, simulating a binary outcome, writing the log-likelihood, and reviewing the logit and probit with predicted probabilities. Uses `ces.csv` (Brightspace).
-  [Answer key](ex12026answers.qmd) — posted now that the exercise is in.
-- [Exercise #2 — Write the Maximizer](ex22026.qmd) — building a Newton–Raphson logit from scratch in four functions (log-likelihood, score, Hessian, and the estimator), testing each one against a closed form, then fitting a real model with it. Uses `ces.csv` (Brightspace).
+- [Exercise #1 — Distributions, Simulation, and the Log-Likelihood](ex12026.qmd) · [answer key](ex12026answers.qmd)
+- [Exercise #2 — Write the Maximizer](ex22026.qmd)
 
 ## Code
 
-Code is linked here as the semester unfolds.
+Standalone R scripts, for slides that have one.
 
-- [Linear Model Prediction Methods](predictionOLS26.qmd) — the OLS prediction toolkit (at-means and average effects; ML, delta, and simulation-based uncertainty), previewing the methods we generalize to nonlinear models. Download the [R script](https://github.com/clavedark/MLEfall26/blob/main/predictionOLS26.R) to run the examples live.
-- [Binary Response Models](binarymodels26.qmd) — logit and probit from the likelihood up, with predicted probabilities, marginal effects, and odds ratios. Download the [R script](https://github.com/clavedark/MLEfall26/blob/main/binarymodels26.R); the democratic peace data it reads (`dp.dta`) is on Brightspace.
-- [Likelihood Theory & Estimation Mechanics](likelihood26.qmd) — probability versus likelihood, the estimation machine and its generality, analytic versus numerical solutions, and the score and Hessian. The democratic peace data it uses (`dp.dta`) is on Brightspace.
-- [Maximizing the Log-Likelihood Function](llfmax26.qmd) — a hand-rolled Newton–Raphson maximizer for the logit, compared against `glm` and `optim`, with an animated one-parameter climb. The democratic peace data it uses (`dp.dta`) is on Brightspace.
+- [`predictionOLS26.R`](https://github.com/clavedark/MLEfall26/blob/main/predictionOLS26.R) — R script from the linear model prediction slides.
+- [`binarymodels26.R`](https://github.com/clavedark/MLEfall26/blob/main/binarymodels26.R) — R script from the binary models slides. Reads `dp.dta` (Brightspace).
 
 ## Data
 
-- [CES 2020 (`ces.csv`)](https://github.com/clavedark/MLEfall26/blob/main/data/ces.csv) — individual-level responses from the 2020 *Cooperative Election Study*, reached through the "American Voter Bot" project; used in exercise #1. GitHub won't preview a file this size — click **Download raw file**. Variable descriptions are in the [codebook](cescodebook26.qmd).
+- [CES 2020 (`ces.csv`)](https://github.com/clavedark/MLEfall26/blob/main/data/ces.csv) — individual-level responses from the 2020 *Cooperative Election Study*, reached through the "American Voter Bot" project; used in exercises #1 and #2. GitHub won't preview a file this size — click **Download raw file**. Variable descriptions are in the [codebook](cescodebook26.qmd).
   *Source: Cooperative Election Study, Harvard University. [CES project site](https://cces.gov.harvard.edu).*
 - [ITT data (`ITT.csv`)](https://github.com/clavedark/MLEfall26/blob/main/data/ITT.csv) — Ill-Treatment and Torture allegation counts by country-year, merged with World Bank (WDI) and Polity covariates; used in the `predictionOLS.R` script.
   *Source: Conrad, Courtenay R., Jillienne Haglund, and Will H. Moore. 2013. "Disaggregating Torture Allegations: Introducing the Ill-Treatment and Torture (ITT) Country-Year Data." International Studies Perspectives 14(2): 199-220. [ITT project page](https://faculty.ucmerced.edu/cconrad2/Academic/ITT_Data_Collection.html).*

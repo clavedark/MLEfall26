@@ -338,26 +338,24 @@ ul.task-list li input[type="checkbox"] {
 
 <section id="exercises" class="level2">
 <h2 class="anchored" data-anchor-id="exercises">Exercises</h2>
-<p>Exercises are posted here as they’re assigned. Turn in both your source (<code>.qmd</code>/<code>.R</code>) and the rendered document on Brightspace. Data files are on Brightspace unless linked below.</p>
+<p>Posted as they’re assigned. Turn in both your source (<code>.qmd</code>/<code>.R</code>) and the rendered document on Brightspace. The data these use are in the <a href="#data">Data</a> section below.</p>
 <ul>
-<li><a href="./ex12026.html">Exercise #1 — Distributions, Simulation, and the Log-Likelihood</a> — replicating figures, simulating a binary outcome, writing the log-likelihood, and reviewing the logit and probit with predicted probabilities. Uses <code>ces.csv</code> (Brightspace). <a href="./ex12026answers.html">Answer key</a> — posted now that the exercise is in.</li>
-<li><a href="./ex22026.html">Exercise #2 — Write the Maximizer</a> — building a Newton–Raphson logit from scratch in four functions (log-likelihood, score, Hessian, and the estimator), testing each one against a closed form, then fitting a real model with it. Uses <code>ces.csv</code> (Brightspace).</li>
+<li><a href="./ex12026.html">Exercise #1 — Distributions, Simulation, and the Log-Likelihood</a> · <a href="./ex12026answers.html">answer key</a></li>
+<li><a href="./ex22026.html">Exercise #2 — Write the Maximizer</a></li>
 </ul>
 </section>
 <section id="code" class="level2">
 <h2 class="anchored" data-anchor-id="code">Code</h2>
-<p>Code is linked here as the semester unfolds.</p>
+<p>Standalone R scripts, for slides that have one.</p>
 <ul>
-<li><a href="./predictionOLS26.html">Linear Model Prediction Methods</a> — the OLS prediction toolkit (at-means and average effects; ML, delta, and simulation-based uncertainty), previewing the methods we generalize to nonlinear models. Download the <a href="https://github.com/clavedark/MLEfall26/blob/main/predictionOLS26.R">R script</a> to run the examples live.</li>
-<li><a href="./binarymodels26.html">Binary Response Models</a> — logit and probit from the likelihood up, with predicted probabilities, marginal effects, and odds ratios. Download the <a href="https://github.com/clavedark/MLEfall26/blob/main/binarymodels26.R">R script</a>; the democratic peace data it reads (<code>dp.dta</code>) is on Brightspace.</li>
-<li><a href="./likelihood26.html">Likelihood Theory &amp; Estimation Mechanics</a> — probability versus likelihood, the estimation machine and its generality, analytic versus numerical solutions, and the score and Hessian. The democratic peace data it uses (<code>dp.dta</code>) is on Brightspace.</li>
-<li><a href="./llfmax26.html">Maximizing the Log-Likelihood Function</a> — a hand-rolled Newton–Raphson maximizer for the logit, compared against <code>glm</code> and <code>optim</code>, with an animated one-parameter climb. The democratic peace data it uses (<code>dp.dta</code>) is on Brightspace.</li>
+<li><a href="https://github.com/clavedark/MLEfall26/blob/main/predictionOLS26.R"><code>predictionOLS26.R</code></a> — R script from the linear model prediction slides.</li>
+<li><a href="https://github.com/clavedark/MLEfall26/blob/main/binarymodels26.R"><code>binarymodels26.R</code></a> — R script from the binary models slides. Reads <code>dp.dta</code> (Brightspace).</li>
 </ul>
 </section>
 <section id="data" class="level2">
 <h2 class="anchored" data-anchor-id="data">Data</h2>
 <ul>
-<li><a href="https://github.com/clavedark/MLEfall26/blob/main/data/ces.csv">CES 2020 (<code>ces.csv</code>)</a> — individual-level responses from the 2020 <em>Cooperative Election Study</em>, reached through the “American Voter Bot” project; used in exercise #1. GitHub won’t preview a file this size — click <strong>Download raw file</strong>. Variable descriptions are in the <a href="./cescodebook26.html">codebook</a>. <em>Source: Cooperative Election Study, Harvard University. <a href="https://cces.gov.harvard.edu">CES project site</a>.</em></li>
+<li><a href="https://github.com/clavedark/MLEfall26/blob/main/data/ces.csv">CES 2020 (<code>ces.csv</code>)</a> — individual-level responses from the 2020 <em>Cooperative Election Study</em>, reached through the “American Voter Bot” project; used in exercises #1 and #2. GitHub won’t preview a file this size — click <strong>Download raw file</strong>. Variable descriptions are in the <a href="./cescodebook26.html">codebook</a>. <em>Source: Cooperative Election Study, Harvard University. <a href="https://cces.gov.harvard.edu">CES project site</a>.</em></li>
 <li><a href="https://github.com/clavedark/MLEfall26/blob/main/data/ITT.csv">ITT data (<code>ITT.csv</code>)</a> — Ill-Treatment and Torture allegation counts by country-year, merged with World Bank (WDI) and Polity covariates; used in the <code>predictionOLS.R</code> script. <em>Source: Conrad, Courtenay R., Jillienne Haglund, and Will H. Moore. 2013. “Disaggregating Torture Allegations: Introducing the Ill-Treatment and Torture (ITT) Country-Year Data.” International Studies Perspectives 14(2): 199-220. <a href="https://faculty.ucmerced.edu/cconrad2/Academic/ITT_Data_Collection.html">ITT project page</a>.</em></li>
 </ul>
 
