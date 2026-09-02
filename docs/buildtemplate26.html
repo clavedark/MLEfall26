@@ -56,27 +56,7 @@ div.sourceCode
 @media screen {
 pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
 }
-
-div.csl-bib-body { }
-div.csl-entry {
-clear: both;
-margin-bottom: 0em;
-}
-.hanging-indent div.csl-entry {
-margin-left:2em;
-text-indent:-2em;
-}
-div.csl-left-margin {
-min-width:2em;
-float:left;
-}
-div.csl-right-inline {
-margin-left:2em;
-padding-left:1em;
-}
-div.csl-indent {
-margin-left: 2em;
-}</style>
+</style>
 
 
 <script>const headroomChanged = new CustomEvent("quarto-hrChanged", {
@@ -4349,7 +4329,7 @@ The recipe
 </section>
 <section id="the-data" class="level1">
 <h1>The data</h1>
-<p>The Ill-Treatment and Torture (ITT) data <span class="citation" data-cites="conrad2013disaggregating">(<a href="#ref-conrad2013disaggregating" role="doc-biblioref">Conrad, Haglund, and Moore 2013</a>)</span> record allegations of state torture by country-year. The outcome is <strong>scarring</strong>, the count of scarring-torture allegations. The covariates: restricted access to human rights monitors in the prior year, ongoing civil war, protests in the prior year, and logged GDP per capita.</p>
+<p>The Ill-Treatment and Torture (ITT) data (Conrad, Haglund, and Moore 2013, <em>International Studies Perspectives</em> 14(2): 199–220) record allegations of state torture by country-year. The outcome is <strong>scarring</strong>, the count of scarring-torture allegations. The covariates: restricted access to human rights monitors in the prior year, ongoing civil war, protests in the prior year, and logged GDP per capita.</p>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>itt <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;https://raw.githubusercontent.com/clavedark/MLEfall26/main/data/ITT.csv&quot;</span>, <span class="at">show_col_types =</span> <span class="cn">FALSE</span>) <span class="sc">%&gt;%</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(ccode) <span class="sc">%&gt;%</span></span>
@@ -4743,14 +4723,9 @@ H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 </div>
 
 
-
 </section>
 
-<a onclick="window.scrollTo(0, 0); return false;" role="button" id="quarto-back-to-top"><i class="bi bi-arrow-up"></i> Back to top</a><div id="quarto-appendix" class="default"><section class="quarto-appendix-contents" role="doc-bibliography" id="quarto-bibliography"><h2 class="anchored quarto-appendix-heading">References</h2><div id="refs" class="references csl-bib-body hanging-indent" data-entry-spacing="0" role="list">
-<div id="ref-conrad2013disaggregating" class="csl-entry" role="listitem">
-Conrad, Courtenay R., Jillienne Haglund, and Will H. Moore. 2013. <span>“Disaggregating Torture Allegations: Introducing the Ill-Treatment and Torture (ITT) Country-Year Data.”</span> <em>International Studies Perspectives</em> 14 (2): 199–220.
-</div>
-</div></section></div></main> <!-- /main -->
+<a onclick="window.scrollTo(0, 0); return false;" role="button" id="quarto-back-to-top"><i class="bi bi-arrow-up"></i> Back to top</a></main> <!-- /main -->
 <script id="quarto-html-after-body" type="application/javascript">
   window.document.addEventListener("DOMContentLoaded", function (event) {
     // Ensure there is a toggle, if there isn't float one in the top right

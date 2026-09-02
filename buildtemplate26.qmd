@@ -4,15 +4,12 @@ subtitle: "In-class build template"
 author: "Dave Clark"
 institute: "Binghamton University"
 date: today
-bibliography: refs606.bib
 title-block-banner: TRUE
 format:
   html: default
 editor: source
 embed-resources: true
 cache: true
-filters:
-  - parse-latex
 ---
 
 ```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
@@ -20,11 +17,7 @@ options(htmltools.dir.version = FALSE)
 knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
                       warning = FALSE, error = FALSE, message = FALSE)
 
-library(here)
 library(tidyverse)
-
-# Binghamton palette + plotting helpers (bucolors, bu_green, scale_color_bu, ...)
-source(here::here("_common.R"))
 ```
 
 <style>
@@ -68,7 +61,7 @@ download.file("https://raw.githubusercontent.com/clavedark/MLEfall26/main/buildt
 
 # The data
 
-The Ill-Treatment and Torture (ITT) data [@conrad2013disaggregating] record allegations of state torture by country-year. The outcome is **scarring**, the count of scarring-torture allegations. The covariates: restricted access to human rights monitors in the prior year, ongoing civil war, protests in the prior year, and logged GDP per capita.
+The Ill-Treatment and Torture (ITT) data (Conrad, Haglund, and Moore 2013, *International Studies Perspectives* 14(2): 199–220) record allegations of state torture by country-year. The outcome is **scarring**, the count of scarring-torture allegations. The covariates: restricted access to human rights monitors in the prior year, ongoing civil war, protests in the prior year, and logged GDP per capita.
 
 ```{r data}
 #| echo: true
