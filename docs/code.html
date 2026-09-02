@@ -20,6 +20,41 @@ ul.task-list li input[type="checkbox"] {
   margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
   vertical-align: middle;
 }
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
 </style>
 
 
@@ -340,8 +375,12 @@ ul.task-list li input[type="checkbox"] {
 <h2 class="anchored" data-anchor-id="exercises">Exercises</h2>
 <p>Posted as they’re assigned. Turn in both your source (<code>.qmd</code>/<code>.R</code>) and the rendered document on Brightspace. The data these use are in the <a href="#data">Data</a> section below.</p>
 <ul>
-<li><a href="./ex12026.html">Exercise #1 — Distributions, Simulation, and the Log-Likelihood</a> · <a href="./ex12026answers.html">answer key</a></li>
-<li><a href="./ex22026.html">Exercise #2 — Write the Maximizer</a></li>
+<li><p><a href="./ex12026.html">Exercise #1 — Distributions, Simulation, and the Log-Likelihood</a> · <a href="./ex12026answers.html">answer key</a></p></li>
+<li><p><a href="./ex22026.html">Exercise #2 — Write the Maximizer</a></p></li>
+<li><p><a href="./buildtemplate26.html">Build Your Own Estimator</a> — the in-class build template. Read it here, but work in the <code>.qmd</code>: run</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">download.file</span>(<span class="st">"https://raw.githubusercontent.com/clavedark/MLEfall26/main/buildtemplate26.qmd"</span>,</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>              <span class="st">"buildtemplate26.qmd"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<p>and it lands in your working directory. It reads its data straight from this repository, so you do not need a local <code>data/</code> folder. The test tables read <code>FALSE</code> until you fill in the TODOs.</p></li>
 </ul>
 </section>
 <section id="code" class="level2">

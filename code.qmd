@@ -8,6 +8,14 @@ Posted as they're assigned. Turn in both your source (`.qmd`/`.R`) and the rende
 
 - [Exercise #1 — Distributions, Simulation, and the Log-Likelihood](ex12026.qmd) · [answer key](ex12026answers.qmd)
 - [Exercise #2 — Write the Maximizer](ex22026.qmd)
+- [Build Your Own Estimator](buildtemplate26.qmd) — the in-class build template. Read it here, but work in the `.qmd`: run
+
+  ```r
+  download.file("https://raw.githubusercontent.com/clavedark/MLEfall26/main/buildtemplate26.qmd",
+                "buildtemplate26.qmd")
+  ```
+
+  and it lands in your working directory. It reads its data straight from this repository, so you do not need a local `data/` folder. The test tables read `FALSE` until you fill in the TODOs.
 
 ## Code
 

@@ -56,6 +56,11 @@ readings/*
 !llfmax26.qmd
 # released: codebook for the CES data used in exercise #1
 !cescodebook26.qmd
+# released IN-CLASS TEMPLATE, and the only exercise-family file published as
+# SOURCE rather than as a rendered page: it is meant to be completed, so students
+# have to be able to open and edit the .qmd itself. It contains no answers -- the
+# nine TODO chunks are empty. `buildtemplate26answers.qmd` stays ignored above.
+!buildtemplate26.qmd
 
 # Rendered output: ignore everything under docs/, then re-include the published
 # pages and the shared assets GitHub Pages needs to serve them.
@@ -87,6 +92,10 @@ docs/*
 # it answers is in; `docs/ex22026answers.html` is NOT released (ex #2 is due
 # 2026-09-02).
 !docs/ex12026answers.html
+# released: the rendered in-class build template, so students can read it in a
+# browser while they work in the .qmd. `docs/buildtemplate26answers.html` is NOT
+# released -- it is the key, and it is what gets projected in class.
+!docs/buildtemplate26.html
 !docs/styles.css
 # Built from every page rendered into docs/, so it needs trimming to match the
 # published set. Run ./prune-search-index.sh after each render, before committing.

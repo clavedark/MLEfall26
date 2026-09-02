@@ -1,0 +1,412 @@
+---
+title: "Build Your Own Estimator"
+subtitle: "In-class build template"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: true
+filters:
+  - parse-latex
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+
+# Binghamton palette + plotting helpers (bucolors, bu_green, scale_color_bu, ...)
+source(here::here("_common.R"))
+```
+
+<style>
+table, th, td {
+    font-size: 18px;
+}
+tr:nth-child(odd) {
+  background-color: #f2f2f2;
+}
+</style>
+
+# The prompt
+
+You have built the binomial machine — a likelihood, a parameterization, a link, a maximizer. It does not care what $y$ is: swap the distribution and the link and every other part stays put. Today you swap them, and you build the whole thing by hand before letting a canned optimizer near it.
+
+In pairs, on real data. I am not telling you which distribution to use and I am not writing the log-likelihood for you. Look at $y$; the [likelihood notes](likelihood26.html) have the rest.
+
+::: {.callout-note title="What you do"}
+Nine chunks are marked **TODO**. Fill them, then **render**. If it renders and the self-check tables are all `TRUE`, you built it. That is the whole exercise.
+
+Until you fill them in, the test tables below read `FALSE` and the results are empty. That is what an unfinished build looks like, not a broken page.
+
+**The TODO chunks are yours. Nothing else is.** The setup, the test tables, and the self-check are the file's, and they are what tell you whether the thing works — editing them to turn a `FALSE` into a `TRUE` only removes your own instrument. If a check is red and you are sure your code is right, come find me.
+:::
+
+To get your own copy, run this in the console — it lands in your working directory under the right name:
+
+```r
+download.file("https://raw.githubusercontent.com/clavedark/MLEfall26/main/buildtemplate26.qmd",
+              "buildtemplate26.qmd")
+```
+
+::: {.callout-note title="The recipe"}
+1. Observe $y$; consider its distribution; write down its PDF/PMF.
+2. Write the joint probability of the data.
+3. Rewrite as a likelihood.
+4. Simplify — take logs.
+5. Parameterize — make the distribution's parameter a function of $x\beta$.
+6. Choose a link that respects the parameter's bounds.
+:::
+
+# The data
+
+The Ill-Treatment and Torture (ITT) data [@conrad2013disaggregating] record allegations of state torture by country-year. The outcome is **scarring**, the count of scarring-torture allegations. The covariates: restricted access to human rights monitors in the prior year, ongoing civil war, protests in the prior year, and logged GDP per capita.
+
+```{r data}
+#| echo: true
+#| code-fold: false
+
+itt <- read_csv("https://raw.githubusercontent.com/clavedark/MLEfall26/main/data/ITT.csv", show_col_types = FALSE) %>%
+  group_by(ccode) %>%
+  mutate(lagprotest = lag(protest),
+         lagRA      = lag(RstrctAccess)) %>%
+  ungroup() %>%
+  mutate(loggdp = log(wdi_gdpc)) %>%
+  drop_na(scarring, lagRA, civilwar, lagprotest, loggdp)   # the estimation sample
+```
+
+Drop the incomplete rows up front — matrix algebra on an `NA` returns `NA`, and it will not say why.
+
+The data are read straight from the course repository rather than from a local path, so this file runs from whatever folder you downloaded it into and you do not need a `data/` directory of your own. That is a convenience for a file you pulled off the web; in your own projects, keep using `here::here()` and a local `data/` folder.
+
+# Step 1 — Diagnose $y$
+
+The outcome is `scarring`, the number of scarring-torture allegations recorded in a country-year. That is all I am going to tell you about it. Look at it yourself.
+
+```{r diagnose}
+#| echo: true
+#| code-fold: false
+
+# TODO 1: show what kind of variable scarring is. A plot, a table of its
+#   values, a few summary statistics -- whatever settles the question.
+
+```
+
+What values can $y$ take, and what values can it not take? Is it binary? Continuous? Something else? Name the distribution that generates data like this, and name its parameter. Everything below follows from that answer, so settle it before you write code.
+
+# Step 2 — Derive
+
+On paper, and in this order.
+
+1. The PMF, then the joint probability over $n$ independent observations, then the log-likelihood.
+2. **Parameterize.** The binomial's parameter was a probability on $[0,1]$, so the link had to squash the real line into that interval. Yours has different bounds. Say what they are, pick the function that maps $x\beta$ into them, and substitute.
+3. **Differentiate once** for the score, $\partial \ell / \partial \beta$ — a $k$-vector.
+4. **Differentiate again** for the Hessian, $\partial^2 \ell / \partial \beta \partial \beta'$ — $k \times k$, built from a weight that changes with $\beta$. The weight is the thing to be careful about.
+
+The formulas are in the notes; finding them and turning them into functions is the exercise.
+
+# Steps 3–5 — Program the three pieces
+
+Three functions, written in this order and tested one at a time in Step 6. Use these names and these arguments.
+
+```r
+mle_ll(beta, X, y)         # -> one number
+mle_score(beta, X, y)      # -> a k-vector
+mle_hessian(beta, X, y)    # -> a k x k matrix
+```
+
+Watch your dimensions throughout: $X$ is $n \times k$ and $y$ is $n \times 1$, so the score has $k$ elements and the Hessian is $k \times k$.
+
+**You cannot run these yet.** `X`, `y`, and `b0` do not exist until Step 6 builds them, so calling `mle_ll(b0, X, y)` here gets you `object 'X' not found` — which is the setup missing, not your function. Write all three, then go to Step 6 and run the setup chunk; that is where testing starts.
+
+```{r ll}
+#| echo: true
+#| code-fold: false
+
+# TODO 2: the log-likelihood at beta. Returns one number.
+mle_ll <- function(beta, X, y) {
+
+}
+```
+
+```{r score}
+#| echo: true
+#| code-fold: false
+
+# TODO 3: the first derivative of the log-likelihood at beta.
+#   Returns a vector with one element per column of X.
+mle_score <- function(beta, X, y) {
+
+}
+```
+
+```{r hessian}
+#| echo: true
+#| code-fold: false
+
+# TODO 4: the matrix of second derivatives at beta. Returns k x k.
+mle_hessian <- function(beta, X, y) {
+
+}
+```
+
+# Step 6 — Test each piece at $\beta = \mathbf{0}$
+
+Each function gets its own test, so that when something is wrong you know *which* one is wrong.
+
+Running a test takes three things: the outcome $y$, the design matrix $X$, and a $\beta$ to evaluate at. Build all three here. `model.matrix` takes the formula, adds the column of ones for the intercept, and returns an $n \times k$ numeric matrix; everything from here on runs on these objects.
+
+```{r design}
+#| echo: true
+#| code-fold: false
+
+y  <- itt$scarring
+X  <- model.matrix(~ lagRA + civilwar + lagprotest + loggdp, data = itt)
+k  <- ncol(X)
+b0 <- rep(0, k)
+
+dim(X)            # n x k
+colnames(X)       # k coefficients, in this order
+```
+
+$n = 913$ country-years and $k = 5$ coefficients — four covariates plus the intercept. So the score your function returns has 5 elements and the Hessian is $5 \times 5$.
+
+## Why $\beta = \mathbf{0}$ makes this easy
+
+Set every coefficient to zero and $x_i\beta = 0$ for every observation, so $\lambda_i = e^0 = 1$ — the rate is **1 for every case**. Put that into the three expressions you derived in Step 2 and each one collapses:
+
+$$
+\begin{aligned}
+\ell(\mathbf{0}) &= \sum_{i=1}^{n}\big[\,y_i(x_i\beta) - e^{x_i\beta} - \ln(y_i!)\,\big]
+   \;=\; \sum_{i=1}^{n}\big[\,0 - 1 - \ln(y_i!)\,\big]
+   \;=\; -n - \sum_{i=1}^{n}\ln(y_i!) \\[6pt]
+s(\mathbf{0}) &= X'(y - \lambda) \;=\; X'(y - \mathbf{1}) \\[6pt]
+H(\mathbf{0}) &= -X'\Lambda X \;=\; -X'IX \;=\; -X'X .
+\end{aligned}
+$$
+
+Every one of those is a single line of R, and none needs the general case: the log-likelihood loses its first two terms because $y_i \cdot 0 = 0$ and $e^0 = 1$; the score is the fitted values replaced by a column of ones; the Hessian's weight matrix becomes the identity and drops out.
+
+## The two sides of each test
+
+Each test compares two things that should be identical:
+
+- **your function**, called at $\beta = \mathbf{0}$ — `mle_ll(b0, X, y)`, and the same for the other two. You *do* use what you wrote; that is the point of testing it;
+- **the closed form above**, coded directly, in one line.
+
+The right-hand side is the independent check. It has to be computed a different way from the function, or the test compares your code to itself.
+
+```{r beta0-tests}
+#| echo: true
+#| code-fold: false
+
+# TODO 5: code the three closed forms above, one line each. NA is a
+#   placeholder -- replace it. What each should come back as:
+#     ll_direct    -- one number
+#     score_direct -- a k-vector
+#     hess_direct  -- a k x k matrix
+ll_direct    <- NA
+score_direct <- NA
+hess_direct  <- NA
+```
+
+```{r beta0-table}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+tibble(
+  # one row per function: right dimensions, and the right numbers?
+  fn                = c("mle_ll", "mle_score", "mle_hessian"),
+  `right dimensions`           = c(length(mle_ll(b0, X, y)) == 1,
+                                   length(mle_score(b0, X, y)) == k,
+                                   identical(dim(mle_hessian(b0, X, y)), c(k, k))),
+  `matches direct calculation` = c(isTRUE(all.equal(mle_ll(b0, X, y), ll_direct)),
+                                   isTRUE(all.equal(as.vector(mle_score(b0, X, y)),
+                                                    as.vector(score_direct))),
+                                   isTRUE(all.equal(as.vector(mle_hessian(b0, X, y)),
+                                                    as.vector(hess_direct))))
+) %>%
+  knitr::kable(caption = "Each piece at beta = 0, against the closed form")
+```
+
+One more test, and it is the one that matters. Everything above is evaluated at $\beta = \mathbf{0}$, where the parameter is 1 for every case — so a function that is only correct *at zero* passes it. A Hessian that drops the weight entirely is exactly right at $\beta = \mathbf{0}$ and wrong everywhere else, and the table above will not notice.
+
+So test the pieces against each other, away from zero. Your score is the derivative of your log-likelihood, and your Hessian is the derivative of your score. A numerical derivative of one should reproduce the other, at any $\beta$ you like, and no closed form is needed.
+
+```{r deriv-check}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+b1 <- c(1, 0.5, 0.5, 0.05, 0.1)     # any beta that is not zero
+
+# central difference: ( f(b + e) - f(b - e) ) / 2e, one column per coefficient
+numderiv <- function(f, b) {
+  sapply(seq_along(b), function(j) {
+    e <- rep(0, length(b)); e[j] <- 1e-5
+    (f(b + e, X, y) - f(b - e, X, y)) / 2e-5
+  })
+}
+
+tibble(
+  check = c("mle_score matches the numerical derivative of mle_ll",
+            "mle_hessian matches the numerical derivative of mle_score"),
+  pass  = c(isTRUE(all.equal(as.vector(mle_score(b1, X, y)),
+                             as.vector(numderiv(mle_ll, b1)), tolerance = 1e-4)),
+            isTRUE(all.equal(as.vector(mle_hessian(b1, X, y)),
+                             as.vector(numderiv(mle_score, b1)), tolerance = 1e-4)))
+) %>%
+  knitr::kable(caption = "The same three pieces, tested away from zero")
+```
+
+If the first table is green and this one is not, the piece it names works at zero and nowhere else — look at the weight.
+
+Two things to check by eye before you trust the tables. Is the score anywhere near zero? It should not be — $\beta = \mathbf{0}$ is a long way from the maximum and the score only vanishes at the top; what you are testing here is arithmetic, not optimality. And the diagonal of your Hessian should be negative everywhere. Say in a sentence why that has to be true at a maximum, and what a positive element would do to your standard errors.
+
+(The table compares with `all.equal` rather than `==` because these are floating-point numbers, and wraps it in `isTRUE` because `all.equal` returns a *description of the difference* rather than `FALSE` when things do not match. `as.vector` on both sides strips names and dimensions so only the numbers are compared.)
+
+# Step 7 — Build the maximizer
+
+Now the loop. `fit_mle` takes a design matrix, an outcome, a convergence tolerance, and an iteration cap:
+
+```r
+fit_mle(X, y, tol = 1e-8, maxit = 50)
+```
+
+and does this:
+
+1. **Start somewhere,** and be able to say why. Starting at $\mathbf{0}$ works but wastes twenty iterations climbing out of a bad neighborhood; there is an obvious better guess for the intercept.
+2. **Compute the score and the Hessian** at the current $\beta$, with the functions you just wrote.
+3. **Step.** The update rule is in the maximization notes.
+4. **Record** the iteration, the log-likelihood, the largest absolute element of the score, and the size of the step. You will report this table.
+5. **Check convergence** on the step against `tol`. Stop at `maxit` either way, and never return estimates from a fit that did not converge.
+6. **Standard errors** from the curvature at the solution — recompute the Hessian at your *final* $\widehat\beta$, not the one from inside the loop, which is a step stale.
+
+Return a list with at least `coef`, `se`, `vcov`, `loglik`, `iterations`, `converged`, and `history`.
+
+```{r fit}
+#| echo: true
+#| code-fold: false
+
+# TODO 6: the Newton-Raphson maximizer.
+fit_mle <- function(X, y, tol = 1e-8, maxit = 50) {
+
+}
+```
+
+# Step 8 — Run it, and watch it climb
+
+```{r run}
+#| echo: true
+#| code-fold: false
+
+fit <- fit_mle(X, y)
+
+fit$history %>%
+  knitr::kable(digits = c(0, 3, 4, 10), caption = "The climb")
+```
+
+The log-likelihood must increase at every iteration and the step must shrink toward zero. If either fails, the problem is in Steps 3-5, not in the loop. (At the very top the increases fall below machine precision and the last one can come back a hair negative — arithmetic, not a bug, which is why the check below allows a tolerance.)
+
+# Step 9 — Verify against `glm`
+
+`glm` runs this same maximization internally, so it is the benchmark. Picking its family and link commits you in code to your Step 1 answer.
+
+```{r benchmark}
+#| echo: true
+#| code-fold: false
+
+# TODO 7: set the family and link that match your Step 1 answer. The rest of
+#   the call is already right.
+#   gaussian() is a PLACEHOLDER and is wrong on purpose. Leave it in and the
+#   glm below fits the wrong model, the comparison table disagrees with your
+#   estimator, and two self-check rows read FALSE -- with nothing wrong in
+#   any code you wrote.
+fam <- gaussian()          # <- REPLACE THIS
+
+m_glm <- glm(scarring ~ lagRA + civilwar + lagprotest + loggdp,
+             family = fam, data = itt)
+```
+
+```{r verify}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+tibble(term      = colnames(X),
+       hand      = fit$coef,
+       glm       = coef(m_glm),
+       `se hand` = fit$se,
+       `se glm`  = summary(m_glm)$coefficients[, 2]) %>%
+  knitr::kable(digits = 5, row.names = FALSE, caption = "Hand-built vs. glm")
+```
+
+```{r checklist}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# the score at the solution, computed once
+s_hat <- mle_score(fit$coef, X, y)
+
+tibble(
+  check = c("log-likelihood never decreased",
+            "score at the solution is essentially zero",
+            "coefficients match glm to 5 decimals",
+            "standard errors match glm to 5 decimals",
+            "the loop converged"),
+  pass  = c(isTRUE(nrow(fit$history) > 1) &&
+              all(diff(fit$history$loglik) > -1e-6),
+            length(s_hat) > 0 && max(abs(s_hat)) < 1e-4,
+            isTRUE(all.equal(as.vector(fit$coef), as.vector(coef(m_glm)),
+                             tolerance = 1e-5)),
+            isTRUE(all.equal(as.vector(fit$se),
+                             as.vector(summary(m_glm)$coefficients[, 2]),
+                             tolerance = 1e-5)),
+            isTRUE(fit$converged))
+) %>%
+  knitr::kable(caption = "Self-check: all TRUE means you built it")
+```
+
+# Step 10 — Now hand it to `optim`
+
+You no longer need a canned optimizer, but you should know it lands in the same place. `optim` *minimizes*, so it wants the **negative** of your log-likelihood and the **negative** of your score. Neither is a new derivation; both are a minus sign.
+
+```{r optim}
+#| echo: true
+#| code-fold: false
+
+# TODO 8: wrap mle_ll and mle_score as negll and negscore, maximize with
+#   optim(..., method = "BFGS", gr = negscore), and compare optim's estimates
+#   to fit$coef in a table.
+
+```
+
+Then take the gradient away — drop `gr` and let `optim` approximate the derivative numerically. Report how far the estimates move. That difference is the price of not having the score you derived in Step 2.
+
+# Step 11 — Check it against a known truth
+
+`glm` and `optim` agreeing with you says the three of you compute the same thing, not that any of you recovers the truth — in real data nobody knows the truth. So make some.
+
+```{r truth}
+#| echo: true
+#| code-fold: false
+
+set.seed(8022026)
+b_true <- c(`(Intercept)` = 0.4, x1 = 0.6, x2 = -0.3)
+
+# TODO 9: draw n = 2000 observations of two covariates; build the parameter
+#   from b_true through your link; draw y from your distribution. Run fit_mle
+#   on the simulated data and call the result fit_sim, then table it against
+#   b_true the way Step 9 tables the real fit against glm.
+
+```
