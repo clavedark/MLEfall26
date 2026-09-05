@@ -47,7 +47,7 @@ tr:nth-child(odd) {
 
 # Predictions in the linear model
 
-You have already seen these prediction methods in the linear model — quantities of interest from OLS three ways: predictions at means, average effects, and simulation. This page builds them in a detailed way organized around those three methods, and then around ways to measure uncertainty in any of these methods. It will be the companion to the nonlinear prediction methods slides, `prediction26` (once they're posted); the two are meant to be read together.
+You have already seen these prediction methods in the linear model — quantities of interest from OLS three ways: predictions at means, average effects, and simulation. This page builds them in a detailed way organized around those three methods, and then around ways to measure uncertainty in any of these methods. It is the companion to the [nonlinear prediction methods slides](prediction26.qmd); the two are meant to be read together.
 
 Previewing the toolkit in OLS is useful because OLS is the simple case. In the linear model the "link" between the linear prediction $x\widehat\beta$ and the quantity of interest is the **identity** function — $\widehat y = x\widehat\beta$. In the linear model, we don't have to transform the linear prediction by the link function; the linear prediction **is** the quantity of interest.
 

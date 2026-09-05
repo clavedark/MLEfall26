@@ -1,0 +1,1092 @@
+---
+title: "Prediction Methods for MLE Models"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: true
+filters:
+  - parse-latex
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+library(haven)
+library(patchwork)
+library(modelsummary)
+
+# Binghamton palette + plotting helpers (bucolors, bu_green, scale_color_bu, ...)
+source(here::here("_common.R"))
+
+set.seed(20260610)
+```
+
+<style>
+table, th, td {
+    font-size: 18px;
+}
+tr:nth-child(odd) {
+  background-color: #f2f2f2;
+}
+</style>
+
+# Predictions in MLE models
+
+Most MLE models are nonlinear, so their coefficients are not their marginal effects. To get a substantive quantity out of one, we have to transform the linear prediction $x_i\widehat\beta$ through the link. The methods here apply to most MLE applications; the immediate examples are binary-response models, but these slides are the foundation for prediction in every model we encounter this semester.
+
+You'll be familiar with these methods from the linear-models class — predictions at means, average effects, and simulation-based uncertainty. These slides are a review, but a rigorous one: in the nonlinear world the coefficient really is not the effect, so the transformations do more work. Treat these slides as a reference we'll refer back to when we need a quantity of interest from a count, a hazard, or a choice model later.
+
+::: {.callout-note icon="false"}
+## The process, up front
+
+Every quantity of interest described here — and in every model we meet the rest of the semester — comes from the same sequence:
+
+1. **estimate** the model;
+2. **choose an approach** — *at-means* (hold the other covariates at central tendencies, vary the $x$ of interest) or *average effects* (set the $x$ of interest for the *whole* estimation sample, predict every case, average);
+3. **build the linear prediction** $x\widehat\beta$ for the interesting values of $x$;
+4. **transform** through the link, $F(x\widehat\beta)$ — in the linear model this step did nothing; here it does the work;
+5. **attach uncertainty** by an analytic standard error, by simulating the parameters, or by a bootstrap;
+6. **form the interval** and plot.
+
+Steps 2 (the *approach*) and 5 (the *technique*) are independent choices: any approach pairs with any technique. These slides are organized around that distinction — the approaches first, then the techniques, then the two joined together to form the confidence interval.
+:::
+
+# Binary response models
+
+Probit and logit coefficients **are** directly interpretable in a few limited senses:
+
+- we can interpret the direction;
+- we can interpret statistical difference from zero;
+- the largest marginal effect of $x$ is about $0.4\cdot\widehat\beta$ in the probit;
+- the largest marginal effect of $x$ is about $0.25\cdot\widehat\beta$ in the logit;
+- $e^{\widehat\beta_k}-1$ is the proportional change in the odds that $y=1$ in the logit.
+
+(Those maximum-marginal-effect facts come from the [binary response notes](binarymodels26.html), where we examined the height of the link's PDF.) But we usually want a full **quantity of interest** — a probability, or a change in probability — and that means the transformation $F(x_i\widehat\beta)$.
+
+Consider the intuition behind the "maximum marginal effect" in the logit and probit. The marginal effect is the coefficient weighted by the height of the density at $x\widehat\beta$, so it is largest where the density is tallest — at the center — and falls away toward the tails. We met this in the [binary response notes](binarymodels26.html#fig-max-me); here it is again, because it is the engine behind every quantity of interest in these slides.
+
+```{r}
+#| label: fig-max-me
+#| fig-cap: "The logit and probit links (CDFs) and their slopes (PDFs). Each PDF's peak is that link's largest marginal effect."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Each link's PDF is the slope of its CDF; the PDF's peak (at xb = 0) is the
+# largest marginal-effect weight: 0.25 for the logit, 0.399 for the probit.
+# Colors match the binary-response notes: logit = green solid, probit = light
+# green dashed.
+z    <- seq(-5, 5, length.out = 400)
+dens <- tibble(z = z,
+               logit_cdf  = plogis(z), logit_pdf  = dlogis(z),
+               probit_cdf = pnorm(z),  probit_pdf = dnorm(z))
+
+ggplot(dens, aes(z)) +
+  geom_line(aes(y = logit_cdf),  color = bu_green,      linewidth = 1) +
+  geom_line(aes(y = probit_cdf), color = bu_lightgreen, linewidth = 1, linetype = "dashed") +
+  geom_line(aes(y = logit_pdf),  color = bu_green,      linewidth = 0.8) +
+  geom_line(aes(y = probit_pdf), color = bu_lightgreen, linewidth = 0.8, linetype = "dashed") +
+  geom_hline(yintercept = 0.25,   color = bu_green,      linetype = "dotted") +
+  geom_hline(yintercept = 0.3989, color = bu_lightgreen, linetype = "dotted") +
+  annotate("text", x = -4.8, y = 0.28, hjust = 0, size = 3, color = bu_green,
+           label = "logit PDF peak = 0.25") +
+  annotate("text", x = -4.8, y = 0.42, hjust = 0, size = 3, color = bu_black,
+           label = "probit PDF peak = 0.399") +
+  annotate("text", x = 3.4,  y = 0.96, size = 3, color = bu_black, label = "CDF = the link") +
+  annotate("text", x = 1.15, y = 0.33, size = 3, color = bu_black, label = "PDF = its slope") +
+  labs(title = "The link's slope is its PDF; the PDF's peak is the largest marginal effect",
+       x = expression(x*beta), y = "link (CDF) and its slope (PDF)") +
+  theme_minimal()
+```
+
+The peak of each PDF is the maximum marginal effect: $0.25$ for the logit, $0.3989 \approx 0.4$ for the probit. Away from the center the density falls, and so does the effect of $x$ — which is why a single number for "the effect of $x$" always summarizes something that varies across the data. Making that summary precise is what the next sections are about.
+
+# Approaches to prediction
+
+There are two standard ways to summarize a nonlinear model, and they answer slightly different questions. They are the same in the linear model and in most other MLE models.
+
+- **At-means predictions** — set the other covariates to central tendencies (mean/median/mode), vary the $x$ of interest, and generate the effect.
+- **Average effects** — set the $x$ of interest to a value for the *whole* estimation sample (leaving the other variables at their observed values), predict, average, then repeat at the next value.
+
+## At-means predictions
+
+At-means predictions are what they sound like — effects with the other independent variables held at central tendencies. They are sometimes called **adjusted predictions**. The recipe:
+
+- estimate the model;
+- create an out-of-sample data frame;
+- vary the $x$ of interest; set the other $x$ variables to appropriate central tendencies (mode for dummies, median for skewed or categorical variables) — hence "at means";
+- generate the quantities of interest in that out-of-sample data.
+
+In symbols, the at-means prediction is $F(\mathbf{x}_0\widehat\beta)$, where $\mathbf{x}_0$ is a single row we *construct* — the $x$ of interest at the value we want, everything else at its central tendency. One row, one prediction. Sweep the $x$ of interest across its range and we get one prediction per value, and that is the curve we plot. The at-means curve describes one hypothetical case — here, one dyad — and how its probability moves as $x$ moves.
+
+## Average effects
+
+Average effects are in-sample, but they build a counterfactual for the variable of interest — they ask what the predictions would look like if the *entire* sample took a particular value on that variable, while everything else stayed as it is in the data.
+
+Suppose a model of wages with covariates for education and gender. We might ask: what would the predictions look like if the entire sample were male, but otherwise looked as it does? And then: what if the entire sample were female, all else the same? To answer, we set the gender variable to *male*, generate the prediction for every case, and average; then repeat with gender set to *female*. The recipe:
+
+- estimate the model;
+- in the estimation data, set the variable of interest to a particular value for the entire sample;
+- generate the quantities of interest (expected values and standard errors);
+- take the average, and save it;
+- repeat for every value of the variable of interest, and plot.
+
+Average effects are often the better choice because they represent the data more completely than a single central-tendency case can.
+
+In symbols, the average effect at a value $x^{*}$ is
+
+$$
+\bar P(x^{*}) = \frac{1}{n}\sum_{i=1}^{n} F(\mathbf{x}_i\widehat\beta),\qquad \text{with every case's } x \text{ of interest set to } x^{*},
+$$
+
+where $\mathbf{x}_i$ is a *real* row of the estimation sample with only its $x$ of interest overwritten. So we compute $n$ predictions, one per case, and average them; then move $x^{*}$ and do it again. The two approaches differ in what they hold constant. At-means holds the other covariates at one constructed value; average effects hold them at their observed values, all $n$ of them. And they differ in what they produce: at-means yields one prediction per value of $x$; average effects yield $n$ predictions per value, collapsed to their mean.
+
+Put differently, the at-means curve is one case; the average-effects curve is the whole sample. In the linear model, with every covariate held at its mean, these are the same number — the average of the linear predictions is the linear prediction at the averages. Through a nonlinear link they are not: the average of $F(\cdot)$ across cases is not $F(\cdot)$ at the average case. We will see the gap between them on the running model below.
+
+# Methods for quantities of interest
+
+Whichever approach we take, there are three ways to actually produce the quantity of interest and its uncertainty. Again, these are the same as in the linear model:
+
+- **direct computation** — compute $F(x\widehat\beta)$ for interesting values of $x$ (at-means or average effects), attach an analytic standard error (ML or delta), and form the interval by end-point transformation;
+- **simulating the parameters** — draw many coefficient vectors from the sampling distribution of $\widehat\beta$, compute the quantity of interest for each draw, and read percentiles off the result. This is the King–Tomz–Wittenberg approach [@kingtomz2000];
+- **resampling the data** — the bootstrap: draw a new sample with replacement from the estimation data, re-estimate, compute the quantity of interest, repeat, and read percentiles off the result [@efrontibshirani1993].
+
+The second and third are both "simulation," and it is worth keeping them apart from the start. Both produce a large set of quantities of interest and summarize that set with percentiles. They differ in *what gets resampled*: the parameter approach resamples $\widehat\beta$ from the normal that maximum likelihood theory gives us, and never re-estimates the model; the bootstrap resamples the *data* and re-estimates the model every time. In my experience the King–Tomz–Wittenberg approach is far more common in political science — it is cheap, it needs only the estimates and their covariance matrix, and it is what Clarify and Zelig implemented, what the newer `clarify` package implements, and what `marginaleffects` does when you ask it for simulation-based inference (`inferences(method = "simulation")`; economists know the same procedure as Krinsky–Robb). The bootstrap is for when the normal approximation to the sampling distribution is in doubt, and the same software will do it — Zelig had a `bootstrap` argument that resampled the data and refit, and `marginaleffects::inferences()` has `method = "boot"`. But you will not see it often in our journals. We work both below.
+
+The rest of these slides work each one on the same democratic-peace logit.
+
+## The running model
+
+I'll use the democratic-peace data — dyad-years, a militarized dispute as $y$, and covariates for shared border, the lower dyad democracy score, the capability ratio, and alliance.
+
+```{r fit}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+dp <- read_dta(here::here("data", "dp.dta"))
+dp$lncaprat <- log(dp$caprat)   # a capability ratio is multiplicative, so model it on the log scale
+
+m1 <- glm(dispute ~ border + deml + lncaprat + ally,
+          family = binomial(link = "logit"),  data = dp)
+m2 <- glm(dispute ~ border + deml + lncaprat + ally,
+          family = binomial(link = "probit"), data = dp)
+
+modelsummary(
+  list("Logit" = m1, "Probit" = m2),
+  coef_rename = c("border" = "Shared border", "deml" = "Democracy",
+                  "lncaprat" = "Capabilities ratio (log)", "ally" = "Allied"),
+  statistic = "std.error",
+  gof_omit  = "AIC|BIC|RMSE|F|Log",
+  notes     = "Standard errors in parentheses."
+)
+```
+
+## At-means predictions (direct computation)
+
+Here I hold the other covariates at representative values — modal border and alliance (both zero), median capability ratio — and vary democracy across its range. I predict on the **link** scale, form the interval there, and push the point and both bounds through the logistic CDF. That last step is **end-point transformation** (EPT): building the interval on the linear scale and mapping it into probability space keeps the bounds inside $[0,1]$ and makes them asymmetric, as a probability interval should be.
+
+```{r}
+#| label: fig-at-means
+#| fig-cap: "At-means prediction: Pr(dispute) across democracy for a non-bordering, non-allied dyad at median capabilities, with a 95% interval by end-point transformation."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Out-of-sample data: democracy varies; the others held at representative values.
+mem <- tibble(deml = seq(-10, 10, 1), border = 0, ally = 0,
+              lncaprat = median(dp$lncaprat, na.rm = TRUE))
+
+# type = "link" gives the linear prediction x'b and its SE; transform by hand (EPT).
+pr  <- predict(m1, newdata = mem, type = "link", se.fit = TRUE)
+mem <- mem %>%
+  mutate(fit = pr$fit, se = pr$se.fit,
+         p  = plogis(fit),
+         lb = plogis(fit - 1.96 * se),
+         ub = plogis(fit + 1.96 * se))
+
+ggplot(mem, aes(deml, p)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_green, alpha = 0.5) +
+  geom_line(color = bu_green, linewidth = 1) +
+  labs(title = "At-means prediction: Pr(dispute) across democracy",
+       x = "minimum dyad democracy (Polity)",
+       y = "Pr(dispute) with 95% CI") +
+  theme_minimal()
+```
+
+## Building a scenario's linear prediction
+
+Every quantity in these slides starts the same way — with a linear prediction $x\widehat\beta$ for some scenario — so it is worth slowing down on how we build one. There are three ways, and they teach different things. Take one scenario: a non-bordering, non-allied dyad at median capabilities and a democracy score of zero.
+
+**By hand.** Write the linear predictor out, one coefficient times one value at a time, pulling coefficients by *name* so nothing depends on their order:
+
+```{r lp-byhand}
+#| echo: true
+#| code-fold: false
+
+b <- coef(m1)
+xb_hand <- b["(Intercept)"] + b["border"] * 0 + b["deml"] * 0 +
+           b["lncaprat"] * median(dp$lncaprat, na.rm = TRUE) + b["ally"] * 0
+as.numeric(xb_hand)
+```
+
+This is the most transparent version — you see exactly which value each coefficient multiplies. It is also the one that gets error-prone the moment the model has an interaction, a polynomial, or a factor: you have to remember every product term and every dummy contrast yourself.
+
+**With `model.matrix`.** The same design row, built mechanically from the model's formula:
+
+```{r lp-mm}
+#| echo: true
+#| code-fold: false
+
+scenario <- tibble(border = 0, deml = 0, ally = 0,
+                   lncaprat = median(dp$lncaprat, na.rm = TRUE))
+X_row <- model.matrix(~ border + deml + lncaprat + ally, data = scenario)
+as.numeric(X_row %*% coef(m1))
+```
+
+Same number. `model.matrix` reads the formula and assembles the row — intercept, contrasts, interactions and all — so it stays consistent with how the model was fit. That consistency is the payoff: as specifications get complicated, the by-hand version is where mistakes hide, and `model.matrix` doesn't make them.
+
+**With `predict`.** The fully automated route — which is `model.matrix` under the hood, plus the link:
+
+```{r lp-predict}
+#| echo: true
+#| code-fold: false
+
+predict(m1, newdata = scenario, type = "link")   # x'b, the same value
+```
+
+I'll use the by-hand linear predictor where it makes the mechanics clearest — the simulation scenarios below — and lean on `model.matrix` for the matrix machinery, where writing $X$ out by hand would be tedious and easy to botch.
+
+## Average effects
+
+Now the average-effects version, close to how you'd first write it. First reconstruct the estimation sample — the rows the model was actually fit on, after listwise deletion — so the counterfactual runs on those cases and not on rows the model never saw (`na.action(m1)` returns the dropped indices). Then sweep democracy: at each value, set democracy to that value for the *whole* sample, predict every case on the link scale with its standard error, transform, and take the **average** predicted probability. For an interval I do the natural thing: end-point-transform each case's own interval, and average the bounds the same way I average the predictions.
+
+I'll write it first the familiar way — an explicit loop with a preallocated vector:
+
+```{r avg-loop}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Reconstruct the estimation sample (rows kept after listwise deletion).
+dp$used <- TRUE
+dp$used[na.action(m1)] <- FALSE
+dpe <- dp %>% filter(used == TRUE)
+
+polity <- seq(-10, 10, 1)
+avg_nb <- numeric(length(polity))          # average Pr(dispute), no border
+lb_nb  <- numeric(length(polity))          # average of the case-level lower bounds
+ub_nb  <- numeric(length(polity))          # average of the case-level upper bounds
+
+for (i in seq_along(polity)) {
+  cf <- dpe                                 # counterfactual COPY -- never overwrite dpe itself
+  cf$deml   <- polity[i]                    # set democracy for the whole sample
+  cf$border <- 0
+  pr <- predict(m1, newdata = cf, type = "link", se.fit = TRUE)   # every case's x'b and its SE
+  avg_nb[i] <- mean(plogis(pr$fit), na.rm = TRUE)                  # average Pr(dispute)
+  lb_nb[i]  <- mean(plogis(pr$fit - 1.96 * pr$se.fit), na.rm = TRUE)
+  ub_nb[i]  <- mean(plogis(pr$fit + 1.96 * pr$se.fit), na.rm = TRUE)
+}
+tibble(polity, avg_nb, lb_nb, ub_nb) %>% head()
+```
+
+The loop body is a single idea — "set a scenario for the whole sample, average the predictions" — repeated. That is what a function is for. Wrapping it gets us both curves without copying the loop:
+
+```{r}
+#| label: fig-avg-fn
+#| fig-cap: "Average effects: average Pr(dispute) across democracy, with and without a shared border. The bands average the case-level intervals."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+avg_curve <- function(border_value) {
+  map_dfr(seq(-10, 10, 1), function(d) {
+    cf <- dpe                              # counterfactual copy, same rule as above
+    cf$deml   <- d
+    cf$border <- border_value
+    pr <- predict(m1, newdata = cf, type = "link", se.fit = TRUE)
+    tibble(polity = d,
+           avg = mean(plogis(pr$fit), na.rm = TRUE),
+           lb  = mean(plogis(pr$fit - 1.96 * pr$se.fit), na.rm = TRUE),
+           ub  = mean(plogis(pr$fit + 1.96 * pr$se.fit), na.rm = TRUE))
+  })
+}
+
+noborder <- avg_curve(0)
+border   <- avg_curve(1)
+
+ggplot(mapping = aes(polity)) +
+  geom_ribbon(data = noborder, aes(ymin = lb, ymax = ub), fill = bu_green,      alpha = 0.5) +
+  geom_ribbon(data = border,   aes(ymin = lb, ymax = ub), fill = bu_lightgreen, alpha = 0.5) +
+  geom_line(data = noborder, aes(y = avg), color = bu_green,      linewidth = 1) +
+  geom_line(data = border,   aes(y = avg), color = bu_lightgreen, linewidth = 1) +
+  annotate("text", x = 0, y = border$ub[border$polity == 0] + 0.008,
+           label = "shares a border", color = bu_black) +
+  annotate("text", x = 0, y = noborder$lb[noborder$polity == 0] - 0.006,
+           label = "no border", color = bu_green) +
+  labs(title = "Average effects: average Pr(dispute) across democracy",
+       x = "Polity score", y = "average Pr(dispute) with 95% band") +
+  theme_minimal()
+```
+
+The curves are the *average* predicted probability at each democracy value. I want to be plain about what the bands are. Each case got its own end-point-transformed interval, and I averaged the bounds the same way I averaged the predictions. That is the uncertainty of a *typical case* in the counterfactual sample. It is not the uncertainty of the *average*: the average is a single quantity, a function of $\widehat\beta$, and it deserves a standard error of its own. The two are not the same thing, and the band that averages case-level intervals is wider than the average's own interval. This is exactly where the prediction *approach* (average effects) meets the uncertainty *technique*. We fix it in the Uncertainty section, where we return to these curves and bound them properly two different ways — an analytic (delta-method) standard error for the average, and simulation.
+
+## At-means and average effects, side by side
+
+We now have both approaches on the same model, so put them on the same axes. Both curves below hold `border` at zero. The at-means curve also holds `ally` at its mode (zero) and the capability ratio at its median; the average-effects curve lets both vary as they do in the data.
+
+```{r}
+#| label: fig-approaches-overlay
+#| fig-cap: "At-means and average-effects curves on the same axes, border = 0."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+ggplot() +
+  geom_ribbon(data = mem, aes(deml, ymin = lb, ymax = ub), fill = bu_lightgreen, alpha = 0.5) +
+  geom_line(data = mem,   aes(deml, p), color = bu_lightgreen, linewidth = 1) +
+  geom_ribbon(data = noborder, aes(polity, ymin = lb, ymax = ub), fill = bu_green, alpha = 0.5) +
+  geom_line(data = noborder,   aes(polity, avg), color = bu_green, linewidth = 1) +
+  annotate("text", x = -5, y = mem$ub[mem$deml == -5] + 0.005, hjust = 0.3,
+           label = "at-means: one non-allied dyad", color = bu_black) +
+  annotate("text", x = 4, y = noborder$lb[noborder$polity == 4] - 0.005, hjust = 0.4,
+           label = "average effect: the whole sample", color = bu_green) +
+  labs(title = "Two approaches, one model (border = 0)",
+       x = "minimum dyad democracy (Polity)", y = "Pr(dispute)") +
+  theme_minimal()
+```
+
+The at-means curve sits above the average-effects curve everywhere. Nothing is wrong; the two are answering different questions. The at-means curve is a specific dyad — non-allied, at median capabilities — and non-allied dyads are the riskier kind (the alliance coefficient is $-0.84$). The average-effects curve is the whole estimation sample, and about a third of those dyad-years are allied, so their low probabilities pull the average down. There is a second, smaller reason the two would differ even if the sample were all non-allied: the logit is nonlinear, so the average of $\Lambda(x_i\widehat\beta)$ across cases is not $\Lambda(\cdot)$ evaluated at an average case. Both reasons come to the same thing. The at-means prediction is one row we made up; the average effect is $n$ rows we observed.
+
+That "$n$ rows" is worth seeing. At each democracy value the average effect is the mean of $n$ *individual* predictions, one per dyad-year: every case's own probability of a dispute, given its own capabilities and alliance status, with democracy set to that value. @fig-case-dist plots those $n$ predictions as a density, one panel per democracy value. The solid line is their mean — the average effect at that value, the number the average-effects curve plots. The dashed line is the at-means prediction from @fig-at-means.
+
+```{r}
+#| label: fig-case-dist
+#| fig-cap: "The distribution of the individual predicted probabilities at three democracy values, border = 0. Solid line: their mean, the average effect. Dashed line: the at-means prediction."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Individual predicted probabilities, one per dyad-year, at three democracy values, border = 0.
+case_preds <- map_dfr(c(-10, 0, 10), function(d) {
+  cf <- dpe
+  cf$deml   <- d
+  cf$border <- 0
+  tibble(polity = d, p = predict(m1, newdata = cf, type = "response"))
+})
+
+# The mean of each panel (the average effect) and the at-means prediction at that value.
+markers <- tibble(polity = c(-10, 0, 10)) %>%
+  mutate(avg     = map_dbl(polity, ~ mean(case_preds$p[case_preds$polity == .x])),
+         atmeans = map_dbl(polity, ~ mem$p[mem$deml == .x]))
+
+ggplot(case_preds, aes(p)) +
+  geom_density(fill = bu_green, alpha = 0.5, color = bu_green) +
+  geom_vline(data = markers, aes(xintercept = avg),     color = bu_green, linewidth = 1) +
+  geom_vline(data = markers, aes(xintercept = atmeans), color = bu_black, linetype = "dashed") +
+  facet_wrap(~ polity, ncol = 1, labeller = label_both, scales = "free_y") +
+  labs(title = "The individual predictions behind each average effect",
+       subtitle = "solid = their mean (the average effect); dashed = the at-means prediction",
+       x = "Pr(dispute)", y = "density") +
+  theme_minimal()
+```
+
+Each panel is the distribution of $n = 20{,}990$ predicted probabilities. The distribution is skewed: most dyad-years are low-risk, and a tail of non-allied dyads with roughly balanced capabilities stretches to the right. The mean of that distribution is the average effect. The at-means prediction sits to the right of it in every panel, for the reason above: it describes a non-allied dyad, and non-allied dyads are riskier than the sample. As democracy rises the whole distribution slides left — that is the effect of democracy, applied to every dyad-year at once — and the mean moves with it. The distribution also narrows as it moves: at low democracy the cases sit on the steep part of the logistic curve, where differences in capabilities and alliances translate into large differences in probability, and at high democracy they sit in the flat lower tail, where the same differences count for less.
+
+## Simulation
+
+Simulation — the King–Tomz–Wittenberg approach [@kingtomz2000] — is an especially good approach for nonlinear models, because it propagates the estimation uncertainty through the transformation rather than approximating it. The recipe:
+
+- estimate the model;
+- draw $m$ times (say 1000) from the sampling distribution of $\widehat\beta$ — a multivariate normal with mean $\widehat\beta$ and covariance $\widehat{\mathrm{Var}}(\widehat\beta)$;
+- form the $m$ linear predictions $x\widehat\beta$;
+- transform each through the link;
+- take the 2.5th, 50th, and 97.5th percentiles;
+- plot against $x$.
+
+Why does this work? Maximum likelihood theory says that in large samples $\widehat\beta$ is distributed normally around the true $\beta$ with covariance $\mathbf{V} = (-H)^{-1}$, the inverse negative Hessian from the [likelihood notes](likelihood26.html). We only get one sample, and so one $\widehat\beta$, but we know the shape of the distribution it came from. Simulation takes that literally: treat $N(\widehat\beta, \mathbf{V})$ as the sampling distribution, and draw from it. Each draw $\beta^{*}$ is a coefficient vector another sample could plausibly have produced. Push each draw through the same linear prediction and the same link, and the set of quantities of interest that results carries the estimation uncertainty with it — no derivative, no approximation beyond the normality we already assumed when we reported standard errors. The percentiles of that set are the interval.
+
+Two things to notice. First, the *approach* has not changed: the scenario below is the same at-means row as before. Simulation is a *technique* for uncertainty, not a new kind of prediction. Second, the quantity being simulated is the **expected value** — the probability of a dispute at a scenario, King, Tomz, and Wittenberg's $E(y \mid x)$. Their other quantity, the **predicted value**, adds the fundamental uncertainty by drawing an outcome $\widetilde y$ from the model given $\beta^{*}$. In the linear-model notes that meant adding a disturbance draw, and it produced a wider prediction interval. In a binary model $\widetilde y$ is a Bernoulli draw with probability $\pi^{*}$ — a zero or a one — so a "prediction interval" for a single case is just $\{0, 1\}$. It is the expected value, the probability, that we report and plot.
+
+```{r}
+#| label: fig-sim-qi
+#| fig-cap: "Simulated at-means predictions (King–Tomz–Wittenberg), logit and probit, with 95% percentile bands."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Draw 1000 coefficient vectors from each model's sampling distribution.
+# as_tibble keeps the "(Intercept)" column name (data.frame would mangle it).
+simL <- as_tibble(MASS::mvrnorm(1000, coef(m1), vcov(m1)))
+simP <- as_tibble(MASS::mvrnorm(1000, coef(m2), vcov(m2)))
+
+# For each democracy value, build x'b by hand, take quantiles, transform.
+sim_curve <- function(sim, link) {
+  map_dfr(seq(-10, 10, 1), function(d) {
+    xb <- sim$`(Intercept)` + sim$border * 0 + sim$deml * d +
+          sim$lncaprat * median(dp$lncaprat, na.rm = TRUE) + sim$ally * 0
+    q  <- quantile(xb, probs = c(.025, .5, .975))
+    tibble(polity = d, lb = link(q[1]), med = link(q[2]), ub = link(q[3]))
+  })
+}
+
+logit_sim  <- sim_curve(simL, plogis)
+probit_sim <- sim_curve(simP, pnorm)
+
+pl <- ggplot(logit_sim, aes(polity, med)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_green, alpha = 0.5) +
+  geom_line(color = bu_green, linewidth = 1) +
+  labs(title = "Logit (simulated)", x = "Polity score", y = "Pr(dispute)") +
+  theme_minimal()
+
+pp <- ggplot(probit_sim, aes(polity, med)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_lightgreen, alpha = 0.5) +
+  geom_line(color = bu_lightgreen, linewidth = 1) +
+  labs(title = "Probit (simulated)", x = "Polity score", y = NULL) +
+  theme_minimal()
+
+pl + pp
+```
+
+Here is what the draws are doing, one draw at a time. Each simulated $\beta^{*}$ produces a whole curve across democracy, not just one point, because the same draw is used at every value of $x$. Fifty of the thousand draws:
+
+```{r}
+#| label: fig-sim-spaghetti
+#| fig-cap: "Fifty simulated at-means curves, one per coefficient draw, with the median and the 2.5th and 97.5th percentiles of all 1000."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Fifty of the 1000 simulated coefficient vectors, each traced across democracy.
+draws <- simL %>% slice(1:50) %>% mutate(draw = row_number())
+spaghetti <- map_dfr(seq(-10, 10, 1), function(d) {
+  draws %>%
+    mutate(polity = d,
+           p = plogis(`(Intercept)` + border * 0 + deml * d +
+                      lncaprat * median(dp$lncaprat, na.rm = TRUE) + ally * 0)) %>%
+    select(draw, polity, p)
+})
+
+ggplot() +
+  geom_line(data = spaghetti, aes(polity, p, group = draw), color = bu_lightgreen, alpha = 0.5) +
+  geom_line(data = logit_sim, aes(polity, med), color = bu_green, linewidth = 1.2) +
+  geom_line(data = logit_sim, aes(polity, lb),  color = bu_green, linetype = "dashed") +
+  geom_line(data = logit_sim, aes(polity, ub),  color = bu_green, linetype = "dashed") +
+  labs(title = "Fifty simulated curves, and the percentiles of all 1000",
+       x = "Polity score", y = "Pr(dispute)") +
+  theme_minimal()
+```
+
+The light lines are fifty plausible versions of the at-means curve — each one a coefficient vector the data could have produced. The dark line is the median of all one thousand at each democracy value, and the dashed lines the 2.5th and 97.5th percentiles. The band in @fig-sim-qi is the envelope of these curves. That is all the technique does.
+
+### Simulating combinations of binary variables
+
+Simulation also lets us compare discrete scenarios and see the *whole* predicted distribution, not just a point and an interval. Here are the four combinations of border and alliance, at a low democracy score, each as a density of simulated predicted probabilities.
+
+```{r}
+#| label: fig-sim-combos
+#| fig-cap: "Simulated Pr(dispute) for the four border and alliance scenarios at a democracy score of -7."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+xb <- function(b, a) {
+  plogis(simL$`(Intercept)` + simL$border * b + simL$deml * (-7) +
+         simL$lncaprat * median(dp$lncaprat, na.rm = TRUE) + simL$ally * a)
+}
+combos <- tibble(b0a0 = xb(0, 0), b1a0 = xb(1, 0),
+                 b0a1 = xb(0, 1), b1a1 = xb(1, 1))
+
+ggplot(combos) +
+  geom_density(aes(b0a0), fill = bu_green, alpha = 0.3) +
+  geom_density(aes(b1a0), fill = bu_green, alpha = 0.3) +
+  geom_density(aes(b0a1), fill = bu_green, alpha = 0.3) +
+  geom_density(aes(b1a1), fill = bu_green, alpha = 0.3) +
+  annotate("text", x = 0.04, y = 200, label = "no border, allied",     color = bu_green) +
+  annotate("text", x = 0.07, y = 150, label = "no border, not allied", color = bu_green) +
+  annotate("text", x = 0.09, y = 50,  label = "border, allied",        color = bu_green) +
+  annotate("text", x = 0.13, y = 70,  label = "border, not allied",    color = bu_green) +
+  labs(title = "Simulated Pr(dispute) for four scenarios",
+       x = "Pr(dispute)", y = "density") +
+  theme_minimal()
+```
+
+# Uncertainty
+
+So far we have point predictions, and intervals built without much comment — end-point transformation on the at-means curve, percentiles on the simulated one, and, on the average effects, a band that averages the case-level intervals, which I said was not the right band. The uncertainty around a prediction is a separate question from the prediction — and the useful thing to see is that it *separates cleanly* from the prediction itself. The prediction **approach** (at-means or average effects — *which* counterfactual we compute) and the uncertainty **technique** (an analytic standard error, parameter simulation, or a bootstrap — *how* we bound it) are two independent choices. Any approach pairs with any technique.
+
+Below I work these by hand — the analytic standard errors (ML, then delta), then the two simulation routes — so the internals are visible before you reach for a package that hides them. At the end I return to the average-effects curves from above and pair that one approach with both a delta and a simulated interval, to show the mixing directly.
+
+## Analytic standard errors
+
+### ML standard error of the linear prediction
+
+The most direct measure of uncertainty is the standard error of the linear prediction $X\widehat\beta$. Under maximum likelihood,
+
+$$
+\mathrm{Var}(X\widehat\beta) = \mathbf{X}\,\mathbf{V}\,\mathbf{X}',
+$$
+
+an $N \times N$ matrix, where $\mathbf{V}$ is the variance–covariance matrix of $\widehat\beta$ (the $(-H)^{-1}$ from the [likelihood notes](likelihood26.html)). Its diagonal holds the variances of the $N$ predictions, so
+
+$$
+\mathrm{se}(X\widehat\beta) = \sqrt{\mathrm{diag}(\mathbf{X}\,\mathbf{V}\,\mathbf{X}')},
+$$
+
+an $N \times 1$ vector. These are standard errors of the *linear* prediction, so to get an interval on the probability we still map the bounds through the link (end-point transformation, below).
+
+Here it is by hand, on the at-means grid of @fig-at-means. I build the design matrix with `model.matrix`, form $\sqrt{\mathrm{diag}(XVX')}$, and confirm it matches what `predict` returns — the point being that `predict`'s standard errors *are* this matrix computation:
+
+```{r ml-se}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Design matrix for the at-means grid (democracy varies, others held).
+Xg <- model.matrix(~ border + deml + lncaprat + ally, data = mem)
+V  <- vcov(m1)
+
+xb     <- as.vector(Xg %*% coef(m1))            # linear prediction x'b
+se_lin <- sqrt(diag(Xg %*% V %*% t(Xg)))        # ML SE of x'b, by hand
+
+# Check against predict()'s SE of the linear prediction.
+tibble(deml       = mem$deml,
+       se_byhand  = se_lin,
+       se_predict = predict(m1, newdata = mem, type = "link", se.fit = TRUE)$se.fit) %>%
+  head(4)
+```
+
+They agree to machine precision: `predict` is doing exactly this $\sqrt{\mathrm{diag}(XVX')}$.
+
+### Delta-method standard errors
+
+The ML route works for a monotone function of $X\widehat\beta$, like the logit and probit. When the function is not monotone in $X\widehat\beta$ — as in multinomial logit — we use the **delta method**, a first-order Taylor approximation of the function's variance. @greene2012econometric (693ff) gives the general form
+
+$$
+\mathrm{Var}\!\left[F(X\widehat\beta)\right] = f(x'\widehat\beta)^2 \; \mathbf{x}'\,\mathbf{V}\,\mathbf{x},
+$$
+
+the variance of whatever $F(X\widehat\beta)$ is — here a predicted probability. For the logit, $f = F(1-F)$, so the delta standard error of a predicted probability is
+
+$$
+p\,(1-p)\,\sqrt{\mathbf{x}'\,\mathbf{V}\,\mathbf{x}}
+$$
+
+— the predicted probability times its complement times the standard error of the linear prediction. On the same grid, that is one line on top of the ML standard error we just built:
+
+```{r delta-se}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+p        <- plogis(xb)             # predicted probability
+se_delta <- p * (1 - p) * se_lin   # delta SE of the predicted probability
+tibble(deml = mem$deml, p = p, se_delta = se_delta) %>% head(4)
+```
+
+So we now have two standard errors for the same at-means grid — the ML standard error of the linear prediction, and the delta standard error of the probability — and each builds an interval. The ML route builds it on the link scale and transforms the ends. The delta route builds it directly on the probability scale, $p \pm 1.96\cdot\mathrm{se}_\delta$. Here they are on top of each other:
+
+```{r}
+#| label: fig-delta-vs-ept
+#| fig-cap: "The at-means interval two ways, full sample: ML standard error with end-point transformation, and the delta method."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+grid_ci <- mem %>%
+  mutate(ept_lb   = plogis(fit - 1.96 * se),  ept_ub   = plogis(fit + 1.96 * se),
+         delta_lb = p - 1.96 * se_delta,      delta_ub = p + 1.96 * se_delta)
+
+ggplot(grid_ci, aes(deml)) +
+  geom_ribbon(aes(ymin = ept_lb, ymax = ept_ub), fill = bu_green, alpha = 0.5) +
+  geom_line(aes(y = p), color = bu_green, linewidth = 1) +
+  geom_line(aes(y = delta_lb), color = bu_black, linetype = "dashed") +
+  geom_line(aes(y = delta_ub), color = bu_black, linetype = "dashed") +
+  labs(title = "At-means interval, two standard errors",
+       subtitle = "shaded = ML standard error with end-point transformation; dashed = delta method",
+       x = "minimum dyad democracy (Polity)", y = "Pr(dispute)") +
+  theme_minimal()
+```
+
+They are indistinguishable. With 20,990 dyad-years the standard error of the linear prediction is small, and when the interval is narrow relative to the distance to the boundary the two routes agree to the third decimal. The difference shows up when the interval is *wide* — small samples, extreme scenarios. To see it, refit the same model on a random 500 of the dyad-years and rebuild the same grid:
+
+```{r}
+#| label: fig-delta-small
+#| fig-cap: "The same two intervals on a random 500 dyad-years."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+set.seed(20260610)
+dp_small <- dpe %>% slice_sample(n = 500)
+m_small  <- glm(dispute ~ border + deml + lncaprat + ally,
+                family = binomial(link = "logit"), data = dp_small)
+
+pr_s  <- predict(m_small, newdata = mem, type = "link", se.fit = TRUE)
+small <- tibble(deml = mem$deml, fit = pr_s$fit, se = pr_s$se.fit) %>%
+  mutate(p        = plogis(fit),
+         ept_lb   = plogis(fit - 1.96 * se),          ept_ub   = plogis(fit + 1.96 * se),
+         delta_lb = p - 1.96 * p * (1 - p) * se,      delta_ub = p + 1.96 * p * (1 - p) * se)
+
+ggplot(small, aes(deml)) +
+  geom_ribbon(aes(ymin = ept_lb, ymax = ept_ub), fill = bu_green, alpha = 0.5) +
+  geom_line(aes(y = p), color = bu_green, linewidth = 1) +
+  geom_line(aes(y = delta_lb), color = bu_black, linetype = "dashed") +
+  geom_line(aes(y = delta_ub), color = bu_black, linetype = "dashed") +
+  geom_hline(yintercept = 0, color = bu_black, linewidth = 0.3) +
+  labs(title = "The same two intervals, n = 500",
+       subtitle = "shaded = ML standard error with end-point transformation; dashed = delta method",
+       x = "minimum dyad democracy (Polity)", y = "Pr(dispute)") +
+  theme_minimal()
+```
+
+That draw holds `r sum(dp_small$dispute)` disputes among its 500 dyad-years, so the standard errors are many times larger. Now the two intervals part company. The delta interval is symmetric around $p$ on the probability scale, and from the middle of the grid on its lower bound crosses below zero — a negative probability. The end-point-transformed interval cannot do that: it is symmetric on the *link* scale, where nothing is bounded, and the logistic CDF maps both ends back inside $(0,1)$, squeezing the lower bound toward zero and stretching the upper bound. That asymmetry is not a defect; it is what an interval on a probability should look like near the boundary. This is why we build intervals on the link scale whenever the quantity is a monotone function of $x\widehat\beta$, and reserve the delta method for the cases — averages, marginal effects, multinomial probabilities — where there is no single link scale to build on.
+
+### Standard errors for a linear combination
+
+Sometimes the quantity is a linear combination of coefficients, and its standard error needs the covariance between them. Polynomials are the common case (a polynomial is a variable interacted with itself):
+
+$$
+y = \widehat\beta_0 + \widehat\beta_1 x_1 + \widehat\beta_2 x_1^2 + \varepsilon.
+$$
+
+The marginal effect of $x_1$ is not a single coefficient but $\widehat\beta_1 + 2\widehat\beta_2 x_1$, whose standard error carries the covariance term:
+
+$$
+\sqrt{\mathrm{Var}(\widehat\beta_1) + 4x_1^2\,\mathrm{Var}(\widehat\beta_2) + 4x_1\,\mathrm{Cov}(\widehat\beta_1, \widehat\beta_2)}.
+$$
+
+The covariances come straight from $\mathbf{V} =$ `vcov(model)`.
+
+The running model has no polynomial, so add one — democracy and its square. The sign of the marginal effect then depends on where we are in democracy, and so does its standard error.
+
+```{r poly-fit}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+m3 <- glm(dispute ~ border + deml + I(deml^2) + lncaprat + ally,
+          family = binomial(link = "logit"), data = dp)
+
+modelsummary(
+  list("Logit, quadratic in democracy" = m3),
+  coef_rename = c("border" = "Shared border", "deml" = "Democracy",
+                  "I(deml^2)" = "Democracy squared",
+                  "lncaprat" = "Capabilities ratio (log)", "ally" = "Allied"),
+  statistic = "std.error",
+  gof_omit  = "AIC|BIC|RMSE|F|Log",
+  notes     = "Standard errors in parentheses."
+)
+```
+
+The marginal effect of democracy on the linear predictor is $\widehat\beta_{d} + 2\widehat\beta_{d^2}\,d$. Here it is across the range of democracy, with its standard error built two ways — the written-out formula above, and the general delta form $\sqrt{\mathbf{g}'\mathbf{V}\mathbf{g}}$ with gradient $\mathbf{g} = (0,\, 0,\, 1,\, 2d,\, 0,\, 0)$, which is the same formula as a matrix product:
+
+```{r poly-me}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+b3 <- coef(m3); V3 <- vcov(m3)
+d  <- seq(-10, 10, 1)
+
+# Marginal effect of democracy on x'b, and its SE from the written-out formula.
+me    <- b3["deml"] + 2 * b3["I(deml^2)"] * d
+se_me <- sqrt(V3["deml", "deml"] + 4 * d^2 * V3["I(deml^2)", "I(deml^2)"] +
+              4 * d * V3["deml", "I(deml^2)"])
+
+# The same SE as sqrt(g'Vg): one gradient row per democracy value (21 x k).
+G <- matrix(0, nrow = length(d), ncol = length(b3), dimnames = list(NULL, names(b3)))
+G[, "deml"]      <- 1
+G[, "I(deml^2)"] <- 2 * d
+se_gVg <- sqrt(diag(G %*% V3 %*% t(G)))
+
+tibble(deml = d, me = me, se_formula = se_me, se_gVg = se_gVg) %>%
+  filter(deml %in% c(-10, -5, 0, 5, 10))
+```
+
+```{r}
+#| label: fig-poly-plot
+#| fig-cap: "Marginal effect of democracy on the linear predictor in the quadratic model, with a delta-method 95% band."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+tibble(deml = d, me = me, lb = me - 1.96 * se_me, ub = me + 1.96 * se_me) %>%
+  ggplot(aes(deml, me)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_green, alpha = 0.5) +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_hline(yintercept = 0, color = bu_black, linewidth = 0.3) +
+  labs(title = "Marginal effect of democracy on the linear predictor, quadratic model",
+       x = "minimum dyad democracy (Polity)",
+       y = expression(hat(beta)[d] + 2 * hat(beta)[d^2] * d)) +
+  theme_minimal()
+```
+
+The effect is positive among the least democratic dyads, crosses zero at a Polity score of about `r round(-b3["deml"] / (2 * b3["I(deml^2)"]), 1)`, and turns steadily more negative from there. The band is narrowest near the center of the data and widens toward the ends, because the $4d^2\,\mathrm{Var}(\widehat\beta_{d^2})$ term grows with $d^2$. And the covariance term is doing real work even though $\mathrm{Cov}(\widehat\beta_d, \widehat\beta_{d^2})$ is tiny on its own — it is multiplied by $4d$. Two cautions. This is the effect on the *linear predictor*, on the logit scale; the effect on the *probability* multiplies it by $\Lambda(1-\Lambda)$ at the scenario, and its standard error is the delta method again, one more layer of chain rule (`marginaleffects::slopes()` returns that version). And the interval crossing zero is the joint-hypothesis question the polynomial raises: the effect of democracy is not one number to test, it is a function of democracy.
+
+### Confidence intervals — end-point transformation
+
+To get an interval on a transformed quantity, build the bounds on the linear scale with either standard error, then transform:
+
+$$
+F(X\widehat\beta - c\cdot\mathrm{se}) \;\le\; F(X\widehat\beta) \;\le\; F(X\widehat\beta + c\cdot\mathrm{se}),
+$$
+
+with $c$ a critical value on the normal ($z = 1.96$). With **ML** standard errors the transformed bounds respect the distribution's limits — a probability interval stays in $[0,1]$, and the bounds are asymmetric, as a nonlinear model's should be. With **delta** standard errors the bounds are not guaranteed to obey those limits. (@fig-at-means is exactly this, built from `se_lin`.)
+
+## Simulation methods
+
+Two simulation routes to an interval. Both end the same way — a distribution of quantities of interest, summarized by its percentiles — and they differ in what gets resampled to build that distribution.
+
+**Simulate the parameters** — the King–Tomz–Wittenberg approach [@kingtomz2000], used above. Estimate once. Draw a large sample of coefficient vectors from $N(\widehat\beta, \mathbf{V})$, generate the quantity of interest for each draw, and read percentiles off the result. The model is never re-estimated; the only inputs are $\widehat\beta$ and $\mathbf{V}$, so the whole thing takes a second. What it assumes is that the sampling distribution of $\widehat\beta$ really is that normal — the same assumption behind every $z$-statistic in the regression table. That is exactly @fig-sim-qi and @fig-sim-spaghetti; nothing new to build.
+
+**Bootstrap the data** [@efrontibshirani1993]. Instead of resampling parameters, resample the *data*: draw a sample with replacement from the estimation sample, refit the model, recompute the quantity of interest, and repeat. The spread of the recomputed quantities is the uncertainty. Nothing is assumed about the shape of the sampling distribution; the resampling builds it empirically. The cost is a full re-estimation per draw — a thousand logits here, which is fine, and a thousand fits of something slow, which is not.
+
+In political science the parameter-simulation approach is far more common — that is my experience of the published work, and of the software. The bootstrap is what we reach for when we doubt the normal approximation, or when the quantity of interest depends on the data in a way the parameters alone don't capture. Here is the bootstrap in full, for the predicted probability of a dispute at a representative profile — an explicit loop, refitting the logit each pass:
+
+```{r bootstrap}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| cache: true
+
+set.seed(20260610)
+B <- 1000
+profile <- tibble(border = 0, deml = 0, ally = 0,
+                  lncaprat = median(dp$lncaprat, na.rm = TRUE))
+
+boot_p <- numeric(B)
+for (b in 1:B) {
+  idx <- sample(nrow(dpe), replace = TRUE)          # resample the estimation sample
+  mb  <- glm(dispute ~ border + deml + lncaprat + ally,
+             family = binomial("logit"), data = dpe[idx, ])
+  boot_p[b] <- predict(mb, newdata = profile, type = "response")
+}
+
+quantile(boot_p, c(.025, .5, .975))   # percentile 95% CI
+
+# ---- MORE EFFICIENT -----------------------------------
+# replicate() runs the braced expression B times and collects the B results
+# into a vector, so the preallocated boot_p and the counter b go away:
+#   boot_p <- replicate(B, {
+#     idx <- sample(nrow(dpe), replace = TRUE)
+#     mb  <- glm(dispute ~ border + deml + lncaprat + ally,
+#                family = binomial("logit"), data = dpe[idx, ])
+#     predict(mb, newdata = profile, type = "response")
+#   })
+#   quantile(boot_p, c(.025, .5, .975))
+```
+
+(The same loop written compactly is `replicate(B, { ... })`; the explicit loop just makes each step visible.) Now put the two distributions side by side. The parameter-simulation version for the same profile takes one line, because the draws already exist:
+
+```{r}
+#| label: fig-boot-vs-sim
+#| fig-cap: "Bootstrap and parameter-simulation distributions of Pr(dispute) at one profile, 1000 draws each."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Parameter-simulation draws of the same quantity, from the 1000 simL draws above.
+sim_p <- plogis(simL$`(Intercept)` + simL$border * 0 + simL$deml * 0 +
+                simL$lncaprat * median(dp$lncaprat, na.rm = TRUE) + simL$ally * 0)
+
+bind_rows(tibble(p = boot_p, technique = "bootstrap: resample the data, refit"),
+          tibble(p = sim_p,  technique = "parameter simulation: draw the coefficients")) %>%
+  ggplot(aes(p, fill = technique, color = technique)) +
+  geom_density(alpha = 0.3) +
+  scale_fill_manual(values = bu_two) +
+  scale_color_manual(values = bu_two) +
+  labs(title = "Two distributions of the same quantity of interest",
+       subtitle = "Pr(dispute) at the representative profile, 1000 draws each",
+       x = "Pr(dispute)", y = "density") +
+  theme_minimal() +
+  theme(legend.position = "bottom", legend.title = element_blank())
+```
+
+The two distributions sit on top of each other — they estimate the same uncertainty two ways. And since every technique is now in hand at this one profile, here are all four intervals for the same number:
+
+```{r four-ways}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+pr_p  <- predict(m1, newdata = profile, type = "link", se.fit = TRUE)
+p_hat <- plogis(pr_p$fit)
+
+tibble(technique = c("ML SE + end-point transformation", "delta method",
+                     "parameter simulation (KTW)", "bootstrap"),
+       lower = c(plogis(pr_p$fit - 1.96 * pr_p$se.fit),
+                 p_hat - 1.96 * p_hat * (1 - p_hat) * pr_p$se.fit,
+                 quantile(sim_p,  .025),
+                 quantile(boot_p, .025)),
+       point = c(p_hat, p_hat, median(sim_p), median(boot_p)),
+       upper = c(plogis(pr_p$fit + 1.96 * pr_p$se.fit),
+                 p_hat + 1.96 * p_hat * (1 - p_hat) * pr_p$se.fit,
+                 quantile(sim_p,  .975),
+                 quantile(boot_p, .975))) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+```
+
+Four techniques, one quantity, one interval to the third decimal. With a large sample and a probability well away from the boundary, it does not matter how we bound it. The approach — which scenario we asked about — fixed the number; the technique only put error bars on it. Keep that picture for the cases where the techniques *do* disagree, because then the disagreement is telling you something: small $n$, a boundary nearby, or a quantity the delta method approximates badly.
+
+## Average effects, two ways
+
+Now put the pieces together. Take the average-effects approach from above and compute its interval two ways: with a delta-method standard error, and by simulation. Both are standard errors of the *average*, which the averaged case-level intervals were not.
+
+I rebuild the average effect here first, so both techniques attach to the same object. The recipe is the one from the average-effects section: take the estimation sample, set democracy to a value for every case, set border to zero, predict every case, average. The one change is that I work with the design matrix $X$ directly instead of a data frame and `predict()`, because the delta gradient and the simulation draws both want $X$. As in the average-effects section, the live code is an explicit loop so every step is visible; a tidier version follows each chunk in comments.
+
+```{r ae-rebuild}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Estimation-sample design matrix (n x k), coefficients, covariance matrix.
+X <- model.matrix(m1)
+b <- coef(m1); V <- vcov(m1)
+
+polity  <- seq(-10, 10, 1)
+avg_mat <- numeric(length(polity))         # average Pr(dispute) at each democracy value
+
+for (i in seq_along(polity)) {
+  Xi <- X                                  # counterfactual COPY of the design matrix
+  Xi[, "deml"]   <- polity[i]              # democracy = this value, for every case
+  Xi[, "border"] <- 0                      # no border, for every case
+  xb <- as.vector(Xi %*% b)                # n linear predictions
+  pr <- plogis(xb)                         # n predicted probabilities
+  avg_mat[i] <- mean(pr)                   # their average
+}
+ae_point <- tibble(polity, avg = avg_mat)
+
+# ---- MORE EFFICIENT -----------------------------------
+# A function builds the counterfactual design matrix, and map_dfr replaces
+# the loop and the preallocated vector:
+#   cf_X <- function(d) { Xi <- X; Xi[, "deml"] <- d; Xi[, "border"] <- 0; Xi }
+#   ae_point <- map_dfr(polity, function(d) {
+#     tibble(polity = d, avg = mean(plogis(as.vector(cf_X(d) %*% b))))
+#   })
+```
+
+That is the same average effect as in @fig-avg-fn, recomputed here so the code sits next to the two techniques that build on it. Now attach uncertainty to it.
+
+**Delta.** Start with what the average effect is, at one democracy value:
+
+$$
+\bar P = \frac{1}{n}\sum_{i=1}^{n} \Lambda(x_i\widehat\beta),
+$$
+
+where $\Lambda$ is the logistic CDF and $x_i$ is case $i$'s counterfactual row of covariates. The covariate rows are fixed numbers. The only estimated thing in $\bar P$ is $\widehat\beta$, so $\bar P$ is a function of $\widehat\beta$ and nothing else — and a function of an estimate has a sampling variance, just as the estimate does. The delta method gives it. For any function $h(\widehat\beta)$,
+
+$$
+\mathrm{Var}\big[h(\widehat\beta)\big] \approx g'\,\mathbf{V}\,g, \qquad g = \frac{\partial h}{\partial \widehat\beta},
+$$
+
+where $g$ is the gradient, a $k \times 1$ vector with one entry per coefficient, and $\mathbf{V}$ is the covariance matrix of $\widehat\beta$. So the job is to differentiate the average with respect to the coefficients. Take one case's term first. By the chain rule, the derivative of $\Lambda(x_i\widehat\beta)$ with respect to $\widehat\beta$ is the logistic density at that case, times the derivative of $x_i\widehat\beta$ with respect to $\widehat\beta$, which is just $x_i$:
+
+$$
+\frac{\partial \Lambda(x_i\widehat\beta)}{\partial \widehat\beta} = \Lambda_i(1-\Lambda_i)\, x_i .
+$$
+
+That is the same weight that turns a coefficient into a marginal effect at the top of these slides — the logit density $\Lambda(1-\Lambda)$ — now multiplying the whole covariate row instead of one coefficient. The derivative of an average is the average of the derivatives, so
+
+$$
+g = \frac{1}{n}\sum_{i=1}^{n} \Lambda_i(1-\Lambda_i)\, x_i ,
+$$
+
+each case's weight times its row, averaged over the sample. Then
+
+$$
+\mathrm{se}(\bar P) = \sqrt{g'\,\mathbf{V}\,g},
+$$
+
+and the interval is $\bar P \pm 1.96\,\mathrm{se}(\bar P)$. In code, that is the rebuild loop with three lines added:
+
+```{r ae-delta}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+avg_d <- numeric(length(polity))
+lb_d  <- numeric(length(polity))
+ub_d  <- numeric(length(polity))
+
+for (i in seq_along(polity)) {
+  Xi <- X                                        # counterfactual design matrix, as above
+  Xi[, "deml"]   <- polity[i]
+  Xi[, "border"] <- 0
+  pr   <- plogis(as.vector(Xi %*% b))            # n predicted probabilities
+  Pbar <- mean(pr)                               # the average effect
+  w    <- pr * (1 - pr)                          # logit weight for each case, n x 1
+  g    <- colMeans(w * Xi)                       # each row of Xi scaled by its weight, then averaged: k x 1
+  se   <- sqrt(as.numeric(t(g) %*% V %*% g))     # sqrt(g' V g)
+  avg_d[i] <- Pbar
+  lb_d[i]  <- Pbar - 1.96 * se
+  ub_d[i]  <- Pbar + 1.96 * se
+}
+ae_delta <- tibble(polity, avg = avg_d, lb = lb_d, ub = ub_d)
+
+# ---- MORE EFFICIENT -----------------------------------
+# Same computation with cf_X() and map_dfr; each call returns one row.
+#   ae_delta <- map_dfr(polity, function(d) {
+#     Xi   <- cf_X(d)
+#     pr   <- plogis(as.vector(Xi %*% b))
+#     Pbar <- mean(pr)
+#     g    <- colMeans(pr * (1 - pr) * Xi)
+#     se   <- sqrt(as.numeric(t(g) %*% V %*% g))
+#     tibble(polity = d, avg = Pbar, lb = Pbar - 1.96 * se, ub = Pbar + 1.96 * se)
+#   })
+```
+
+Walk through the three new lines. `w` is the logistic density at each case's linear prediction, $\Lambda_i(1-\Lambda_i)$, so it is a vector of $n$ weights. `w * Xi` multiplies each case's row of covariates by that case's weight — R recycles the weight down each column, so row $i$ of the result is $\Lambda_i(1-\Lambda_i)\,x_i$ — and `colMeans` averages those $n$ rows into one row of length $k$. That row is the gradient $g$. The last line is the quadratic form $g'\mathbf{V}g$ and its square root.
+
+**Simulation.** Draw coefficient vectors from $N(\widehat\beta, \mathbf{V})$; for each draw, compute the average effect exactly as in the rebuild; take percentiles of the 1000 averages. No derivative, and the bounds stay inside $[0,1]$ because every one of the 1000 averages does:
+
+```{r ae-sim}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+sims <- MASS::mvrnorm(1000, b, V)                # 1000 x k coefficient draws
+
+avg_s <- numeric(length(polity))
+lb_s  <- numeric(length(polity))
+ub_s  <- numeric(length(polity))
+
+for (i in seq_along(polity)) {
+  Xi <- X                                        # counterfactual design matrix, as above
+  Xi[, "deml"]   <- polity[i]
+  Xi[, "border"] <- 0
+  XB    <- Xi %*% t(sims)                        # n x 1000: column j = every case's x'b under draw j
+  Pdraw <- colMeans(plogis(XB))                  # 1000 average effects, one per draw
+  q     <- quantile(Pdraw, c(.025, .5, .975))
+  avg_s[i] <- q[2]
+  lb_s[i]  <- q[1]
+  ub_s[i]  <- q[3]
+}
+ae_sim <- tibble(polity, avg = avg_s, lb = lb_s, ub = ub_s)
+
+# ---- MORE EFFICIENT -----------------------------------
+#   ae_sim <- map_dfr(polity, function(d) {
+#     q <- quantile(colMeans(plogis(cf_X(d) %*% t(sims))), c(.025, .5, .975))
+#     tibble(polity = d, avg = q[2], lb = q[1], ub = q[3])
+#   })
+```
+
+`XB` is $n \times 1000$: column $j$ holds every case's linear prediction under draw $j$. Transform, take column means, and each column collapses to one average effect. That is the rebuild loop run a thousand times at once, once per draw.
+
+```{r}
+#| label: fig-ae-compare
+#| fig-cap: "Average effects with delta-method and simulated intervals; the dotted lines are the averaged case-level intervals."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+bind_rows(mutate(ae_delta, method = "delta"),
+          mutate(ae_sim,   method = "simulation")) %>%
+  ggplot(aes(polity, avg)) +
+  geom_ribbon(data = noborder, aes(x = polity, ymin = lb, ymax = ub), inherit.aes = FALSE,
+              fill = NA, color = bu_black, linetype = "dotted") +
+  geom_ribbon(aes(ymin = lb, ymax = ub, fill = method), alpha = 0.5) +
+  geom_line(aes(color = method), linewidth = 1) +
+  scale_fill_manual(values = bu_two) +
+  scale_color_manual(values = bu_two) +
+  labs(title = "Average effects, two uncertainty techniques",
+       subtitle = "dotted = the averaged case-level intervals from the average-effects section",
+       x = "Polity score", y = "average Pr(dispute)") +
+  theme_minimal()
+```
+
+The two bands sit almost on top of each other. The *approach* (average effects) fixed what we computed; the *technique* (delta or simulation) changed only how we bounded it, and here the two agree. The dotted lines are the averaged case-level intervals from the average-effects section, and they sit outside both. That band measured how uncertain a typical case is; these two measure how uncertain the average is. Same curve, three bands, and only two of them are standard errors of the average.
+
+### When the two techniques disagree
+
+The delta interval is a first-order approximation. It treats the average as linear in $\widehat\beta$ near the estimate, so it is symmetric by construction and it does not know that a probability stops at zero. The simulated interval pushes every draw through the link, so it carries the curvature and the boundary, and it can be lopsided. With 20,990 cases the standard errors are small, the linear approximation is excellent, and the two coincide. They part company when the standard errors are large relative to the distance to the boundary: small samples, rare events, extreme scenarios. The 500-case refit from @fig-delta-small shows it — same approach, same two techniques, less data:
+
+```{r}
+#| label: fig-ae-small
+#| fig-cap: "Average effects with delta-method and simulated intervals on the 500-case refit."
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+X_s <- model.matrix(m_small); b_s <- coef(m_small); V_s <- vcov(m_small)
+sims_s <- MASS::mvrnorm(1000, b_s, V_s)
+
+ae_small <- tibble()
+for (i in seq_along(polity)) {
+  Xi <- X_s                                      # counterfactual design matrix, n = 500
+  Xi[, "deml"]   <- polity[i]
+  Xi[, "border"] <- 0
+  pr   <- plogis(as.vector(Xi %*% b_s))
+  Pbar <- mean(pr)
+  g    <- colMeans(pr * (1 - pr) * Xi)
+  se   <- sqrt(as.numeric(t(g) %*% V_s %*% g))                       # delta
+  q    <- quantile(colMeans(plogis(Xi %*% t(sims_s))), c(.025, .5, .975))   # simulation
+  ae_small <- bind_rows(ae_small,
+    tibble(polity = polity[i], method = "delta",
+           avg = Pbar, lb = Pbar - 1.96 * se, ub = Pbar + 1.96 * se),
+    tibble(polity = polity[i], method = "simulation",
+           avg = q[2], lb = q[1], ub = q[3]))
+}
+
+ggplot(ae_small, aes(polity, avg)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub, fill = method), alpha = 0.5) +
+  geom_line(aes(color = method), linewidth = 1) +
+  geom_hline(yintercept = 0, color = bu_black, linewidth = 0.3) +
+  scale_fill_manual(values = bu_two) +
+  scale_color_manual(values = bu_two) +
+  labs(title = "Average effects, two techniques, n = 500",
+       x = "Polity score", y = "average Pr(dispute)") +
+  theme_minimal()
+```
+
+Now the delta band crosses zero from the middle of the grid on, and the simulated band is lopsided: a short tail toward zero and a long one upward, which is what the sampling distribution of a small probability looks like. The two techniques agree on the estimate; they disagree about its *shape*, and the delta method is the one approximating. When they disagree, the simulation is the better guide. And if the sample is small enough that you doubt the normal in $N(\widehat\beta, \mathbf{V})$ as well, that is the case for the bootstrap.
+
+# Which to choose, and when
+
+These slides have laid out two approaches, three techniques, and two analytic standard errors, and any of them can be combined with any other. That is a lot of options for a student who just wants to report an effect. So here is the guidance, one choice at a time.
+
+## At-means or average effects?
+
+At-means predictions are easier to write and easier to describe. One row, one sentence of assumptions: "a non-allied, non-contiguous dyad at median capabilities." That is also their problem. The row is a case we made up, and it may not exist in the data. A dyad sitting at the median of every covariate at once is nobody in particular, and if we hold a dummy at its mean instead of its mode we get something worse: a dyad that is 35% allied, which describes no dyad at all. The choice of "central" values is ours, and the number moves when we change it. The at-means curve in @fig-approaches-overlay sat above the average-effects curve for exactly this reason — we picked a non-allied dyad, and non-allied dyads are riskier than the sample.
+
+Fixed effects make this acute. With unit dummies in the model, an at-means prediction has to hold the fixed effects at *something*: the reference unit, which is an arbitrary choice, or their mean, which is a unit that does not exist. Either way the prediction describes no observed case. Average effects sidestep this entirely. Every case keeps its own fixed effect, its own covariates, and its own place in the data; only the variable of interest is moved. The counterfactual is "what if every dyad-year in the data had democracy equal to $d$," which is a question about the real cases, and the answer is an average over them.
+
+So: **average effects by default.** They represent the data rather than a constructed case, they let the data speak for themselves in the real cases, and they are the right object in fixed-effects models and any other model carrying many nuisance parameters. They are also what `marginaleffects::avg_predictions()` and `avg_slopes()` compute. Reach for **at-means** when the single case *is* the point — a specific, substantively meaningful profile you want to describe; an illustrative scenario for a figure; a comparison of a few named cases, as in @fig-sim-combos. When you do, say what the case is, in words, in the figure note. The two approaches answer different questions, and the reader needs to know which one was asked.
+
+## Analytic or simulated uncertainty?
+
+Both rest on the same foundation: $\widehat\beta \sim N(\beta, \mathbf{V})$ in large samples. Neither is "more correct" about that. They differ in what they do with it.
+
+The **analytic** route — an ML standard error with end-point transformation, or the delta method — is closed-form, instant, and deterministic: the same number every run, and the number `predict()` and `marginaleffects` return by default. Its weakness is the delta method's, which is that it approximates a nonlinear quantity of interest by a line through the estimate and returns a symmetric interval. **Simulation** takes no derivative. It pushes every draw through the actual link and the actual computation, so it carries the curvature and the boundary, and it works the same way for any quantity of interest you can compute — a difference of two averages, a ratio of two probabilities, an expected count at one scenario minus another. Its costs are randomness (set the seed and report the number of draws) and a little computing time, which for anything we do in this course is negligible.
+
+When the two agree — a large sample, a quantity well away from its boundary — choose on convenience, which means analytic. When the quantity of interest is a nonlinear function of several parameters, or the sample is small, or the quantity sits near a boundary, simulate. A practical rule: if you can build the interval on the link scale and transform the end points, do that; if you cannot and $n$ is large, delta; if in doubt, simulate. Simulation never does worse than the delta method on the shape of the interval, and it is what readers in our field expect to see. Bootstrap when you doubt the normal for $\widehat\beta$ itself — separation, a handful of events, or clustered data where the cluster is the right unit to resample.
+
+## If analytic, ML or delta?
+
+The ML standard error is the standard error of $x\widehat\beta$ on the link scale. Use it, with end-point transformation, whenever the quantity of interest is a **monotone transformation of a single linear prediction**: a predicted probability, an expected count, a hazard at one scenario. It is exact for the linear predictor, and the transformed interval respects the bounds and is asymmetric the way an interval on a probability should be.
+
+Use the **delta method** when the quantity is not one monotone function of one linear prediction, because then there is no link scale to build on. That covers an average of predictions across cases (the average effect: $n$ linear predictions, transformed, then averaged); a marginal effect (a density times a coefficient); a first difference between two scenarios (one transformed value minus another); and multinomial probabilities (a ratio involving several linear predictors). In each of these the delta method gives an approximate standard error on the quantity's own scale, symmetric, and reliable as long as the interval is narrow relative to the distance to any boundary. @fig-ae-small is what it looks like when that condition fails.
+
+## The short version
+
+1. **Average effects** unless a specific case is the point — and always with fixed effects.
+2. **One scenario, monotone link:** ML standard error on the link scale, end points transformed.
+3. **Averages, marginal effects, first differences:** delta if $n$ is large and the quantity is away from its boundary; otherwise simulate.
+4. **Simulation** is right wherever delta is right and better where it is not, and it is what the discipline expects; report the seed and the number of draws.
+5. **Bootstrap** when you doubt $N(\widehat\beta, \mathbf{V})$ itself.
+6. Whatever you choose, say which approach and which technique in the figure note.
+
+# References
+
+::: {#refs}
+:::

@@ -48,6 +48,8 @@ readings/*
 !mlesyllabus26.qmd
 # released deck: linear model prediction methods
 !predictionOLS26.qmd
+# released deck: prediction methods for MLE models
+!prediction26.qmd
 # released deck: binary response models
 !binarymodels26.qmd
 # released deck: likelihood theory & estimation mechanics
@@ -73,6 +75,8 @@ docs/*
 !docs/mlesyllabus26.pdf
 # released deck: linear model prediction methods
 !docs/predictionOLS26.html
+# released deck: prediction methods for MLE models
+!docs/prediction26.html
 # released deck: binary response models
 !docs/binarymodels26.html
 # released deck: likelihood theory & estimation mechanics
@@ -84,14 +88,13 @@ docs/*
 # released EXERCISE: only the rendered page. `ex12026.qmd` stays ignored above --
 # its figure chunks are the answers to questions 1-4.
 !docs/ex12026.html
-# released EXERCISE: only the rendered page. `ex22026.qmd` stays ignored above, and
-# `ex22026answers.qmd`/`docs/ex22026answers.html` stay ignored permanently.
+# released EXERCISE: only the rendered page. `ex22026.qmd` stays ignored above.
 !docs/ex22026.html
-# released ANSWER KEY, after exercise #1 was submitted. Only the rendered page --
-# `ex12026answers.qmd` stays ignored above. Release a key only once the exercise
-# it answers is in; `docs/ex22026answers.html` is NOT released (ex #2 is due
-# 2026-09-02).
+# released ANSWER KEYS, each after its exercise was submitted. Only the rendered
+# page -- the `*answers.qmd` sources stay ignored above. Release a key only once
+# the exercise it answers is in.
 !docs/ex12026answers.html
+!docs/ex22026answers.html
 # released: the rendered in-class build template, so students can read it in a
 # browser while they work in the .qmd. `docs/buildtemplate26answers.html` is NOT
 # released -- it is the key, and it is what gets projected in class.

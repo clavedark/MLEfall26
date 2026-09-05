@@ -7,7 +7,7 @@ title: "Exercises & Code"
 Posted as they're assigned. Turn in both your source (`.qmd`/`.R`) and the rendered document on Brightspace. The data these use are in the [Data](#data) section below.
 
 - [Exercise #1 — Distributions, Simulation, and the Log-Likelihood](ex12026.qmd) · [answer key](ex12026answers.qmd)
-- [Exercise #2 — Write the Maximizer](ex22026.qmd)
+- [Exercise #2 — Write the Maximizer](ex22026.qmd) · [answer key](ex22026answers.qmd)
 - [Build Your Own Estimator](buildtemplate26.qmd) — the in-class build template. Read it here, but work in the `.qmd`: run
 
   ```r
