@@ -249,7 +249,8 @@ Week 4, Sep 9 -- More Mechanics; Quantities of Interest (review) and Diagnostics
 
 **Required**
 
--  Ward \& Ahlquist, 2018. (quantities of interest); Gary King. 1998. (simulation of quantities of interest)
+-  Ward \& Ahlquist, 2018. Chapter 6 (quantities of interest)
+-  Gary King. 1998. Chapter 4 (simulation of quantities of interest)
 -  J. Scott Long. 1997. Chapter 5.
 -  @kingzengio01
 -  @rainey2016separation
