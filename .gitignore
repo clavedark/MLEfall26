@@ -56,6 +56,8 @@ readings/*
 !likelihood26.qmd
 # released deck: maximizing the log-likelihood
 !llfmax26.qmd
+# released deck: diagnostics, classification, and fit
+!binaryextensions126.qmd
 # released: codebook for the CES data used in exercise #1
 !cescodebook26.qmd
 # released IN-CLASS TEMPLATE, and the only exercise-family file published as
@@ -83,6 +85,8 @@ docs/*
 !docs/likelihood26.html
 # released deck: maximizing the log-likelihood
 !docs/llfmax26.html
+# released deck: diagnostics, classification, and fit
+!docs/binaryextensions126.html
 # released: codebook for the CES data used in exercise #1
 !docs/cescodebook26.html
 # released EXERCISE: only the rendered page. `ex12026.qmd` stays ignored above --

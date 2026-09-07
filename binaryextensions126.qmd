@@ -1,0 +1,1127 @@
+---
+title: "Diagnostics, Classification, and Fit"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: true
+filters:
+  - parse-latex
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+options(htmltools.dir.version = FALSE)
+
+# R starts in the C locale here, which cannot encode non-ASCII characters. Any
+# Greek letter, minus sign, or +/- typed into a ggplot title, subtitle, axis
+# label, or annotation gets drawn as the literal text <U+03B1>. Setting a UTF-8
+# ctype fixes it for the whole document.
+Sys.setlocale("LC_CTYPE", "en_US.UTF-8")
+
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+library(haven)
+library(patchwork)
+library(broom)
+library(modelsummary)
+library(marginaleffects)
+library(pROC)
+library(caret)
+library(logistf)        # Firth penalized likelihood for separation
+library(detectseparation)  # linear-programming test for separation
+library(fixest)         # fixed-effects GLMs
+library(kableExtra)
+
+# caret loads proxy lazily, at the first confusionMatrix() call, and proxy
+# overwrites two S3 methods registry has already registered. R reports that on
+# stderr, which chunk options like message/warning do not suppress. Loading it
+# here puts the notice in this chunk instead, where include=FALSE hides it.
+invisible(loadNamespace("proxy"))
+
+set.seed(20260520)
+
+# Running data: Oneal & Russett democratic peace, dyad-year
+dp <- read_dta(here::here("data", "dp.dta"))
+dp$lncaprat <- log(dp$caprat)   # a capability ratio is multiplicative, so model it on the log scale
+
+# Second example, used in the classification section: US House vote on NAFTA, 1993
+nafta <- read.csv(here::here("data", "NAFTA.csv"))
+```
+
+<style>
+table, th, td { font-size: 18px; }
+tr:nth-child(odd) { background-color: #f2f2f2; }
+</style>
+
+# Goals
+
+We have a fitted binary-response model. This lecture takes on five questions:
+
+- **Is the link function the right shape?** Symmetry, asymmetry, and the scobit alternative.
+- **How well does it classify?** Thresholds, confusion matrices, ROC curves, AUC — and why classification is a natural question for a House roll call and an unnatural one for the democratic peace.
+- **Does the model estimate?** Specifically: is there separation in the data, and if so, what do we do about it?
+- **What about rare events?** When $y$ is sparse, the estimator is biased — by how much, and what to do.
+- **How well does it fit?** The "trinity" of tests (LLR, Wald, LM) and the information criteria (AIC, BIC).
+
+We work the lecture with two running examples, chosen so they disagree with each other.
+
+The first is the democratic peace data from @onealrussett97: dispute (yes/no) regressed on shared border, minimum dyad democracy, capabilities ratio, and an alliance indicator.
+
+```{r baseline-model}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+dpm <- glm(dispute ~ border + deml + lncaprat + ally,
+           family = binomial(link = "logit"), data = dp)
+
+modelsummary(dpm,
+             coef_rename = c("border" = "Shared border",
+                             "deml"   = "Min. democracy",
+                             "lncaprat" = "Capabilities ratio (log)",
+                             "ally"   = "Allied"),
+             gof_omit = "AIC|BIC|RMSE|F",
+             notes = "Baseline democratic-peace model. Used throughout this file.")
+```
+
+The second example is a single roll-call vote: the US House vote on NAFTA in November 1993, from @boxapsr. A yes vote is regressed on party and the member's 1993 AFL-CIO COPE score, a roll-call-based measure of how reliably a member voted with organized labor.
+
+```{r nafta-model}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+naftam <- glm(vote ~ democrat + cope93,
+              family = binomial(link = "logit"), data = nafta)
+
+modelsummary(naftam,
+             coef_rename = c("democrat" = "Democrat",
+                             "cope93"   = "COPE score (pro-labor)"),
+             gof_omit = "AIC|BIC|RMSE|F",
+             notes = "US House vote on NAFTA, 1993. y = 1 is a yes vote.")
+```
+
+The two are deliberately chosen to sit at opposite ends of one dimension: **how skewed $y$ is**. Disputes occur in 4.5% of dyad-years; the House split 234–200, so $\bar{y} = 0.54$. Nearly everything in this lecture — which link to use, whether classification means anything, whether the estimator is biased — turns on that difference.
+
+
+# Symmetry
+
+Logit and probit both use **symmetric** link functions: half the probability mass sits on each side of $\widehat{\pi} = 0.5$, and the steepest rate of change in the curve is at $\widehat{\pi} = 0.5$ — that is, at $x\beta = 0$. For balanced classes that symmetry is unobjectionable. For skewed $y$, it bakes in an assumption you might not believe.
+
+The substantive content of symmetry is *where the marginal effect peaks*. With a symmetric link, the largest change in $\widehat{\pi}$ from a one-unit shift in $x$ happens around $\widehat{\pi} = 0.5$. For the democratic peace data, where $\bar{y}\approx 0.045$, that's nowhere near the bulk of observations — most dyad-years sit far in the lower tail, where the slope is shallow. The decision-relevant question is whether you believe states are most sensitive to changes in (say) democracy at $\widehat{\pi}=0.5$, and for the rare-event applications that dominate political science, the honest answer is "probably not."
+
+It's worth being precise about what symmetry actually pins down, because the symmetric case ties together three things that come apart the moment you use an asymmetric link:
+
+1. **Where the marginal effect is largest** — the steepest point on the curve.
+2. **What probability the model assigns at $x\beta = 0$** — the value of the link at the origin.
+3. **Where the curve crosses $\widehat{\pi} = 0.5$** — the value of $x\beta$ at which the model is indifferent.
+
+For the logistic all three sit on top of each other: the curve is steepest at $x\beta = 0$, $Pr(y=1 \mid x\beta = 0) = 0.5$, and $\widehat{\pi} = 0.5$ arrives at $x\beta = 0$. That coincidence is what symmetry means, and it is familiar enough that it's easy to mistake for a fact about the world rather than a choice about functional form. It is a choice. @fig-asym-cdfs takes the three apart.
+
+## Asymmetric alternatives
+
+Three CDFs that come up:
+
+- **Logistic** (logit): symmetric, $Pr(y=1\mid x\beta=0) = 0.5$, steepest at $x\beta = 0$.
+- **Complementary log-log**: skewed, $Pr(y=1\mid x\beta=0) = 1 - e^{-1} \approx 0.63$. It is also steepest at $x\beta = 0$ — so it moves peak sensitivity *up* the probability scale, not down. Naturally suited to event-occurrence problems with an "exposure time" interpretation.
+- **Skewed logit / scobit (Burr-10)** [@Nagler94]: $Pr(y=1) = \frac{1}{(1+e^{-x\beta})^\alpha}$. Reduces to logit when $\alpha = 1$. Otherwise $Pr(y=1 \mid x\beta = 0) = 2^{-\alpha}$, the curve is steepest at $x\beta = \log \alpha$, and the probability at that steepest point is $(1 + 1/\alpha)^{-\alpha}$. So $\alpha > 1$ shifts the curve right in $x\beta$ but moves peak sensitivity *down* in probability (to 0.44 at $\alpha = 2$); $\alpha < 1$ does the reverse (up to 0.58 at $\alpha = 0.5$).
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-asym-cdfs
+#| fig-height: 8
+
+# the four links, as functions of the linear predictor
+links <- list(
+  "Logistic"         = function(z) plogis(z),
+  "Cloglog"          = function(z) 1 - exp(-exp(z)),
+  "Scobit (α = 0.5)" = function(z) 1 / (1 + exp(-z))^0.5,
+  "Scobit (α = 2)"   = function(z) 1 / (1 + exp(-z))^2
+)
+
+# symmetric numerical derivative: the marginal effect of a unit change in xb
+d_num <- function(f, z, h = 1e-5) (f(z + h) - f(z - h)) / (2 * h)
+
+# grid runs left to -7 so it covers the democratic peace model's fitted values
+xb_grid <- seq(-7, 5, length.out = 600)
+
+curves <- map_dfr(names(links), function(nm)
+  tibble(link = nm, xb = xb_grid,
+         p  = links[[nm]](xb_grid),
+         me = d_num(links[[nm]], xb_grid)))
+
+# the three landmarks, one row per link
+key <- map_dfr(names(links), function(nm) {
+  f  <- links[[nm]]
+  pk <- optimize(function(z) d_num(f, z), c(-6, 6), maximum = TRUE)
+  tibble(link    = nm,
+         p_at_0  = f(0),
+         xb_half = uniroot(function(z) f(z) - 0.5, c(-8, 8))$root,
+         xb_peak = pk$maximum,
+         p_peak  = f(pk$maximum),
+         me_peak = pk$objective)
+})
+
+# observed range of the linear predictor in each of the two running models
+bands <- tibble(
+  model = c("democratic peace", "NAFTA vote"),
+  lo    = c(min(predict(dpm)), min(predict(naftam))),
+  hi    = c(max(predict(dpm)), max(predict(naftam))))
+
+# draw each observed range as a labelled bar; y positions are set per panel
+range_bars <- function(ys) {
+  b <- bands %>% mutate(y = ys)
+  list(
+    geom_segment(data = b, aes(x = lo, xend = hi, y = y, yend = y),
+                 inherit.aes = FALSE, color = "grey25", linewidth = 2.2,
+                 lineend = "butt"),
+    geom_text(data = b, aes(x = lo, y = y, label = model), inherit.aes = FALSE,
+              hjust = 0, vjust = -0.9, size = 2.9, color = "grey15")
+  )
+}
+
+cols <- c("Logistic"         = "#005A43",
+          "Cloglog"          = "#6CC24A",
+          "Scobit (α = 0.5)" = "#A7DA92",
+          "Scobit (α = 2)"   = "#000000")
+
+p_cdf <- ggplot(curves, aes(xb, p, color = link, linetype = link)) +
+
+  geom_hline(yintercept = 0.5, color = "grey60", linetype = "dotted") +
+  geom_vline(xintercept = 0,   color = "grey60", linetype = "dotted") +
+  geom_line(linewidth = 0.8) +
+  geom_point(data = key, aes(x = 0, y = p_at_0, color = link),
+             inherit.aes = FALSE, size = 2.4, show.legend = FALSE) +
+  geom_point(data = key, aes(x = xb_half, y = 0.5, color = link),
+             inherit.aes = FALSE, size = 2.6, shape = 1, stroke = 1.1,
+             show.legend = FALSE) +
+  range_bars(c(0.90, 0.79)) +
+  annotate("text", x = -6.9, y = 1.0, hjust = 0, size = 2.9, color = "grey15",
+           label = "observed range of x-beta:") +
+  scale_color_manual(values = cols) +
+  labs(subtitle = "(a) The curves. Filled dots: Pr(y=1) at xβ = 0. Open circles: where each curve crosses 0.5.",
+       x = NULL, y = expression(Pr(y == 1)), color = NULL, linetype = NULL) +
+  theme_minimal()
+
+p_me <- ggplot(curves, aes(xb, me, color = link, linetype = link)) +
+
+  geom_vline(xintercept = 0, color = "grey60", linetype = "dotted") +
+  geom_line(linewidth = 0.8) +
+  geom_point(data = key, aes(x = xb_peak, y = me_peak, color = link),
+             inherit.aes = FALSE, size = 2.4, show.legend = FALSE) +
+  range_bars(c(0.445, 0.405)) +
+  expand_limits(y = 0.48) +
+  scale_color_manual(values = cols) +
+  labs(subtitle = "(b) The slopes of those curves — the marginal effect. Dots mark each peak.",
+       x = expression(x*beta),
+       y = expression(partialdiff * Pr(y == 1) / partialdiff * (x*beta)),
+       color = NULL, linetype = NULL) +
+  theme_minimal()
+
+(p_cdf / p_me) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title = "Symmetry decides where the model is most sensitive",
+    subtitle = "Logistic is symmetric; cloglog and scobit (α ≠ 1) are not."
+  ) &
+  theme(legend.position = "bottom")
+```
+
+Read the two panels together.^[I used Claude code to make figures 1 and 3.] Panel (a) is the familiar picture of four CDFs. Panel (b) is the one that matters for interpretation: it plots the *slope* of each curve, $\partial Pr(y=1) / \partial(x\beta)$, which is the marginal effect of a one-unit change in the linear predictor. The link function's shape is an assumption about the top panel; what you actually report to a reader is the bottom panel.
+
+Three things to take from it.
+
+**The peak is in a different place for every link.** The logistic peaks at $x\beta = 0$ with a slope of 0.25 — the familiar $\pi(1-\pi)$ maximum. Cloglog peaks at $x\beta = 0$ too, but its peak is taller (0.37) and it sits at $\widehat{\pi} = 0.63$, not 0.5. The two scobits move the peak off the origin entirely: $\alpha = 2$ peaks at $x\beta = 0.69$, $\alpha = 0.5$ at $x\beta = -0.69$. Same estimated $x\beta$, four different answers to "how much does a one-unit change buy you?"
+
+**$x\beta = 0$ means something different in each model.** The filled dots in panel (a) sit at four different heights: 0.5 for logit, 0.63 for cloglog, 0.71 for scobit with $\alpha = 0.5$, and 0.25 for scobit with $\alpha = 2$. Zero on the linear predictor is not a natural threshold; it is only a threshold in the symmetric case, and only because we chose a symmetric link.
+
+**$\widehat{\pi} = 0.5$ arrives at a different $x\beta$ in each model.** The open circles in panel (a) sit at $x\beta$ of 0, $-0.37$, $-1.10$, and $0.88$. This is why the $\tau = 0.5$ classification threshold we use later is a statement about the link as much as about the data.
+
+```{r asym-key, warning=FALSE}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+key %>%
+  transmute(Link = link,
+            `Pr(y=1) at xβ=0`        = p_at_0,
+            `xβ where Pr(y=1)=0.5`   = xb_half,
+            `xβ at steepest point`   = xb_peak,
+            `Pr(y=1) there`          = p_peak,
+            `slope there`            = me_peak) %>%
+  knitr::kable(digits = 3,
+               caption = "The three landmarks symmetry ties together, pulled apart.")
+```
+
+## Skewed $y$, and where the data actually are
+
+Now put the running example on top of that picture. Disputes occur in about 4.5% of dyad-years, and the baseline logit's fitted probabilities run from 0.002 to 0.22: not one of the 20,990 dyad-years gets a predicted probability above a quarter, and $x\widehat{\beta}$ never gets closer to zero than $-1.26$. The shaded band marked *democratic peace* in @fig-asym-cdfs is that entire estimation sample — every observation, all of it, off to the left.
+
+Look at where the band falls in panel (b). All four marginal-effect curves are pressed flat against the floor there. Every peak in the figure sits to the *right* of every observation in the data. So the model's claim about where cases are most responsive to a change in democracy is being made about a region of the covariate space that contains no dyad-years at all. That claim is not estimated; it is implied by functional form. Skewness in $y$ is what does this — it pushes the whole estimation sample into one tail, and leaves the interesting part of the curve to be filled in by assumption.
+
+It is tempting to conclude that the fix is an asymmetric link that drags the peak down into the tail where the data live. Panel (b) says that only half works. Cloglog moves the peak the wrong way, up to $\widehat{\pi} = 0.63$. Scobit can move it down, but only so far: the probability at the steepest point is $(1 + 1/\alpha)^{-\alpha}$, which is bounded below by $1/e \approx 0.37$ no matter how large you make $\alpha$. None of these links can put peak sensitivity anywhere near a base rate of 0.045. What an asymmetric link genuinely buys you is a different *shape in the tail* — how fast $Pr(y=1)$ climbs off the floor as $x\beta$ rises — and since the data are all in that tail, this is where the links can actually disagree with each other about the cases you have.
+
+The scobit's $\alpha$ parameter is the empirical version of "where is the transition between zeros and ones?" — rather than asserting it sits at $\widehat{\pi} = 0.5$, scobit estimates it. The model rarely appears in print, partly because the likelihood is sometimes ill-behaved (changes in the slope $\beta$ and in $\alpha$ can look similar to the optimizer) and partly because in most political-science data the substantive answer is similar to plain logit. Where the scobit's logic *does* push, cloglog usually does too, and cloglog is much easier to estimate.
+
+## And when $y$ is balanced
+
+Run the same exercise on the NAFTA model and the picture inverts. The House split 234–200, the fitted probabilities run from 0.05 to 0.99, and the second shaded band in @fig-asym-cdfs — the range of $x\widehat{\beta}$ in that model — covers every peak in panel (b) rather than sitting to the left of all of them.
+
+That is the case where a symmetric link is not just harmless but appropriate. The logit's assumption is that the model is most sensitive around $\widehat{\pi} = 0.5$, and here a third of the House actually sits there. The assumption is being made about a region of the covariate space that is densely populated, so it is doing work the data can speak to rather than filling in a gap by functional form. We come back to these members in the classification section, where they turn out to be the ones a whip would care about.
+
+Put the two bands together and you have the practical rule. Symmetry is a claim about where the action is. Check whether your data are anywhere near there before you worry about the link, and if they are not — as with any rare-events application — understand that you are extrapolating whichever link you pick.
+
+## Same model, different links
+
+The pragmatic check is to refit with multiple links and look at how much the substantive story changes.
+
+```{r link-compare}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+fit_logit   <- dpm
+fit_probit  <- glm(dispute ~ border + deml + lncaprat + ally,
+                   family = binomial(link = "probit"),  data = dp)
+fit_cloglog <- glm(dispute ~ border + deml + lncaprat + ally,
+                   family = binomial(link = "cloglog"), data = dp)
+
+modelsummary(
+  list("Logit" = fit_logit, "Probit" = fit_probit, "Cloglog" = fit_cloglog),
+  coef_rename = c("border" = "Shared border",
+                  "deml"   = "Min. democracy",
+                  "lncaprat" = "Capabilities ratio (log)",
+                  "ally"   = "Allied"),
+  gof_omit = "RMSE|F"
+)
+```
+
+Coefficient *magnitudes* differ — logit and probit estimates are on different scales by construction, and cloglog is on yet another — but signs, significance, and predicted-probability conclusions track each other closely. That's the typical pattern. The substantive choice between links matters more for what the model implies *out of sample* than for what it says about the cases at hand.
+
+::: {.callout-note title="Important Concept"}
+Symmetric vs. asymmetric is a modeling choice with an unambiguous empirical content: where on the covariate space is the model most sensitive? A symmetric link puts that peak sensitivity at $\widehat{\pi}=0.5$, at $x\beta=0$, and makes $\widehat{\pi}=0.5$ arrive at $x\beta=0$ — all three at once. An asymmetric link separates them. With rare-event $y$ none of these links can move peak sensitivity anywhere near the base rate, so the choice does not rescue you from extrapolating; what it changes is the shape of the curve in the tail where your data actually live, and that shows up out of sample rather than in the fitted values.
+:::
+
+
+# Classification
+
+The symmetry section was about where the model puts the transition from zeros to ones, and it showed that the link function decides: a symmetric link puts the transition at $\widehat{\pi} = 0.5$, an asymmetric link puts it somewhere else, and the scobit goes so far as to estimate where it belongs. Classification asks the same question from the other side. Rather than let the link decide, we pick a **threshold** $\tau$ ourselves and declare everything above it a one: predict $\widehat{y}_i = 1$ if $\widehat{\pi}_i \geq \tau$, and $\widehat{y}_i = 0$ otherwise. Different values of $\tau$ produce different classifications, so everything we measure from a classification depends on that choice.
+
+Recall the open circles in @fig-asym-cdfs. The four links crossed $\widehat{\pi} = 0.5$ at four different values of $x\beta$ — 0, $-0.37$, $-1.10$, and $0.88$. That is the same fact showing up again. Setting $\tau = 0.5$ is not choosing a neutral cutpoint; it is choosing a cutpoint whose location on the covariate scale depends on which link you happened to fit.
+
+## Who classifies
+
+We mostly don't use these models for classification in political science, but classification is the native use of binomial models like the logit in many other places. A spam filter estimates $Pr(\text{spam} \mid \text{message})$ and then has to *do* something: the message goes to the inbox or to the spam folder, and there is no third option. A screening test estimates $Pr(\text{disease} \mid \text{markers})$ and the patient is called back or sent home. A bank estimates $Pr(\text{default})$ and extends the loan or doesn't. In each case somebody has to act on the probability, the action is binary, and the two kinds of error cost very different amounts — a spam message in your inbox is an annoyance, a real message in your spam folder is a missed job offer. That asymmetry in costs is the whole reason $\tau$ exists. The threshold is where you decide the probability is high enough to act on, and it belongs to the decision problem, not to the model.
+
+The vocabulary comes from the same world. **ROC** stands for *receiver operating characteristic*, and the story usually told is that it originates with radar receiver operators in the Second World War, who had to decide whether a blip on the scope was enemy aircraft or flocks of geese (so signal or noise). Whether or not the anecdote is exact, the method it describes — try every threshold, plot the true-positive rate against the false-positive rate at every threshold, and read the quality of the model off the shape of the curve — was formalized after the war as signal detection theory [@greenswets1966]. It moved into radiology and clinical decision-making in the 1970s, became standard equipment in machine learning, and reached political science late, largely through people arguing that our conflict models should be asked whether they predict anything at all [@ward2010pvalue].
+
+So why is this mostly not what we do? Because in most of our applications nobody acts on the individual case. We fit a democratic peace model to learn whether joint democracy is associated with fewer disputes; nobody is deciding what to do about dyad 4,712. The estimand is a coefficient or a marginal effect, and a model can be genuinely useful for that while being useless as a classifier. Keep that distinction in view for the rest of this section: a bad classifier is not automatically a bad model.
+
+But "mostly" is not "never." Below we work two examples deliberately chosen to sit at opposite ends — a House roll-call vote, where $y$ is nearly balanced and legislative leaders really were trying to sort members into categories, and the democratic peace data, where $y$ is rare and nobody is sorting anything.
+
+## Confusion matrix
+
+Let's start by classifying the correct and incorrect predictions from a binomial model. To do this, we cross-tabulate observed $y$ against predicted $\widehat{y}$ at a fixed threshold, $\tau$ - usually $\tau$ is fixed to .5, the symmetry point in the logit or probit CDFs. The result is the **confusion matrix** (I didn't make this up):
+
+```{r confusion-template}
+#| echo: false
+df <- data.frame(
+  "Predicted Positive" = c("True Positive (TP)",  "False Positive (FP)"),
+  "Predicted Negative" = c("False Negative (FN)", "True Negative (TN)"),
+  "Rate" = c("TPR = TP / (TP + FN)", "FPR = FP / (FP + TN)")
+)
+row.names(df) <- c("Observed Positive (y = 1)", "Observed Negative (y = 0)")
+
+kbl(df, align = rep('c', 4)) %>%
+  column_spec(2:4, border_left = T) %>%
+  column_spec(1,  bold = T) %>%
+  column_spec(1:4, width = "3cm", color = 'white', background = '#005A43',
+              include_thead = TRUE) %>%
+  column_spec(2:4, background = "inherit", color = "inherit") %>%
+  row_spec(1, extra_css = "border-bottom: 1px solid") %>%
+  kable_paper("hover", bootstrap_options = c("condensed", "responsive"),
+              full_width = FALSE, font_size = 18)
+```
+
+Two rates that get heavy use:
+
+- **True positive rate (TPR) = sensitivity.** Of all the actual ones, what fraction does the model catch?
+- **False positive rate (FPR) = 1 − specificity.** Of all the actual zeros, what fraction does the model mistakenly call ones?
+
+From these we build summary fit measures.
+
+### Percent correctly predicted (PCP)
+
+$$
+\text{PCP} = \frac{TP + TN}{N}
+$$
+
+The fraction of the sample classified correctly.
+
+### Proportional reduction of error (PRE)
+
+A null model that always predicts the modal category gets PMC ("percent in the modal category") correct. The PRE asks how much better the informed model does:
+
+$$
+\text{PRE} = \frac{\text{PCP} - \text{PMC}}{1 - \text{PMC}}
+$$
+
+PRE goes to 1 for a perfect classifier and to 0 for a model that doesn't beat the null.
+
+That is five acronyms in two pages, and they pile up fast. Keep this table somewhere you can glance at — the rest of the section restates them as it goes, but here they are in one place:
+
+| | stands for | what it asks |
+|---|---|---|
+| **TP / FP / TN / FN** | true/false positive, true/false negative | the four cells of the confusion matrix |
+| **TPR** | true positive rate, a.k.a. sensitivity | of the real ones, what share did we catch? |
+| **FPR** | false positive rate, a.k.a. 1 − specificity | of the real zeros, what share did we wrongly call ones? |
+| **PCP** | percent correctly predicted | what share of the whole sample did we get right? |
+| **PMC** | percent in the modal category | what would we get right by always guessing the more common outcome? |
+| **PRE** | proportional reduction of error | how much of the null model's error did the covariates remove? |
+
+Only the last one is really a measure of the model, because it is the only one that compares the model to an alternative.
+
+## A balanced $y$: the NAFTA vote, 1993
+
+On 17 November 1993 the US House voted 234–200 to approve NAFTA. The vote cut across both parties, which is exactly what makes it useful here: $\bar{y} = 0.54$, so there is no rare-events problem to fight through and the default $\tau = 0.5$ is not obviously silly. The model is the one estimated at the top of this file — a yes vote on party and the member's COPE score. Labor opposed NAFTA, so the negative COPE coefficient is the expected sign. The party coefficient deserves a second look, because it runs against the raw numbers: Democrats voted against NAFTA 153 to 101, yet the coefficient on `democrat` is positive and large. Both facts are true, and the model is telling you something the cross-tabulation cannot. Democrats were, on average, far more pro-labor, and it was the labor position that predicted a no vote. *Holding the COPE score fixed* — comparing a Democrat and a Republican with the same labor voting record — the Democrat was more likely to vote yes. This is the ordinary difference between a marginal association and a conditional one, and it is worth pausing on: the sign of a coefficient is a statement about a comparison you have to specify, not a summary of who voted which way.
+
+```{r nafta-confusion}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+p_nafta <- predict(naftam, type = "response")
+y_nafta_50 <- as.integer(p_nafta >= 0.5)
+
+cm_nafta <- confusionMatrix(factor(y_nafta_50, levels = c(0, 1)),
+                            factor(nafta$vote, levels = c(0, 1)),
+                            positive = "1")
+cm_nafta$table
+
+tibble(
+  PCP = unname(cm_nafta$overall["Accuracy"]),
+  PMC = max(mean(nafta$vote), 1 - mean(nafta$vote)),
+  PRE = (unname(cm_nafta$overall["Accuracy"]) -
+           max(mean(nafta$vote), 1 - mean(nafta$vote))) /
+        (1 - max(mean(nafta$vote), 1 - mean(nafta$vote)))
+) %>%
+  knitr::kable(digits = 3, caption = "PCP, PMC, PRE for the NAFTA model at $\\tau = 0.5$")
+```
+
+Both diagonals are populated — the model calls some members yes and some no, and gets most of both right. PCP (percent correctly predicted) is 0.73. PMC — the percent in the modal category, which is what a null model gets by always guessing "yes" — is 0.54. So PRE, the proportional reduction of error, is 0.42: the covariates removed about 42% of the errors the null model would have made. These numbers mean something here, and the reason they mean something is that $y$ is balanced. Hold onto the comparison; the same three numbers computed on the democratic peace data in a moment will look better and say less.
+
+## Classification with a purpose: whip counts
+
+This is where classification stops being an import from machine learning and becomes a question a political scientist might actually ask.
+
+In the weeks before the vote, the leadership on both sides — and the Clinton White House, which was whipping hard for the treaty — ran whip counts: for each member, is this a yes, a no, or someone in play? That is a classification problem, and it is one where the threshold does real work, because a whip has finite resources. A committee assignment, a project in the district, an afternoon of the President's time: each can be spent once, and the question is on whom.
+
+Now look at where the model says those members are.
+
+```{r whip-window}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+tibble(
+  `in play (0.3 - 0.7)` = sum(p_nafta >= 0.3 & p_nafta <= 0.7),
+  `likely no (< 0.3)`   = sum(p_nafta < 0.3),
+  `likely yes (> 0.7)`  = sum(p_nafta > 0.7),
+  N                     = length(p_nafta)
+) %>%
+  knitr::kable(caption = "Members of the House by predicted probability of a yes vote.")
+```
+
+155 of 434 members — about a third of the House — have a predicted probability between 0.3 and 0.7. Those are the members worth a phone call. And notice what the symmetry section already told us about that region: it is precisely where the logit's marginal effect is largest. A member sitting at $\widehat{\pi} = 0.5$ is the member whose probability moves most for a given inducement; the member at 0.95 was going to vote yes anyway, and the member at 0.05 is not reachable at any price the leadership can pay.
+
+So for this application the symmetric logit's central assumption — that the model is most sensitive at $\widehat{\pi} = 0.5$ — is defensible, and close to the substantive question being asked. The link and the problem line up.
+
+## Where the predicted probabilities actually fall
+
+The contrast with the running example is the whole point, and it is easiest to see by putting the two distributions of predicted probabilities side by side.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-phat-compare
+#| fig-height: 4
+
+p_hat <- predict(dpm, type = "response")   # fitted probabilities, democratic peace model
+
+phat_df <- bind_rows(
+  tibble(model = "NAFTA vote (y-bar = 0.54)",          phat = p_nafta),
+  tibble(model = "Democratic peace (y-bar = 0.045)",   phat = p_hat)
+) %>%
+  mutate(model = factor(model, levels = c("NAFTA vote (y-bar = 0.54)",
+                                          "Democratic peace (y-bar = 0.045)")))
+
+ggplot(phat_df, aes(phat)) +
+  geom_histogram(bins = 40, fill = "#005A43", color = NA) +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "grey20") +
+  facet_wrap(~ model, scales = "free_y") +
+  scale_x_continuous(limits = c(0, 1)) +
+  labs(title = "Where the fitted probabilities actually sit",
+       subtitle = "Dashed line is the default threshold, tau = 0.5.",
+       x = expression(hat(pi)), y = "members / dyad-years") +
+  theme_minimal()
+```
+
+On the left, the fitted probabilities spread across the whole unit interval and 45% of members land above 0.5, so a threshold at 0.5 partitions the sample into two usable groups. On the right, the entire distribution is jammed against the left wall: the largest fitted probability in the democratic peace model is 0.22, so **no observation crosses 0.5 at all**. Classifying at $\tau = 0.5$ there does not produce a bad partition; it produces no partition. That is the next section.
+
+## Democratic peace at $\tau = 0.5$ — the rare-events trap
+
+The dispute variable is rare. Let's see what happens at the default $\tau = 0.5$.
+
+```{r dp-confusion-50}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+y_hat_50 <- as.integer(p_hat >= 0.5)
+
+cm_50 <- confusionMatrix(factor(y_hat_50, levels = c(0,1)),
+                         factor(dp$dispute, levels = c(0,1)),
+                         positive = "1")
+cm_50$table
+```
+
+At $\tau = 0.5$ the model classifies *almost nothing* as a one. The base rate of `dispute` is roughly 4–5%, so with a symmetric logit, $\widehat{\pi}_i$ rarely crosses 0.5. The percent correctly predicted (PCP) looks great — but only because predicting "no dispute" for everyone is right 95% of the time, and that is exactly what the percent in the modal category (PMC) measures:
+
+```{r dp-pcp-50}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+tibble(
+  PCP = unname(cm_50$overall["Accuracy"]),
+  PMC = mean(dp$dispute == 0),
+  PRE = (unname(cm_50$overall["Accuracy"]) - mean(dp$dispute == 0)) /
+        (1 - mean(dp$dispute == 0))
+) %>%
+  knitr::kable(digits = 3, caption = "PCP, PMC, PRE at $\\tau = 0.5$")
+```
+
+PCP is high and PRE is near zero, and the second number is the one that matters: the proportional reduction of error compares the model to the null model, and here the model removes essentially none of the null model's mistakes. It is no better than always guessing "no dispute."
+
+Notice what did the damage. Nothing about the coefficients changed between the NAFTA example and this one — the estimates are the same estimates we would report in a paper. What changed is that $\widehat{\pi}$ never reaches the threshold, so every case falls on the same side of it. That is a fact about $\tau$ and the distribution of $\widehat{\pi}$, not about whether the model has learned anything.
+
+## Democratic peace at $\tau = 0.1$ — lower the bar
+
+Drop $\tau$ to where the model can actually classify some ones, and the picture changes:
+
+```{r dp-confusion-10}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+y_hat_10 <- as.integer(p_hat >= 0.10)
+
+cm_10 <- confusionMatrix(factor(y_hat_10, levels = c(0,1)),
+                         factor(dp$dispute, levels = c(0,1)),
+                         positive = "1")
+cm_10$table
+
+tibble(
+  PCP = unname(cm_10$overall["Accuracy"]),
+  TPR = unname(cm_10$byClass["Sensitivity"]),
+  FPR = 1 - unname(cm_10$byClass["Specificity"])
+) %>%
+  knitr::kable(digits = 3, caption = "PCP, TPR, FPR at $\\tau = 0.1$")
+```
+
+PCP falls — we're now wrong about some of the zeros — but TPR, the true positive rate, rises sharply: of the dyad-years that really did see a dispute, the model now catches a meaningful share. The right $\tau$ depends on what we care about: in a peer-reviewed paper we usually don't pick one at all and let the ROC curve do the work.
+
+::: {.callout-note title="Important Concept"}
+The threshold $\tau$ is a decision-theoretic choice, not a statistical one. It depends on the cost ratio of false positives to false negatives — costs the model doesn't know about. Reporting fit at a single $\tau$ implicitly takes a stand on those costs.
+:::
+
+## ROC curves
+
+**ROC** stands for **receiver operating characteristic** — the phrase comes from the radar operators of the introduction, and "receiver" means the radar set, not the analyst. The idea is the one we have been sneaking up on: rather than pick a single threshold and report the classification it produces, let's do this for all values of $\tau$ across its whole range, record the pair of error rates at each value, and plot the result. Every point on an ROC curve *is* a threshold value of $\tau$.
+
+The two axes have unhelpful names, so let's translate them into the radar language they came from.
+
+- **Sensitivity = TPR = the detection rate.** Of the cases that really are ones, what share does the model call ones? A radar with high sensitivity spots the incoming aircraft. Turn the threshold down far enough and you detect everything — you also call everything an aircraft, which is the catch.
+- **Specificity = TN / (TN + FP) = 1 − FPR = the share of real zeros correctly left alone.** Its complement, the **false positive rate**, is the **false alarm rate**: of the cases that really are zeros, what share does the model wrongly call ones? A radar with low specificity is constantly scrambling fighters to meet flocks of geese.
+
+The tension between them is the point. You can always get the detection rate to 1 by lowering $\tau$ to zero, and you can always get the false alarm rate to 0 by raising $\tau$ to one. Neither is a detector. What you want to know is how good the trade off between the two is — how much detection you buy per unit of false alarm — and the shape of the ROC curve is the answer.
+
+We plot the false alarm rate on the horizontal axis and the detection rate on the vertical, and we build the curves by hand from the `pROC` objects so the coordinates are visible:
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-roc-shapes
+#| fig-height: 5
+
+set.seed(20260907)   # chunk-level seed: this chunk simulates
+
+# pull (false alarm rate, detection rate) pairs out of a pROC object
+roc_df <- function(r, label) {
+  tibble(model = label,
+         fpr = 1 - r$specificities,   # false alarm rate
+         tpr = r$sensitivities)       # detection rate
+}
+
+# four detectors of increasing quality on the same simulated outcome
+n  <- 4000
+y  <- rbinom(n, 1, 0.5)
+mk <- function(d) plogis(rnorm(n, mean = d * y, sd = 1) - d / 2)
+
+scores <- list("no better than chance" = mk(0),
+               "good"                  = mk(0.75),
+               "better"                = mk(2),
+               "perfect"               = ifelse(y == 1, 0.999, 0.001))
+
+rocs    <- imap(scores, ~ roc(y, .x, quiet = TRUE))
+labels  <- imap_chr(rocs, ~ sprintf("%s (AUC = %.2f)", .y, auc(.x)))
+curves  <- imap_dfr(rocs, ~ roc_df(.x, labels[[.y]])) %>%
+  mutate(model = factor(model, levels = labels))   # keep worst-to-best order, not alphabetical
+
+# three thresholds marked on the "good" curve: each tau is one point on the curve
+marks <- map_dfr(c(0.8, 0.5, 0.2), function(tau) {
+  yhat <- as.integer(scores[["good"]] >= tau)
+  tibble(tau = tau,
+         fpr = mean(yhat[y == 0] == 1),
+         tpr = mean(yhat[y == 1] == 1))
+})
+
+ggplot(curves, aes(fpr, tpr, color = model)) +
+  geom_abline(intercept = 0, slope = 1, color = "grey60", linetype = "dashed") +
+  geom_path(linewidth = 0.8) +
+  geom_point(data = marks, aes(fpr, tpr), inherit.aes = FALSE,
+             size = 2.6, color = "grey15") +
+  geom_text(data = marks, aes(fpr, tpr, label = paste0("tau = ", tau)),
+            inherit.aes = FALSE, hjust = -0.25, vjust = -1.1,
+            size = 3.0, color = "grey15") +
+  scale_color_manual(values = setNames(c("#BDBEBD", "#A7DA92", "#6CC24A", "#005A43"),
+                                       labels)) +
+  coord_equal(xlim = c(0, 1.08), ylim = c(0, 1.06)) +
+  labs(title = "What ROC curves look like, and what a point on one means",
+       subtitle = "Dots mark three thresholds on the 'good' curve. Lowering tau moves you up and to the right.",
+       x = "False alarm rate (FPR = 1 - specificity)",
+       y = "Detection rate (TPR = sensitivity)",
+       color = NULL) +
+  theme_minimal()
+```
+
+Take a look at the marked points on the middle curve first, because they illustrate the main idea. At $\tau = 0.8$ the model is cautious: it raises almost no false alarms (FPR of 0.03) but detects only 15% of the real ones. Drop to $\tau = 0.5$ and detection jumps to 64%, at the cost of a 35% false alarm rate. Drop again to $\tau = 0.2$ and you detect 97% of the ones — while falsely flagging 84% of the zeros. **Same model, same coefficients, same fitted probabilities; three completely different classifiers.** Sliding $\tau$ from 1 down to 0 traces out the whole curve, from the bottom-left corner to the top-right.
+
+That is why the curve, rather than any single point on it, is the summary of the model. Once you see it this way the rest reads off directly:
+
+- The **dashed 45° line** is a detector with no information: to detect 60% of the ones it must falsely flag 60% of the zeros. Any useful model lies above it.
+- The **top-left corner** is a perfect classifier — everything detected, nothing falsely flagged — so curves that bow harder toward the upper left are better.
+- The **area under the curve (AUC)** summarizes that bowing in one number. It has a clean interpretation with no threshold in it at all: **AUC is the probability that a randomly chosen $y = 1$ case gets a higher $\widehat{\pi}$ than a randomly chosen $y = 0$ case.** It asks whether the model ranks the ones above the zeros, which is a different and more forgiving question than whether it classifies them correctly.
+- AUC of 0.5 is chance, 1 is perfect, and 0.7–0.8 is typical for political-science models.
+
+Now the two running examples:
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-roc-dp
+
+roc_dp    <- roc(dp$dispute, p_hat,   quiet = TRUE)
+roc_nafta <- roc(nafta$vote, p_nafta, quiet = TRUE)
+
+bind_rows(roc_df(roc_nafta, sprintf("NAFTA vote (AUC = %.3f)", auc(roc_nafta))),
+          roc_df(roc_dp,    sprintf("Democratic peace (AUC = %.3f)", auc(roc_dp)))) %>%
+  ggplot(aes(fpr, tpr, color = model)) +
+  geom_abline(intercept = 0, slope = 1, color = "grey60", linetype = "dashed") +
+  geom_path(linewidth = 0.8) +
+  scale_color_manual(values = setNames(
+    c("#005A43", "#6CC24A"),
+    c(sprintf("NAFTA vote (AUC = %.3f)", auc(roc_nafta)),
+      sprintf("Democratic peace (AUC = %.3f)", auc(roc_dp))))) +
+  coord_equal() +
+  labs(title = "ROC curves, both running examples",
+       x = "False alarm rate (FPR = 1 - specificity)",
+       y = "Detection rate (TPR = sensitivity)",
+       color = NULL) +
+  theme_minimal()
+```
+
+And here is the payoff of the threshold-free view. At $\tau = 0.5$ the democratic peace model looked worthless: PRE — the proportional reduction of error against a null model that always guesses the modal category — was essentially zero, and not a single case was classified as a dispute. Its AUC is 0.755, comfortably better than chance and squarely in the normal range for our field. The NAFTA model does better at 0.843, but the gap between the two is nothing like the gap their confusion matrices suggested. Almost all of that apparent difference was the threshold, not the model. **This is the reason we report AUC rather than percent correctly predicted.** It's the difference between evaluating the model at all thresholds versus a single threshold.
+
+## Comparing models via ROC
+
+A useful diagnostic: plot two nested models on the same ROC plane and ask whether the bigger model meaningfully improves discrimination.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-roc-compare
+
+dpm_full   <- glm(dispute ~ border + deml + lncaprat + ally,
+                  family = binomial, data = dp)
+dpm_noborder <- glm(dispute ~ deml + lncaprat + ally,
+                    family = binomial, data = dp)
+
+roc_full   <- roc(dp$dispute, predict(dpm_full,   type = "response"), quiet = TRUE)
+roc_nb     <- roc(dp$dispute, predict(dpm_noborder, type = "response"), quiet = TRUE)
+
+bind_rows(roc_df(roc_full, sprintf("with border (AUC = %.3f)",  auc(roc_full))),
+          roc_df(roc_nb,   sprintf("no border (AUC = %.3f)",    auc(roc_nb)))) %>%
+  ggplot(aes(fpr, tpr, color = model)) +
+  geom_abline(intercept = 0, slope = 1, color = "grey60", linetype = "dashed") +
+  geom_path(linewidth = 0.8) +
+  scale_color_manual(values = setNames(
+    c("#005A43", "#6CC24A"),
+    c(sprintf("with border (AUC = %.3f)", auc(roc_full)),
+      sprintf("no border (AUC = %.3f)",   auc(roc_nb))))) +
+  coord_equal() +
+  labs(title = "Democratic peace, with and without shared border",
+       x = "False alarm rate (FPR = 1 - specificity)",
+       y = "Detection rate (TPR = sensitivity)",
+       color = NULL) +
+  theme_minimal()
+```
+
+The two curves track each other closely. Border adds a small but visible bump in the low-false-alarm region, which is exactly where you want discrimination: cases the model is willing to call disputes that actually are disputes.
+
+Is that bump more than noise? DeLong's test asks precisely that. Its **null hypothesis is that the two AUCs are equal**. The word "correlated" in the output matters: both curves come from the *same* observations and the same observed $y$, so the two AUC estimates are not independent draws and an ordinary two-sample comparison would be wrong. DeLong's test uses the covariance between them.
+
+```{r roc-test}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+roc.test(roc_full, roc_nb, method = "delong")
+```
+
+Read the result carefully, because it is a good example of a distinction this course keeps making. $Z = 7.53$ with $p \approx 5\times10^{-14}$: the AUC difference is about as far from zero as a difference gets, so we reject the null flatly. Border improves discrimination. **But look at the confidence interval on the difference: 0.022 to 0.038.** The improvement is somewhere between two and four AUC points, on a scale where 0.5 is a coin flip. With $N \approx 21{,}000$ we can detect a tiny improvement with enormous confidence, and the test tells us the improvement is real without telling us it is important.
+
+So the test answers "is this distinguishable from zero?" and the interval answers "how big is it?" — and only the second question is the one a reader cares about. Report the interval. We will see the same pattern again in the information criteria below, where AIC and BIC both prefer the model with border by a margin that looks decisive while the AUC barely moves.
+
+
+# Separation
+
+The most common way a binary-response model breaks is **separation**: when a covariate (or a linear combination of covariates) perfectly distinguishes the ones from the zeros.
+
+Conceptually, separation means the data are too informative for the likelihood. We've talked about the importance of information in MLE models so we have a sharp likelihood function, but in some cases the data are too informative in the sense that $x$ perfectly predicts $y$. This leads the MLE to push the linear predictor $x\widehat{\beta}$ all the way to $+\infty$ (or $-\infty$) for the cases that determine the split. The likelihood has no interior maximum — it climbs as $|\widehat{\beta}|$ grows without bound — so the optimizer either stops at a wildly large estimate with a huge standard error, or fails to converge at all. This is the flat-likelihood pathology from the [likelihood notes](likelihood26.html): a surface with no curvature in one direction, so there is no top to climb to, and the maximizer never settles — the failure we flagged in the [maximization notes](llfmax26.html). Let's look at how to detect it and fix it.
+
+## Two types of separation, two sets of symptoms
+
+The distinction matters because the two look completely different when you run them, and only one of them announces itself.
+
+- **Complete separation.** Some linear combination of $X$ partitions the sample into ones and zeros perfectly, with room to spare on both sides. No coefficient in the model is pinned down.
+- **Quasi-complete separation.** The split is perfect but *tight* — equality holds for at least some observations. The usual source is a single binary covariate with an **empty cell**. Typically only that one coefficient runs off to infinity and the rest of the model estimates normally.
+
+An empty cell means exactly what it says, and it is worth being concrete because the phrase can sound like missing data. It is not. Cross-tabulate the covariate against $y$ and count what lands in each of the four cells; one of them contains **zero observations**. The cases are all there and nothing is missing — it is just that this value of $x$ never occurs alongside that value of $y$:
+
+| | $y = 0$ | $y = 1$ |
+|---|---:|---:|
+| $x = 0$ | 19,983 | 947 |
+| $x = 1$ | 60 | **0** |
+
+All 60 observations with $x = 1$ are zeros. Tell me $x = 1$ and I know $y$ with certainty, which is more than any finite coefficient can deliver: to drive $Pr(y = 1 \mid x = 1)$ to zero the logit needs $\widehat{\beta}_x = -\infty$. That table is not hypothetical — we build it from these data in a moment.
+
+| | complete | quasi-complete |
+|---|---|---|
+| convergence | **fails** — `algorithm did not converge`, hits the 25-iteration cap | **reports success**, normal iteration count |
+| warnings | `fitted probabilities numerically 0 or 1 occurred` | **often none at all** |
+| coefficients | everything enormous and unstable | one enormous coefficient; the rest look fine |
+| how it reads | obviously broken | a clean model with one insignificant variable |
+
+That last row is the problem. Complete separation is loud and you cannot miss it. Quasi-complete separation is quiet, and it misleads while it is quiet: an enormous coefficient divided by an even more enormous standard error gives $z \approx 0$ and $p \approx 0.95$, so the offending variable looks like a *precisely estimated null*. It is the opposite. The data are saying the effect is unbounded and the software is reporting it as nothing.
+
+## The case you're likely to encounter
+
+Textbook separation is complete separation. What you meet in dyadic conflict data is quasi-complete, and it usually arrives as a handful of cases — twenty, sixty, a couple hundred — where a covariate perfectly predicts $y$, sitting inside a sample of twenty thousand. Let's build exactly that: a dummy flagging 60 dyad-years, none of which had a dispute. That "flag" dummy will perfectly predict $y=0$. 
+
+```{r quasi-quiet}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+set.seed(20260907)   # chunk-level seed: this chunk uses sample()
+
+dp_flag <- dp %>% mutate(flag = 0L)
+dp_flag$flag[sample(which(dp_flag$dispute == 0), 60)] <- 1L
+
+table(dp_flag$flag, dp_flag$dispute, dnn = c("flag", "dispute"))
+
+m_flag <- glm(dispute ~ border + deml + lncaprat + ally + flag,
+              family = binomial(link = "logit"), data = dp_flag)
+
+tibble(`N used` = nobs(m_flag), `converged?` = m_flag$converged,
+       iterations = m_flag$iter) %>%
+  knitr::kable(caption = "What glm reports about the fit.")
+
+tidy(m_flag) %>%
+  knitr::kable(digits = 3, caption = "The separated term is the `flag` row.")
+```
+
+The cell `flag = 1, dispute = 1` is empty, so `flag` perfectly predicts a zero. Now read what `glm()` says about it. It reports **converged = TRUE** on the full 20,990 observations in an ordinary number of iterations, and **prints no warning** — not "did not converge," not "fitted probabilities numerically 0 or 1." Every other coefficient is unchanged to three decimals. The `flag` row reads: coefficient about $-12$, standard error about 180, $p \approx 0.94$.
+
+A reader — or a journal referee, or you at 2am — reads that row as "flag doesn't matter." But what it really says is that the MLE for that coefficient is $-\infty$ and the optimizer stopped on the way there because the deviance stopped changing. There is no information in the data about how negative it is, so the standard error is arbitrary and the $p$-value is meaningless rather than large.
+
+::: {.callout-note title="Important Concept"}
+**The reliable signature of quasi-complete separation is the coefficient and its standard error, not a warning message.** Look for $|\widehat{\beta}|$ above roughly 10 with a standard error one to three orders of magnitude larger. On the probability scale $|x\beta| = 10$ is already $\widehat{\pi} < 0.0001$; no substantive story in political science needs a logit coefficient of $-12$. When you see one, you are looking at an empty cell, not an effect.
+:::
+
+::: {.callout-warning title="R and Stata fail differently here"}
+Stata's `logit` **drops** the perfectly-predicted observations and the offending variable, and says so: *"flag != 0 predicts failure perfectly; flag dropped and 60 obs not used."* R's `glm()` does neither — it keeps every observation and reports a finite, enormous coefficient. Stata is loud and silently changes your estimation sample; R keeps the sample and silently reports nonsense. If you are moving a model between them, **check $N$**: a Stata fit that dropped 60 observations is not on the same sample as the R fit beside it, so their log-likelihoods, AICs, and LR tests are not comparable.
+:::
+
+## Fixed effects as a major source of separation
+
+Separation matters most where it arrives through an instinct every one of you has been trained to have: *add fixed effects.*
+
+Think about what a unit fixed effect does in a binary model. It is a dummy for each panel. If a panel never experiences the event — a dyad that never has a dispute, a country that never has a coup — then that dummy perfectly predicts $y = 0$ within the panel. That is quasi-complete separation, by construction, once per quiet panel. And in event data many panels are quiet in the sense that the panel never fails ($y$ never equals one).
+
+```{r fe-separation}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+dp %>%
+  group_by(dyad) %>%
+  summarise(n = n(), events = sum(dispute), .groups = "drop") %>%
+  summarise(dyads                     = n(),
+            `dyads with no dispute`   = sum(events == 0),
+            `dyads with variation`    = sum(events > 0 & events < n),
+            `obs in no-dispute dyads` = sum(n[events == 0])) %>%
+  knitr::kable(caption = "Dyad fixed effects would separate most of this sample.")
+```
+
+621 of 827 dyads never experience a dispute in this window, and they hold **15,412 of 20,990 dyad-years — 73% of the data**. Add dyad fixed effects and you have created 621 separated parameters at once.
+
+What happens next depends on what you typed, and none of the options is comfortable.
+
+```{r fe-consequences}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# fixest drops the separated panels and reports doing so
+fe_fixest <- feglm(dispute ~ deml + lncaprat + ally | dyad,
+                   family = binomial, data = dp)
+
+pooled <- glm(dispute ~ deml + lncaprat + ally,
+              family = binomial(link = "logit"), data = dp)
+
+fmt <- function(b, n) c(sprintf("%.3f", b), format(n, big.mark = ","))
+
+tibble(term      = c("deml", "lncaprat", "ally", "observations used"),
+       pooled    = fmt(coef(pooled)[c("deml", "lncaprat", "ally")],    nobs(pooled)),
+       `dyad FE` = fmt(coef(fe_fixest)[c("deml", "lncaprat", "ally")], fe_fixest$nobs)) %>%
+  knitr::kable(caption = "Pooled logit vs. dyad fixed effects. Note the signs, and the N.")
+```
+
+Two things to take away, and the second is worse than the first.
+
+**The sample quietly collapses.** `fixest::feglm()` prints a note that 625 fixed effects and 15,446 observations were removed, and estimates on the 5,544 that remain — about a quarter of the data. `survival::clogit()` reaches the same place by a different route: its conditional likelihood conditions on the number of events within each panel, so panels with no variation contribute nothing and fall out. **Plain `glm()` with dyad dummies does neither.** It keeps all 20,990 rows, reports `converged = TRUE`, prints no warning, and hands back 621 dummy coefficients below $-10$ (the smallest is $-21.9$). 
+
+These are all equally problematic though for different reasons. The models that don't drop the separated cases will report nonsense estimates. The models that do drop the separated cases are now estimated in a *very* non-random sample. 
+
+**And the substantive answer reverses.** Look at the table: `deml` goes from $-0.070$ pooled to $+0.048$ with fixed effects, and `lncaprat` from $-0.227$ to $+0.245$. The democratic peace finding changes sign. Some of that is a real change of estimand — fixed effects ask a within-dyad question, answerable only among the 202 dyads that ever fight, which is not the population anyone means when they talk about the democratic peace. Some of it is the incidental-parameters problem, which biases fixed-effects logit in short panels. Untangling those two is a paper, not a lecture. The point for now is narrower: **you typed one term, three-quarters of your data left, and your headline coefficient flipped sign — and depending on which function you used, nothing on your screen said so.**
+
+::: {.callout-warning title="There is no within transformation here"}
+A natural thought: doesn't the fixed effect get swept out by de-meaning, the way it does in OLS? **No.** The within transformation is a linear-model device; subtracting panel means from $y$ and $X$ does not remove the fixed effect from a logit, because the link is nonlinear. That is exactly why conditional logit exists — conditioning on the panel's event count is the *substitute* for a within transformation — and why the incidental-parameters problem is a problem at all. If de-meaning worked, none of this would come up.
+:::
+
+So: fixed effects in a binary-response model are not a free robustness check. Before you add them, cross-tabulate the panel identifier against $y$ and find out how many panels are constant. If most are, you are not adding a control — you are choosing a different, much smaller sample and a different question.
+
+## Detecting separation in practice
+
+Three checks before you trust a binary-response model. 
+
+1. **Cross-tab every binary and low-cardinality covariate against $y$.** *Low cardinality* just means the variable takes few distinct values — a dummy, a four-category region code, a panel identifier — as opposed to a continuous variable like the capability ratio that takes a different value in almost every row. Those are the ones you can cross-tabulate, and an empty cell is separation. This is the check that works, and the one people skip.
+2. **Scan the coefficient column for anything above about 10 in absolute value**, then look at its standard error. Huge estimate over a huger standard error is the signature; a $p$-value near 1 on such a term is a symptom, not a finding.
+3. **Ask directly.** `detectseparation::detect_separation()` solves a linear program that answers the question exactly rather than by eye — and tells you *which* coefficients are infinite and in which direction.
+
+```{r detect-separation}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# fit with method = "detect_separation" instead of the usual IRLS: no estimates,
+# just a verdict on whether each MLE is finite
+glm(dispute ~ border + deml + lncaprat + ally,
+    family = binomial(link = "logit"), data = dp,
+    method = "detect_separation")
+
+glm(dispute ~ border + deml + lncaprat + ally + flag,
+    family = binomial(link = "logit"), data = dp_flag,
+    method = "detect_separation")
+```
+
+The baseline model comes back `Separation: FALSE` with every coefficient marked `0`, meaning finite. The model with `flag` comes back `Separation: TRUE`, and `flag` is marked `-Inf` while everything else stays finite — which is the precise statement that the other coefficients are fine and this one does not exist. Compare that to what `glm()` told us a moment ago, which was nothing. If you take one practical habit from this section, take this one: when a binary-response model surprises you, run it through `detect_separation()` before you try to interpret it.
+
+## Remedies
+
+Once you have found separation, the fix depends on what the variable is doing in the model.
+
+- **Drop the offending variable**, if it shouldn't be there — mechanically related to $y$, or an uninformative artifact of your sample.
+- **Combine or recode categories** so the empty cell goes away.
+- **Penalized likelihood (Firth).** Adds a Jeffreys-prior-like penalty that pulls estimates toward zero. `logistf::logistf()`. Slightly biased toward zero but always finite, and inference works.
+- **Bayesian estimation with a weakly informative prior** — $N(0, 2.5^2)$ on $\beta$ makes the posterior proper. `arm::bayesglm()`, `rstanarm::stan_glm()`, `brms::brm()`.
+
+Firth is the usual first move for political-science data. Run it on the separated model from above:
+
+```{r firth-fit}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+m_firth <- logistf(dispute ~ border + deml + lncaprat + ally + flag, data = dp_flag)
+
+# logistf returns PROFILE penalized-likelihood CIs (ci.lower/ci.upper) -- the right
+# interval under the penalty, since the Wald SE is untrustworthy on a separated term
+tibble(term      = names(coef(m_firth)),
+       glm_est   = unname(coef(m_flag)),
+       glm_se    = unname(sqrt(diag(vcov(m_flag)))),
+       firth_est = unname(coef(m_firth)),
+       firth_lo  = unname(m_firth$ci.lower),
+       firth_hi  = unname(m_firth$ci.upper)) %>%
+  knitr::kable(digits = 3,
+               caption = "Ordinary glm vs. Firth, with Firth's profile-likelihood 95% CIs.")
+```
+
+The Firth estimate on `flag` is large but finite, and the other coefficients barely move — the penalty concentrates where the data are pathological. Read the inference off the **profile-likelihood interval**, not the Wald standard error: on a separated term the sampling distribution is nowhere near normal, so the Wald interval is misleading while the profile interval is finite and honest.
+
+One caution you'll have seen in @rainey2016separation. A separated coefficient carries no information from the data, so whatever finite number a remedy reports is coming from the penalty or the prior. Firth's penalty is one choice and a $N(0, 2.5^2)$ prior is another; they need not agree, and the substantive quantity of interest can move a lot depending on which you pick.
+
+
+# Rare events
+
+Rare-events are common^[see what I did there?] in political science: coups, wars, disputes, regime collapses, presidential vetoes. The democratic peace data are canonical — dispute occurs in roughly 4.5% of dyad-years. @kingzengexplain established two facts about MLE for binary-response models on rare-event data.
+
+First, the MLE is biased when the base rate is far from 0.5. The bias falls primarily on the intercept, and pushes the model toward underestimating $Pr(y=1)$. Intuitively: the likelihood is dominated by the (many) zero observations, and the optimizer concentrates on getting those right at the expense of the (few) one observations.
+
+Second, the bias is asymptotically zero but can be substantial in finite samples — especially when the number of *events* is modest, even if the total sample size is large. With 100,000 observations and only 50 events, you have 50 events' worth of information for estimating $Pr(y=1)$ at the high end of the linear predictor, and that's not a lot.
+
+The fix has two parts.
+
+**Sampling.** King & Zeng's rare-events logit allows the researcher to deliberately over-sample positives — keep all the ones, draw a random sample of the zeros (usually 2–5× the number of ones) — then correct the estimates for the choice-based sampling. This is what makes data collection feasible on problems that would otherwise require chasing zeros forever.
+
+**Bias correction.** A small-sample correction to the intercept (and, less importantly, the slopes), derivable from a prior-correction argument. The correction is implemented in `Zelig::relogit()` (deprecated but still works) and — more cleanly — by the Firth penalized likelihood we already used for separation [@firth1993]. The same penalty that prevents the likelihood from running off to infinity also corrects the rare-events bias in finite samples.
+
+That claim has a literature behind it worth knowing, because the case for Firth on rare events is stronger than @kingzengexplain alone. @zorn2005solution brought penalized likelihood into political science as the fix for separation; @rainey2016separation and @raineymccaskey2021 worked out when it helps and what it costs in small samples; @puhr2017 evaluate it specifically on rare-event data. Most directly relevant to us, @cookhaysfranzese use penalized likelihood to get finite estimates for fixed effects on units that never experience the event — exactly the separation machine from the previous section, with a remedy attached.
+
+There is a real dissent, and it matters. @beisermcgrath2020 shows that when $N$ is large and *both* the outcome and the separating covariate are rare, Firth's penalty can return a statistically significant estimate **pointing the opposite direction from the separation**, which is worse than no estimate at all. His recommendation is a weakly informative prior centered at zero — the Cauchy of @gelman2008weakly — rather than the Jeffreys penalty. So "use Firth" is a good default, not a rule.
+
+## Compare on the democratic peace data
+
+```{r rare-events}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+fit_firth_full <- logistf(dispute ~ border + deml + lncaprat + ally, data = dp)
+
+tibble(
+  term       = names(coef(fit_logit)),
+  logit_est  = unname(coef(fit_logit)),
+  logit_se   = unname(sqrt(diag(vcov(fit_logit)))),
+  firth_est  = unname(coef(fit_firth_full)),
+  firth_se   = unname(sqrt(diag(vcov(fit_firth_full))))
+) %>%
+  knitr::kable(digits = 3,
+               caption = "Plain logit vs. Firth-penalized logit on the full democratic peace data.")
+```
+
+With $N \approx 20{,}000$ and roughly 900 events, the Firth correction barely moves anything. This is the virtue of living in asymptopia. The exercise matters more for a researcher working on $N = 500$ with 20 events — there, the Firth estimates can shift meaningfully relative to plain logit.
+
+::: {.callout-note title="Important Concept"}
+Firth's penalty does double duty: it solves separation (preventing infinite estimates) and rare-events bias (correcting finite-sample intercept bias) in one move. For binary-response work on small-to-medium-N political-science data, "fit it with `logistf` first and check whether anything changes" is a reasonable default workflow.
+:::
+
+## Precision and recall
+
+One more tool belongs here, because it exists for exactly this situation. ROC and AUC can flatter a model badly when one class is abundant, and the reason is entirely in the denominators.
+
+Go back to the confusion matrix. **Recall** is the true positive rate under another name — $TP/(TP+FN)$, the share of real disputes the model catches, which is the ROC's vertical axis. **Precision** is a quantity the ROC never shows you at all: $TP/(TP+FP)$, the share of the cases you *flagged* that turned out to be real.
+
+Why the difference matters: at $\tau = 0.1$ this model flags 1,987 dyad-years, of which 287 are disputes and 1,700 are false alarms. Divide those 1,700 false alarms by the 20,043 true zeros and you get an FPR of 0.085 — under 9%, and the ROC curve looks healthy. Divide the same 1,700 by the 1,987 cases you actually flagged and precision is 0.144 — about six false alarms for every dispute you catch. Same model, same threshold, same errors. The ROC is dividing by a number that is large *precisely because* $y$ is rare.
+
+Put it the other way and the rule is easy to remember: **precision and recall never use $TN$; the ROC does.** When 95% of your data sits in that one cell, that is the whole difference.
+
+The **precision-recall curve** sweeps $\tau$ exactly the way the ROC does, and plots precision against recall. **AUC-PR** is the area under it. It also goes by *average precision*, and that name is literal — walk down the cases sorted by $\widehat{\pi}$, note the precision each time you hit a real dispute, and average those numbers.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-pr
+#| fig-height: 5
+
+# sort by predicted probability, then accumulate: precision and recall at every
+# possible threshold are just running totals down the sorted list
+ord  <- order(p_hat, decreasing = TRUE)
+ysrt <- dp$dispute[ord]
+tp   <- cumsum(ysrt)
+
+pr_df <- tibble(precision = tp / seq_along(ysrt),
+                recall    = tp / sum(ysrt),
+                tau       = p_hat[ord])
+
+# average precision: precision weighted by the gain in recall at each step
+auc_pr    <- sum(diff(c(0, pr_df$recall)) * pr_df$precision)
+base_rate <- mean(dp$dispute)
+
+# the (recall, precision) pair at three specific thresholds
+pr_marks <- map_dfr(c(0.2, 0.1, 0.05), function(tt) {
+  yh <- as.integer(p_hat >= tt)
+  tibble(tau       = tt,
+         recall    = sum(yh == 1 & dp$dispute == 1) / sum(dp$dispute == 1),
+         precision = sum(yh == 1 & dp$dispute == 1) / max(sum(yh == 1), 1))
+})
+
+ggplot(pr_df, aes(recall, precision)) +
+  geom_hline(yintercept = base_rate, linetype = "dashed", color = "grey40") +
+  annotate("text", x = 0.60, y = base_rate + 0.02, hjust = 0, size = 3.1,
+           color = "grey15", label = "chance = the base rate, 0.045") +
+  geom_path(color = "#005A43", linewidth = 0.8) +
+  geom_point(data = pr_marks, size = 2.6, color = "grey15") +
+  geom_text(data = pr_marks, aes(label = paste0("tau = ", tau)),
+            hjust = -0.2, vjust = -0.8, size = 3.0, color = "grey15") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 0.5)) +
+  labs(title = "Precision-recall curve, democratic peace logit",
+       subtitle = sprintf("AUC-PR = %.3f, against a chance baseline of %.3f",
+                          auc_pr, base_rate),
+       x = "Recall (= TPR = sensitivity): share of real disputes caught",
+       y = "Precision: share of flagged cases that were real") +
+  theme_minimal()
+```
+
+Two things to know before reading it. **Chance is not 0.5.** A coin flip achieves precision equal to the base rate at every level of recall, so the chance line here sits at 0.045 and an AUC-PR has to be judged against the base rate rather than against a fixed reference. And **the curve always ends at (1, base rate)**: set $\tau = 0$, flag every case, and precision is by definition the share of ones in the data.
+
+This model's AUC-PR is 0.116 against a chance baseline of 0.045 — about two and a half times better than guessing, and a very different-looking number from the AUC of 0.755. Both are correct, and they answer different questions. AUC asks whether the model ranks disputes above non-disputes, and it does that respectably. AUC-PR asks how clean a set of flagged cases you could assemble, and the answer is: not very clean at all.
+
+Which one you should care about depends on whether anyone is going to act on the flags. For conflict forecasting — the literature that brought this machinery into political science [@ward2010pvalue] — precision is the operative quantity, because a watchlist that is 86% false alarms is expensive to act on. For the coefficient-and-marginal-effect work most of us do, neither curve is really the estimand. The practical reason to know what AUC-PR is comes up when you are reading someone else's paper: **when a rare-events model reports an impressive AUC, remember how much of that number the abundant zeros are paying for.**
+
+
+# Model fit
+
+We've established that the model classifies passably, that it isn't broken by separation, and that the rare-events bias is small here. The remaining question is comparative: how does it compare to alternative specifications?
+
+## The trinity of tests
+
+For nested models — where the constrained model's regressors are a strict subset of the unconstrained model's, on the same sample — there are three asymptotically equivalent tests.
+
+They are three readings of the same likelihood geometry we built in the [likelihood notes](likelihood26.html): the LLR compares the *height* of the log-likelihood at two points; the Wald measures the distance of $\widehat\beta_1$ from $\beta_0$ scaled by the *curvature* at the maximum (the information, $(-H)^{-1}$); and the LM reads the *slope* — the score — at the constrained estimate. Height, curvature, slope: the same three objects from the machine, measured three ways.
+
+### Log-likelihood ratio (LLR)
+
+Estimate the constrained model $M_0$ and the unconstrained model $M_1$. Compare the heights of their log-likelihoods:
+
+$$
+\chi^2_{\text{LLR}} = -2\left[\ln\mathcal{L}(M_0) - \ln\mathcal{L}(M_1)\right]
+$$
+
+distributed $\chi^2$ with $k_1 - k_0$ degrees of freedom under $H_0: M_0$. Simple to compute, requires fitting both models.
+
+### Wald
+
+Compute the distance between the unconstrained estimate $\widehat{\beta}_1$ and the constrained value $\beta_0$, weighted by the curvature of the log-likelihood at $\widehat{\beta}_1$ (the inverse information matrix). Requires only the unconstrained model. Tests whether $\widehat{\beta}_1$ is "far enough" from $\beta_0$ relative to its sampling variability.
+
+### Lagrange multiplier (LM, score)
+
+Evaluate the score of the unconstrained log-likelihood at the constrained estimate $\beta_0$. If the score is far from zero, the constrained model is leaving information on the table. Requires only the constrained model — useful when the unconstrained model is expensive to fit.
+
+In practice, LLR is the most common in political science, Wald is what software usually defaults to when reporting per-coefficient $z$-tests, and LM is rare.
+
+### Compare the democratic peace models
+
+The LLR test is worth doing by hand once, because there is almost nothing to it. Both models are already fit, so the whole test is two log-likelihoods, a subtraction, and one lookup in a $\chi^2$ table.
+
+```{r llr-by-hand}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+ll0 <- logLik(dpm_noborder)   # constrained model: border excluded
+ll1 <- logLik(dpm_full)       # unconstrained model: border included
+
+llr <- -2 * (as.numeric(ll0) - as.numeric(ll1))
+df  <- attr(ll1, "df") - attr(ll0, "df")   # difference in number of estimated parameters
+pv  <- pchisq(llr, df = df, lower.tail = FALSE)   # upper tail: chi-squared is one-sided
+
+tibble(`ln L, no border`   = sprintf("%.3f", as.numeric(ll0)),
+       `ln L, with border` = sprintf("%.3f", as.numeric(ll1)),
+       `chi-squared`       = sprintf("%.2f", llr),
+       df                  = df,
+       `p-value`           = format(pv, digits = 3, scientific = TRUE)) %>%
+  knitr::kable(caption = "LR test computed by hand: does adding shared border improve fit?")
+
+# the same test from the packaged functions:
+# anova(dpm_noborder, dpm_full, test = "LRT")
+# lmtest::lrtest(dpm_noborder, dpm_full)
+```
+
+Four lines of arithmetic. `logLik()` pulls the maximized log-likelihood off each fitted model — the height of the hill at its summit, the quantity we examined in the [maximization notes](llfmax26.html) — and the `df` attribute carries the number of parameters that got it there, so the degrees of freedom are just the difference. The one-sided `pchisq()` call is the whole test.
+
+In your own work use the packaged version — commented out above — because `anova()` and `lmtest::lrtest()` also check that the models are genuinely nested and fit on the same rows, which is the mistake that actually bites people. But it's worth understanding how simple this is to compute (by hand).
+
+The $\chi^2$ of 144.8 on 1 degree of freedom gives a $p$-value of about $2\times10^{-33}$ — border meaningfully improves fit, even though the ROC bump was small. That divergence is informative: the LLR test cares about likelihood gain, which a few high-leverage observations can drive; the AUC cares about ranking across the full sample. Both are valid; they answer different questions.
+
+## Information criteria
+
+When models are non-nested, the trinity doesn't apply. The information criteria do — they trade the maximized log-likelihood (the same quantity we recovered off the fitted model in the [maximization notes](llfmax26.html)) against a penalty for the number of parameters $k$.
+
+$$
+\text{AIC} = -2\ln\mathcal{L} + 2k
+$$
+
+$$
+\text{BIC} = -2\ln\mathcal{L} + \ln(N)\, k
+$$
+
+Lower is better. AIC has a fixed penalty per parameter; BIC's penalty scales with sample size, so it pushes harder against complexity in large samples.
+
+@raftery1995bayesian gives a rule of thumb for interpreting $|\Delta\text{BIC}|$:
+
+- 0–2: weak evidence
+- 2–6: positive
+- 6–10: strong
+- $> 10$: very strong
+
+```{r ic-compare}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+tibble(
+  model = c("no border", "with border"),
+  loglik = c(logLik(dpm_noborder), logLik(dpm_full)),
+  AIC    = c(AIC(dpm_noborder),    AIC(dpm_full)),
+  BIC    = c(BIC(dpm_noborder),    BIC(dpm_full))
+) %>%
+  mutate(dAIC = AIC - min(AIC),
+         dBIC = BIC - min(BIC)) %>%
+  knitr::kable(digits = 2,
+               caption = "AIC/BIC comparison, democratic peace with and without border.")
+```
+
+Both AIC and BIC prefer the larger model. The BIC gap is well past Raftery's "very strong" threshold, so the verdict is unambiguous despite the modest AUC improvement.
+
+
+# Notes
+
+A few things worth keeping in mind:
+
+  - The trinity tests and the information criteria measure different things than the classification metrics. A model can win on LLR or AIC and barely move the AUC, as we just saw. That's not a contradiction — likelihood improvements and discrimination improvements are aligned on average but can diverge in any single dataset.
+
+  - Separation is the single most common reason a binary-response model "doesn't converge" or returns nonsense estimates — and the quiet version, which converges cleanly and warns about nothing, is more common still. Learn to cross-tabulate before you estimate, to read the coefficient column for anything absurd, and to look at `detect_separation()` rather than waiting for `glm()` to complain. Be very cautious about using fixed effects in panel event data, where many panels are constant and separation is created wholesale.
+
+  - ROC/AUC is the discrimination metric of choice when $y$ variables are balanced. With rare events, precision and the PR curve are the more informative pair, because they never divide by the abundant true negatives — see the rare-events section. AUC on imbalanced data is the number most likely to mislead.
+
+  - Symmetric vs. asymmetric link functions usually don't change inferences about the cases in the sample. They can change *out-of-sample* predictions meaningfully, especially in the tails of the covariate distribution — so the choice of link matters more for prediction than for descriptive inference.
+
+  - @kingzengexplain is the main political-science reference for rare events, and their statistical model correcting for rareness is in `Zelig::relogit()` and, in a cleaner form, in `logistf::logistf()`. For most practical purposes Firth is the right first move: it handles separation and rare-events bias in one step. The exception to know about is @beisermcgrath2020 — with a large $N$ and a rare separating covariate, the penalty can produce a significant estimate in the wrong direction, and a weakly informative prior is the safer choice.
