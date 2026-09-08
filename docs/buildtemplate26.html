@@ -4261,7 +4261,7 @@ window.Quarto = {
   <li><a href="#the-two-sides-of-each-test" id="toc-the-two-sides-of-each-test" class="nav-link" data-scroll-target="#the-two-sides-of-each-test">The two sides of each test</a></li>
   </ul></li>
   <li><a href="#step-7-build-the-maximizer" id="toc-step-7-build-the-maximizer" class="nav-link" data-scroll-target="#step-7-build-the-maximizer">Step 7 — Build the maximizer</a></li>
-  <li><a href="#step-8-run-it-and-watch-it-climb" id="toc-step-8-run-it-and-watch-it-climb" class="nav-link" data-scroll-target="#step-8-run-it-and-watch-it-climb">Step 8 — Run it, and watch it climb</a></li>
+  <li><a href="#step-8-run-it-and-watch-it-climb." id="toc-step-8-run-it-and-watch-it-climb." class="nav-link" data-scroll-target="#step-8-run-it-and-watch-it-climb.">Step 8 — Run it, and watch it climb.</a></li>
   <li><a href="#step-9-verify-against-glm" id="toc-step-9-verify-against-glm" class="nav-link" data-scroll-target="#step-9-verify-against-glm">Step 9 — Verify against <code>glm</code></a></li>
   <li><a href="#step-10-now-hand-it-to-optim" id="toc-step-10-now-hand-it-to-optim" class="nav-link" data-scroll-target="#step-10-now-hand-it-to-optim">Step 10 — Now hand it to <code>optim</code></a></li>
   <li><a href="#step-11-check-it-against-a-known-truth" id="toc-step-11-check-it-against-a-known-truth" class="nav-link" data-scroll-target="#step-11-check-it-against-a-known-truth">Step 11 — Check it against a known truth</a></li>
@@ -4286,8 +4286,8 @@ background-color: #f2f2f2;
 </style>
 <section id="the-prompt" class="level1">
 <h1>The prompt</h1>
-<p>You have built the binomial machine — a likelihood, a parameterization, a link, a maximizer. It does not care what <span class="math inline">\(y\)</span> is: swap the distribution and the link and every other part stays put. Today you swap them, and you build the whole thing by hand before letting a canned optimizer near it.</p>
-<p>In pairs, on real data. I am not telling you which distribution to use and I am not writing the log-likelihood for you. Look at <span class="math inline">\(y\)</span>; the <a href="likelihood26.html">likelihood notes</a> have the rest.</p>
+<p>You have built the binomial machine — a likelihood, a parameterization, a link, a maximizer. It does not care what <span class="math inline">\(y\)</span> is: swap the distribution and the link and every other part stays put. Today you’ll swap them out, and you build the whole thing by hand before using a canned optimizer.</p>
+<p>We’ll do this working in groups and using real data. I am not telling you which distribution to use and I am not writing the log-likelihood for you. Look at <span class="math inline">\(y\)</span>; the <a href="likelihood26.html">likelihood notes</a> provide guidance you’ll need.</p>
 <div class="callout callout-style-default callout-note callout-titled" title="What you do">
 <div class="callout-header d-flex align-content-center">
 <div class="callout-icon-container">
@@ -4330,7 +4330,7 @@ The recipe
 <section id="the-data" class="level1">
 <h1>The data</h1>
 <p>The Ill-Treatment and Torture (ITT) data (Conrad, Haglund, and Moore 2013, <em>International Studies Perspectives</em> 14(2): 199–220) record allegations of state torture by country-year. The outcome is <strong>scarring</strong>, the count of scarring-torture allegations. The covariates: restricted access to human rights monitors in the prior year, ongoing civil war, protests in the prior year, and logged GDP per capita.</p>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>itt <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;https://raw.githubusercontent.com/clavedark/MLEfall26/main/data/ITT.csv&quot;</span>, <span class="at">show_col_types =</span> <span class="cn">FALSE</span>) <span class="sc">%&gt;%</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(ccode) <span class="sc">%&gt;%</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">lagprotest =</span> <span class="fu">lag</span>(protest),</span>
@@ -4339,13 +4339,13 @@ The recipe
 <span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">loggdp =</span> <span class="fu">log</span>(wdi_gdpc)) <span class="sc">%&gt;%</span></span>
 <span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">drop_na</span>(scarring, lagRA, civilwar, lagprotest, loggdp)   <span class="co"># the estimation sample</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<p>Drop the incomplete rows up front — matrix algebra on an <code>NA</code> returns <code>NA</code>, and it will not say why.</p>
-<p>The data are read straight from the course repository rather than from a local path, so this file runs from whatever folder you downloaded it into and you do not need a <code>data/</code> directory of your own. That is a convenience for a file you pulled off the web; in your own projects, keep using <code>here::here()</code> and a local <code>data/</code> folder.</p>
+<p>I’ve dropped the incomplete rows at the start — matrix algebra on an <code>NA</code> returns <code>NA</code>.</p>
+<p>The data are read straight from the course repository rather than from a local path, so this file runs from whatever folder you downloaded it into and you do not need a <code>data/</code> directory of your own.</p>
 </section>
 <section id="step-1-diagnose-y" class="level1">
 <h1>Step 1 — Diagnose <span class="math inline">\(y\)</span></h1>
 <p>The outcome is <code>scarring</code>, the number of scarring-torture allegations recorded in a country-year. That is all I am going to tell you about it. Look at it yourself.</p>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">TODO</span><span class="co"> 1: show what kind of variable scarring is. A plot, a table of its</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="co">#   values, a few summary statistics -- whatever settles the question.</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
@@ -4370,20 +4370,20 @@ The recipe
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="fu">mle_hessian</span>(beta, X, y)    <span class="co"># -&gt; a k x k matrix</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <p>Watch your dimensions throughout: <span class="math inline">\(X\)</span> is <span class="math inline">\(n \times k\)</span> and <span class="math inline">\(y\)</span> is <span class="math inline">\(n \times 1\)</span>, so the score has <span class="math inline">\(k\)</span> elements and the Hessian is <span class="math inline">\(k \times k\)</span>.</p>
 <p><strong>You cannot run these yet.</strong> <code>X</code>, <code>y</code>, and <code>b0</code> do not exist until Step 6 builds them, so calling <code>mle_ll(b0, X, y)</code> here gets you <code>object &#39;X&#39; not found</code> — which is the setup missing, not your function. Write all three, then go to Step 6 and run the setup chunk; that is where testing starts.</p>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">TODO</span><span class="co"> 2: the log-likelihood at beta. Returns one number.</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>mle_ll <span class="ot">&lt;-</span> <span class="cf">function</span>(beta, X, y) {</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <div class="sourceCode cell-code" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">TODO</span><span class="co"> 3: the first derivative of the log-likelihood at beta.</span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="co">#   Returns a vector with one element per column of X.</span></span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>mle_score <span class="ot">&lt;-</span> <span class="cf">function</span>(beta, X, y) {</span>
 <span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <div class="sourceCode cell-code" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">TODO</span><span class="co"> 4: the matrix of second derivatives at beta. Returns k x k.</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>mle_hessian <span class="ot">&lt;-</span> <span class="cf">function</span>(beta, X, y) {</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -4394,7 +4394,7 @@ The recipe
 <h1>Step 6 — Test each piece at <span class="math inline">\(\beta = \mathbf{0}\)</span></h1>
 <p>Each function gets its own test, so that when something is wrong you know <em>which</em> one is wrong.</p>
 <p>Running a test takes three things: the outcome <span class="math inline">\(y\)</span>, the design matrix <span class="math inline">\(X\)</span>, and a <span class="math inline">\(\beta\)</span> to evaluate at. Build all three here. <code>model.matrix</code> takes the formula, adds the column of ones for the intercept, and returns an <span class="math inline">\(n \times k\)</span> numeric matrix; everything from here on runs on these objects.</p>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>y  <span class="ot">&lt;-</span> itt<span class="sc">$</span>scarring</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>X  <span class="ot">&lt;-</span> <span class="fu">model.matrix</span>(<span class="sc">~</span> lagRA <span class="sc">+</span> civilwar <span class="sc">+</span> lagprotest <span class="sc">+</span> loggdp, <span class="at">data =</span> itt)</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>k  <span class="ot">&lt;-</span> <span class="fu">ncol</span>(X)</span>
@@ -4412,7 +4412,7 @@ The recipe
 <p><span class="math inline">\(n = 913\)</span> country-years and <span class="math inline">\(k = 5\)</span> coefficients — four covariates plus the intercept. So the score your function returns has 5 elements and the Hessian is <span class="math inline">\(5 \times 5\)</span>.</p>
 <section id="why-beta-mathbf0-makes-this-easy" class="level2">
 <h2 class="anchored" data-anchor-id="why-beta-mathbf0-makes-this-easy">Why <span class="math inline">\(\beta = \mathbf{0}\)</span> makes this easy</h2>
-<p>Set every coefficient to zero and <span class="math inline">\(x_i\beta = 0\)</span> for every observation, so <span class="math inline">\(\lambda_i = e^0 = 1\)</span> — the rate is <strong>1 for every case</strong>. Put that into the three expressions you derived in Step 2 and each one collapses:</p>
+<p>Set every coefficient to zero so that <span class="math inline">\(x_i\beta = 0\)</span> for every observation, and so <span class="math inline">\(\lambda_i = e^0 = 1\)</span> — the rate is <strong>1 for every case</strong>. Put that into the three expressions you derived in Step 2 and each one collapses to something simple:</p>
 <p><span class="math display">\[
 \begin{aligned}
 \ell(\mathbf{0}) &amp;= \sum_{i=1}^{n}\big[\,y_i(x_i\beta) - e^{x_i\beta} - \ln(y_i!)\,\big]
@@ -4422,7 +4422,7 @@ s(\mathbf{0}) &amp;= X&#39;(y - \lambda) \;=\; X&#39;(y - \mathbf{1}) \\[6pt]
 H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 \end{aligned}
 \]</span></p>
-<p>Every one of those is a single line of R, and none needs the general case: the log-likelihood loses its first two terms because <span class="math inline">\(y_i \cdot 0 = 0\)</span> and <span class="math inline">\(e^0 = 1\)</span>; the score is the fitted values replaced by a column of ones; the Hessian’s weight matrix becomes the identity and drops out.</p>
+<p>Every one of those is a single line of R, and none needs the general case (coded in your functions): the log-likelihood loses its first two terms because <span class="math inline">\(y_i \cdot 0 = 0\)</span> and <span class="math inline">\(e^0 = 1\)</span>; the score is the fitted values replaced by a column of ones; the Hessian’s weight matrix becomes the identity and drops out.</p>
 </section>
 <section id="the-two-sides-of-each-test" class="level2">
 <h2 class="anchored" data-anchor-id="the-two-sides-of-each-test">The two sides of each test</h2>
@@ -4432,7 +4432,7 @@ H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 <li><strong>the closed form above</strong>, coded directly, in one line.</li>
 </ul>
 <p>The right-hand side is the independent check. It has to be computed a different way from the function, or the test compares your code to itself.</p>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">TODO</span><span class="co"> 5: code the three closed forms above, one line each. NA is a</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="co">#   placeholder -- replace it. What each should come back as:</span></span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="co">#     ll_direct    -- one number</span></span>
@@ -4442,7 +4442,7 @@ H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 <span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>score_direct <span class="ot">&lt;-</span> <span class="cn">NA</span></span>
 <span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>hess_direct  <span class="ot">&lt;-</span> <span class="cn">NA</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <details class="code-fold">
 <summary>code</summary>
 <div class="sourceCode cell-code" id="cb13"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">tibble</span>(</span>
@@ -4489,9 +4489,9 @@ H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 </table>
 </div>
 </div>
-<p>One more test, and it is the one that matters. Everything above is evaluated at <span class="math inline">\(\beta = \mathbf{0}\)</span>, where the parameter is 1 for every case — so a function that is only correct <em>at zero</em> passes it. A Hessian that drops the weight entirely is exactly right at <span class="math inline">\(\beta = \mathbf{0}\)</span> and wrong everywhere else, and the table above will not notice.</p>
+<p>One more test. Everything above is evaluated at <span class="math inline">\(\beta = \mathbf{0}\)</span>, where the parameter is 1 for every case — so a function that is only correct <em>at zero</em> passes it. A Hessian that drops the weight entirely is exactly right at <span class="math inline">\(\beta = \mathbf{0}\)</span> and wrong everywhere else, and the table above will not notice.</p>
 <p>So test the pieces against each other, away from zero. Your score is the derivative of your log-likelihood, and your Hessian is the derivative of your score. A numerical derivative of one should reproduce the other, at any <span class="math inline">\(\beta\)</span> you like, and no closed form is needed.</p>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <details class="code-fold">
 <summary>code</summary>
 <div class="sourceCode cell-code" id="cb14"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>b1 <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="fl">0.5</span>, <span class="fl">0.5</span>, <span class="fl">0.05</span>, <span class="fl">0.1</span>)     <span class="co"># any beta that is not zero</span></span>
@@ -4536,7 +4536,7 @@ H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 </table>
 </div>
 </div>
-<p>If the first table is green and this one is not, the piece it names works at zero and nowhere else — look at the weight.</p>
+<p>If the first table is green and this one is not, the piece it names works at zero but at no other value — look at the weight.</p>
 <p>Two things to check by eye before you trust the tables. Is the score anywhere near zero? It should not be — <span class="math inline">\(\beta = \mathbf{0}\)</span> is a long way from the maximum and the score only vanishes at the top; what you are testing here is arithmetic, not optimality. And the diagonal of your Hessian should be negative everywhere. Say in a sentence why that has to be true at a maximum, and what a positive element would do to your standard errors.</p>
 <p>(The table compares with <code>all.equal</code> rather than <code>==</code> because these are floating-point numbers, and wraps it in <code>isTRUE</code> because <code>all.equal</code> returns a <em>description of the difference</em> rather than <code>FALSE</code> when things do not match. <code>as.vector</code> on both sides strips names and dimensions so only the numbers are compared.)</p>
 </section>
@@ -4555,16 +4555,16 @@ H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 <li><strong>Standard errors</strong> from the curvature at the solution — recompute the Hessian at your <em>final</em> <span class="math inline">\(\widehat\beta\)</span>, not the one from inside the loop, which is a step stale.</li>
 </ol>
 <p>Return a list with at least <code>coef</code>, <code>se</code>, <code>vcov</code>, <code>loglik</code>, <code>iterations</code>, <code>converged</code>, and <code>history</code>.</p>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <div class="sourceCode cell-code" id="cb16"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">TODO</span><span class="co"> 6: the Newton-Raphson maximizer.</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>fit_mle <span class="ot">&lt;-</span> <span class="cf">function</span>(X, y, <span class="at">tol =</span> <span class="fl">1e-8</span>, <span class="at">maxit =</span> <span class="dv">50</span>) {</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
 </section>
-<section id="step-8-run-it-and-watch-it-climb" class="level1">
-<h1>Step 8 — Run it, and watch it climb</h1>
-<div class="cell" data-layout-align="center">
+<section id="step-8-run-it-and-watch-it-climb." class="level1">
+<h1>Step 8 — Run it, and watch it climb.</h1>
+<div class="cell">
 <div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">fit_mle</span>(X, y)</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>fit<span class="sc">$</span>history <span class="sc">%&gt;%</span></span>
@@ -4578,7 +4578,7 @@ H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 <section id="step-9-verify-against-glm" class="level1">
 <h1>Step 9 — Verify against <code>glm</code></h1>
 <p><code>glm</code> runs this same maximization internally, so it is the benchmark. Picking its family and link commits you in code to your Step 1 answer.</p>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <div class="sourceCode cell-code" id="cb18"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">TODO</span><span class="co"> 7: set the family and link that match your Step 1 answer. The rest of</span></span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="co">#   the call is already right.</span></span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="co">#   gaussian() is a PLACEHOLDER and is wrong on purpose. Leave it in and the</span></span>
@@ -4590,7 +4590,7 @@ H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 <span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a>m_glm <span class="ot">&lt;-</span> <span class="fu">glm</span>(scarring <span class="sc">~</span> lagRA <span class="sc">+</span> civilwar <span class="sc">+</span> lagprotest <span class="sc">+</span> loggdp,</span>
 <span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a>             <span class="at">family =</span> fam, <span class="at">data =</span> itt)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <details class="code-fold">
 <summary>code</summary>
 <div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="fu">tibble</span>(<span class="at">term      =</span> <span class="fu">colnames</span>(X),</span>
@@ -4640,7 +4640,7 @@ H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 </table>
 </div>
 </div>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <details class="code-fold">
 <summary>code</summary>
 <div class="sourceCode cell-code" id="cb20"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># the score at the solution, computed once</span></span>
@@ -4701,8 +4701,8 @@ H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 </section>
 <section id="step-10-now-hand-it-to-optim" class="level1">
 <h1>Step 10 — Now hand it to <code>optim</code></h1>
-<p>You no longer need a canned optimizer, but you should know it lands in the same place. <code>optim</code> <em>minimizes</em>, so it wants the <strong>negative</strong> of your log-likelihood and the <strong>negative</strong> of your score. Neither is a new derivation; both are a minus sign.</p>
-<div class="cell" data-layout-align="center">
+<p>You no longer need a canned optimizer, but you should know it lands in the same place. <code>optim</code> <em>minimizes</em>, so it wants the <strong>negative</strong> of your log-likelihood and the <strong>negative</strong> of your score. Neither is a new derivation; just negate each by adding a minus sign.</p>
+<div class="cell">
 <div class="sourceCode cell-code" id="cb21"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">TODO</span><span class="co"> 8: wrap mle_ll and mle_score as negll and negscore, maximize with</span></span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="co">#   optim(..., method = &quot;BFGS&quot;, gr = negscore), and compare optim&#39;s estimates</span></span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="co">#   to fit$coef in a table.</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
@@ -4712,7 +4712,7 @@ H(\mathbf{0}) &amp;= -X&#39;\Lambda X \;=\; -X&#39;IX \;=\; -X&#39;X .
 <section id="step-11-check-it-against-a-known-truth" class="level1">
 <h1>Step 11 — Check it against a known truth</h1>
 <p><code>glm</code> and <code>optim</code> agreeing with you says the three of you compute the same thing, not that any of you recovers the truth — in real data nobody knows the truth. So make some.</p>
-<div class="cell" data-layout-align="center">
+<div class="cell">
 <div class="sourceCode cell-code" id="cb22"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">8022026</span>)</span>
 <span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>b_true <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">`</span><span class="at">(Intercept)</span><span class="st">`</span> <span class="ot">=</span> <span class="fl">0.4</span>, <span class="at">x1 =</span> <span class="fl">0.6</span>, <span class="at">x2 =</span> <span class="sc">-</span><span class="fl">0.3</span>)</span>
 <span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a></span>

@@ -3,7 +3,7 @@ title: "Build Your Own Estimator"
 subtitle: "In-class build template"
 author: "Dave Clark"
 institute: "Binghamton University"
-date: today
+date: September 2, 2026
 title-block-banner: TRUE
 format:
   html: default
@@ -31,9 +31,9 @@ tr:nth-child(odd) {
 
 # The prompt
 
-You have built the binomial machine — a likelihood, a parameterization, a link, a maximizer. It does not care what $y$ is: swap the distribution and the link and every other part stays put. Today you swap them, and you build the whole thing by hand before letting a canned optimizer near it.
+You have built the binomial machine — a likelihood, a parameterization, a link, a maximizer. It does not care what $y$ is: swap the distribution and the link and every other part stays put. Today you'll swap them out, and you build the whole thing by hand before using a canned optimizer.
 
-In pairs, on real data. I am not telling you which distribution to use and I am not writing the log-likelihood for you. Look at $y$; the [likelihood notes](likelihood26.html) have the rest.
+We'll do this working in groups and using real data. I am not telling you which distribution to use and I am not writing the log-likelihood for you. Look at $y$; the [likelihood notes](likelihood26.html) provide guidance you'll need.
 
 ::: {.callout-note title="What you do"}
 Nine chunks are marked **TODO**. Fill them, then **render**. If it renders and the self-check tables are all `TRUE`, you built it. That is the whole exercise.
@@ -76,9 +76,9 @@ itt <- read_csv("https://raw.githubusercontent.com/clavedark/MLEfall26/main/data
   drop_na(scarring, lagRA, civilwar, lagprotest, loggdp)   # the estimation sample
 ```
 
-Drop the incomplete rows up front — matrix algebra on an `NA` returns `NA`, and it will not say why.
+I've dropped the incomplete rows at the start — matrix algebra on an `NA` returns `NA`.
 
-The data are read straight from the course repository rather than from a local path, so this file runs from whatever folder you downloaded it into and you do not need a `data/` directory of your own. That is a convenience for a file you pulled off the web; in your own projects, keep using `here::here()` and a local `data/` folder.
+The data are read straight from the course repository rather than from a local path, so this file runs from whatever folder you downloaded it into and you do not need a `data/` directory of your own. 
 
 # Step 1 — Diagnose $y$
 
@@ -174,7 +174,7 @@ $n = 913$ country-years and $k = 5$ coefficients — four covariates plus the in
 
 ## Why $\beta = \mathbf{0}$ makes this easy
 
-Set every coefficient to zero and $x_i\beta = 0$ for every observation, so $\lambda_i = e^0 = 1$ — the rate is **1 for every case**. Put that into the three expressions you derived in Step 2 and each one collapses:
+Set every coefficient to zero so that $x_i\beta = 0$ for every observation, and so $\lambda_i = e^0 = 1$ — the rate is **1 for every case**. Put that into the three expressions you derived in Step 2 and each one collapses to something simple:
 
 $$
 \begin{aligned}
@@ -186,7 +186,7 @@ H(\mathbf{0}) &= -X'\Lambda X \;=\; -X'IX \;=\; -X'X .
 \end{aligned}
 $$
 
-Every one of those is a single line of R, and none needs the general case: the log-likelihood loses its first two terms because $y_i \cdot 0 = 0$ and $e^0 = 1$; the score is the fitted values replaced by a column of ones; the Hessian's weight matrix becomes the identity and drops out.
+Every one of those is a single line of R, and none needs the general case (coded in your functions): the log-likelihood loses its first two terms because $y_i \cdot 0 = 0$ and $e^0 = 1$; the score is the fitted values replaced by a column of ones; the Hessian's weight matrix becomes the identity and drops out.
 
 ## The two sides of each test
 
@@ -231,7 +231,7 @@ tibble(
   knitr::kable(caption = "Each piece at beta = 0, against the closed form")
 ```
 
-One more test, and it is the one that matters. Everything above is evaluated at $\beta = \mathbf{0}$, where the parameter is 1 for every case — so a function that is only correct *at zero* passes it. A Hessian that drops the weight entirely is exactly right at $\beta = \mathbf{0}$ and wrong everywhere else, and the table above will not notice.
+One more test. Everything above is evaluated at $\beta = \mathbf{0}$, where the parameter is 1 for every case — so a function that is only correct *at zero* passes it. A Hessian that drops the weight entirely is exactly right at $\beta = \mathbf{0}$ and wrong everywhere else, and the table above will not notice.
 
 So test the pieces against each other, away from zero. Your score is the derivative of your log-likelihood, and your Hessian is the derivative of your score. A numerical derivative of one should reproduce the other, at any $\beta$ you like, and no closed form is needed.
 
@@ -261,7 +261,7 @@ tibble(
   knitr::kable(caption = "The same three pieces, tested away from zero")
 ```
 
-If the first table is green and this one is not, the piece it names works at zero and nowhere else — look at the weight.
+If the first table is green and this one is not, the piece it names works at zero but at no other value — look at the weight.
 
 Two things to check by eye before you trust the tables. Is the score anywhere near zero? It should not be — $\beta = \mathbf{0}$ is a long way from the maximum and the score only vanishes at the top; what you are testing here is arithmetic, not optimality. And the diagonal of your Hessian should be negative everywhere. Say in a sentence why that has to be true at a maximum, and what a positive element would do to your standard errors.
 
@@ -296,7 +296,7 @@ fit_mle <- function(X, y, tol = 1e-8, maxit = 50) {
 }
 ```
 
-# Step 8 — Run it, and watch it climb
+# Step 8 — Run it, and watch it climb.
 
 ```{r run}
 #| echo: true
@@ -372,7 +372,7 @@ tibble(
 
 # Step 10 — Now hand it to `optim`
 
-You no longer need a canned optimizer, but you should know it lands in the same place. `optim` *minimizes*, so it wants the **negative** of your log-likelihood and the **negative** of your score. Neither is a new derivation; both are a minus sign.
+You no longer need a canned optimizer, but you should know it lands in the same place. `optim` *minimizes*, so it wants the **negative** of your log-likelihood and the **negative** of your score. Neither is a new derivation; just negate each by adding a minus sign.
 
 ```{r optim}
 #| echo: true
