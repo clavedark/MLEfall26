@@ -215,39 +215,39 @@ We meet Wednesdays. Two dates are dark: fall break (Oct 14) and Thanksgiving (No
 
 ### Part I — Foundations
 
-Week 1, Aug 19 -- Binary $y$ Variables: probit/logit, first estimation, and interpretation
+**Week 1, Aug 19 -- Binary $y$ Variables: probit/logit, first estimation, and interpretation**
 
-**Required**
+*Required*
 
 -  Ward \& Ahlquist, 2018. *Maximum Likelihood for Social Science*. Chapters 1, 2, 4
 -  J. Scott Long. 1997. *Regression Models for Categorical and Limited Dependent Variables*. Chapter 3.
 
-**Recommended**
+*Recommended*
 
 -  @hanmerkalkan2013
 -  @mood2010
 -  @pierskalla2013
 
-Week 2, Aug 26 -- Likelihood Theory: the log-likelihood, score, Hessian, information
+**Week 2, Aug 26 -- Likelihood Theory: the log-likelihood, score, Hessian, information**
 
-**Required**
+*Required*
 
 -  Gary King. 1998. *Unifying Political Methodology*. Chapters 1--4
 -  J. Scott Long. 1997. Chapters 1--2.
 
-**Recommended**
+*Recommended*
 
 -  @eliason1993
 
-Week 3, Sep 2 -- MLE Mechanics and Building Your Own Model: grid search, Newton--Raphson, `optim`, and programming an estimator
+**Week 3, Sep 2 -- MLE Mechanics and Building Your Own Model: grid search, Newton--Raphson, `optim`, and programming an estimator**
 
-**Required**
+*Required*
 
 -  Ward \& Ahlquist, 2018. Chapters 5, 6, 7
 
-Week 4, Sep 9 -- More Mechanics; Quantities of Interest (review) and Diagnostics: fit and separation
+**Week 4, Sep 9 -- Binomial Extensions I --- Diagnostics, Classification, and Fit: quantities of interest (review), symmetry, classification and ROC, separation, rare events**
 
-**Required**
+*Required*
 
 -  Ward \& Ahlquist, 2018. Chapter 6 (quantities of interest)
 -  Gary King. 1998. Chapter 4 (simulation of quantities of interest)
@@ -255,7 +255,7 @@ Week 4, Sep 9 -- More Mechanics; Quantities of Interest (review) and Diagnostics
 -  @kingzengio01
 -  @rainey2016separation
 
-**Recommended**
+*Recommended*
 
 -  @Nagler94
 -  @rainey2024separation
@@ -267,16 +267,46 @@ Week 4, Sep 9 -- More Mechanics; Quantities of Interest (review) and Diagnostics
 -  @ward2010pvalue
 -  @rainey2014negligible
 
-### Part II — A causal lens, and binomial extensions
+### Part II — Binomial extensions, and a causal lens
 
-Week 5, Sep 16 -- Causal Mechanics and Identification: potential outcomes, estimands (ATE/ATT), propensity scores, g-computation
+**Week 5, Sep 16 -- Binomial Extensions II --- Discrete-Time Hazards: the logit as a hazard, person-period (BTSCS) data, time dependence**
 
-**Required**
+*Required*
+
+-  Ward \& Ahlquist, 2018. Chapter 11
+-  @becktuck
+-  @carter2010back
+
+*Recommended*
+
+-  @metzgerjones2022
+-  @wilsonbutler2007
+-  @svolik2008
+
+**Week 6, Sep 23 -- Binomial Extensions III --- Interactions: multiplicative terms, compression, and marginal effects in nonlinear models**
+
+*Required*
+
+-  @brambor2006understanding
+-  @berry2012improving
+-  @berry2010interaction
+-  @hainmueller2019interaction
+-  @zhirnov2023
+
+*Recommended*
+
+-  @mize2019interaction
+-  @rainey2016compression
+-  @liu2025conditional
+
+**Week 7, Sep 30 -- Causal Mechanics and Identification: potential outcomes, estimands (ATE/ATT), propensity scores, g-computation**
+
+*Required*
 
 -  @keele2015
 -  [@hernanrobins2020, chapters 1--3 and 13] (potential outcomes, the g-formula)
 
-**Recommended**
+*Recommended*
 
 -  @kingnielsen2019
 -  @iacus2012cem
@@ -285,47 +315,17 @@ Week 5, Sep 16 -- Causal Mechanics and Identification: potential outcomes, estim
 -  @kampalmer2008
 -  @hendersonchatfield2011
 
-Week 6, Sep 23 -- Binomial Extension --- Discrete-Time Hazards: the logit as a hazard, person-period (BTSCS) data, time dependence
-
-**Required**
-
--  Ward \& Ahlquist, 2018. Chapter 11
--  @becktuck
--  @carter2010back
-
-**Recommended**
-
--  @metzgerjones2022
--  @wilsonbutler2007
--  @svolik2008
-
-Week 7, Sep 30 -- Binomial Extension --- Interactions: multiplicative terms, compression, and marginal effects in nonlinear models
-
-**Required**
-
--  @brambor2006understanding
--  @berry2012improving
--  @berry2010interaction
--  @hainmueller2019interaction
--  @zhirnov2023
-
-**Recommended**
-
--  @mize2019interaction
--  @rainey2016compression
--  @liu2025conditional
-
 ### Part III — Counts and durations as one family
 
-Week 8, Oct 7 -- Event Counts I: Poisson, rates and offsets, equidispersion
+**Week 8, Oct 7 -- Event Counts I: Poisson, rates and offsets, equidispersion**
 
-**Required**
+*Required*
 
 -  Ward \& Ahlquist, 2018. Chapter 10
 -  J. Scott Long. 1997. Chapter 8.1--8.2.
 -  @fordhamjcr
 
-**Recommended**
+*Recommended*
 
 -  @gowa98
 -  @brandtwilliams2001
@@ -333,36 +333,36 @@ Week 8, Oct 7 -- Event Counts I: Poisson, rates and offsets, equidispersion
 
 Oct 14 -- *no class, fall break*
 
-Week 9, Oct 21 -- Event Counts II: dispersion and zeros --- negative binomial, zero-inflation, split populations
+**Week 9, Oct 21 -- Event Counts II: dispersion and zeros --- negative binomial, zero-inflation, split populations**
 
-**Required**
+*Required*
 
 -  J. Scott Long. 1997. Chapter 8.3--8.7.
 -  @clarkstrategic
 -  @bagozzi2015forecasting
 -  @casiraghi2024
 
-**Recommended**
+*Recommended*
 
 -  @zorn98
 -  @bagozzi2015ziop
 
-Week 10, Oct 28 -- Count $\leftrightarrow$ Hazard Equivalence: the same event as a count and as a duration
+**Week 10, Oct 28 -- Count $\leftrightarrow$ Hazard Equivalence: the same event as a count and as a duration**
 
-**Required**
+*Required*
 
 -  Janet Box-Steffensmeier and Brad Jones. 2004. *Event History Modeling*. Chapters 1--2
 -  @boxapsr
 -  @altkingsignorino2001
 
-Week 11, Nov 4 -- Continuous-Time Hazards: parametric and semi-parametric duration models (exponential, Weibull, Cox)
+**Week 11, Nov 4 -- Continuous-Time Hazards: parametric and semi-parametric duration models (exponential, Weibull, Cox)**
 
-**Required**
+*Required*
 
 -  Box-Steffensmeier and Jones. 2004. Chapters 3--5
 -  @zorn2000
 
-**Recommended**
+*Recommended*
 
 -  @licht2011
 -  @kropkoharden2020
@@ -372,28 +372,28 @@ Week 11, Nov 4 -- Continuous-Time Hazards: parametric and semi-parametric durati
 
 ### Part IV — Choice, and synthesis
 
-Week 12, Nov 11 -- Choice I: multinomial and conditional logit, and prediction
+**Week 12, Nov 11 -- Choice I: multinomial and conditional logit, and prediction**
 
-**Required**
+*Required*
 
 -  J. Scott Long. 1997. Chapter 6.
 -  Ward \& Ahlquist, 2018. Chapter 9
 -  @alvareznaglercollide
 -  @paolino2021
 
-**Recommended**
+*Recommended*
 
 -  @hainmueller2014conjoint
 -  @signorino2003
 
-Week 13, Nov 18 -- Choice II: IIA --- assessing it, and how much to worry; alternatives (multivariate probit) and the conditional--fixed-effects equivalence
+**Week 13, Nov 18 -- Choice II: IIA --- assessing it, and how much to worry; alternatives (multivariate probit) and the conditional--fixed-effects equivalence**
 
-**Required**
+*Required*
 
 -  @dowendersby2004
 -  @clarkreed2005
 
-**Recommended**
+*Recommended*
 
 -  @lacyburden
 -  @zorniia
@@ -403,7 +403,7 @@ Week 13, Nov 18 -- Choice II: IIA --- assessing it, and how much to worry; alter
 
 Nov 25 -- *no class, Thanksgiving*
 
-Week 14, Dec 2 -- catch up
+**Week 14, Dec 2 -- catch up**
 
 
 # References {.unnumbered}

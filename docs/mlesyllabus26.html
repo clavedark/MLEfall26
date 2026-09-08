@@ -9678,7 +9678,7 @@ window.Quarto = {
   <li><a href="#course-schedule" id="toc-course-schedule" class="nav-link" data-scroll-target="#course-schedule">Course Schedule</a>
   <ul class="collapse">
   <li><a href="#part-i-foundations" id="toc-part-i-foundations" class="nav-link" data-scroll-target="#part-i-foundations">Part I — Foundations</a></li>
-  <li><a href="#part-ii-a-causal-lens-and-binomial-extensions" id="toc-part-ii-a-causal-lens-and-binomial-extensions" class="nav-link" data-scroll-target="#part-ii-a-causal-lens-and-binomial-extensions">Part II — A causal lens, and binomial extensions</a></li>
+  <li><a href="#part-ii-binomial-extensions-and-a-causal-lens" id="toc-part-ii-binomial-extensions-and-a-causal-lens" class="nav-link" data-scroll-target="#part-ii-binomial-extensions-and-a-causal-lens">Part II — Binomial extensions, and a causal lens</a></li>
   <li><a href="#part-iii-counts-and-durations-as-one-family" id="toc-part-iii-counts-and-durations-as-one-family" class="nav-link" data-scroll-target="#part-iii-counts-and-durations-as-one-family">Part III — Counts and durations as one family</a></li>
   <li><a href="#part-iv-choice-and-synthesis" id="toc-part-iv-choice-and-synthesis" class="nav-link" data-scroll-target="#part-iv-choice-and-synthesis">Part IV — Choice, and synthesis</a></li>
   </ul></li>
@@ -9906,35 +9906,35 @@ window.Quarto = {
 <p>We meet Wednesdays. Two dates are dark: fall break (Oct 14) and Thanksgiving (Nov 25).</p>
 <section id="part-i-foundations" class="level3">
 <h3 class="anchored" data-anchor-id="part-i-foundations">Part I — Foundations</h3>
-<p>Week 1, Aug 19 – Binary <span class="math inline">\(y\)</span> Variables: probit/logit, first estimation, and interpretation</p>
-<p><strong>Required</strong></p>
+<p><strong>Week 1, Aug 19 – Binary <span class="math inline">\(y\)</span> Variables: probit/logit, first estimation, and interpretation</strong></p>
+<p><em>Required</em></p>
 <ul>
 <li>Ward &amp; Ahlquist, 2018. <em>Maximum Likelihood for Social Science</em>. Chapters 1, 2, 4</li>
 <li>J. Scott Long. 1997. <em>Regression Models for Categorical and Limited Dependent Variables</em>. Chapter 3.</li>
 </ul>
-<p><strong>Recommended</strong></p>
+<p><em>Recommended</em></p>
 <ul>
 <li><span class="citation" data-cites="hanmerkalkan2013">Hanmer and Kalkan (<a href="#ref-hanmerkalkan2013" role="doc-biblioref">2013</a>)</span></li>
 <li><span class="citation" data-cites="mood2010">Mood (<a href="#ref-mood2010" role="doc-biblioref">2010</a>)</span></li>
 <li><span class="citation" data-cites="pierskalla2013">Pierskalla and Hollenbach (<a href="#ref-pierskalla2013" role="doc-biblioref">2013</a>)</span></li>
 </ul>
-<p>Week 2, Aug 26 – Likelihood Theory: the log-likelihood, score, Hessian, information</p>
-<p><strong>Required</strong></p>
+<p><strong>Week 2, Aug 26 – Likelihood Theory: the log-likelihood, score, Hessian, information</strong></p>
+<p><em>Required</em></p>
 <ul>
 <li>Gary King. 1998. <em>Unifying Political Methodology</em>. Chapters 1–4</li>
 <li>J. Scott Long. 1997. Chapters 1–2.</li>
 </ul>
-<p><strong>Recommended</strong></p>
+<p><em>Recommended</em></p>
 <ul>
 <li><span class="citation" data-cites="eliason1993">Eliason (<a href="#ref-eliason1993" role="doc-biblioref">1993</a>)</span></li>
 </ul>
-<p>Week 3, Sep 2 – MLE Mechanics and Building Your Own Model: grid search, Newton–Raphson, <code>optim</code>, and programming an estimator</p>
-<p><strong>Required</strong></p>
+<p><strong>Week 3, Sep 2 – MLE Mechanics and Building Your Own Model: grid search, Newton–Raphson, <code>optim</code>, and programming an estimator</strong></p>
+<p><em>Required</em></p>
 <ul>
 <li>Ward &amp; Ahlquist, 2018. Chapters 5, 6, 7</li>
 </ul>
-<p>Week 4, Sep 9 – More Mechanics; Quantities of Interest (review) and Diagnostics: fit and separation</p>
-<p><strong>Required</strong></p>
+<p><strong>Week 4, Sep 9 – Binomial Extensions I — Diagnostics, Classification, and Fit: quantities of interest (review), symmetry, classification and ROC, separation, rare events</strong></p>
+<p><em>Required</em></p>
 <ul>
 <li>Ward &amp; Ahlquist, 2018. Chapter 6 (quantities of interest)</li>
 <li>Gary King. 1998. Chapter 4 (simulation of quantities of interest)</li>
@@ -9942,7 +9942,7 @@ window.Quarto = {
 <li><span class="citation" data-cites="kingzengio01">G. King and Zeng (<a href="#ref-kingzengio01" role="doc-biblioref">2001</a>)</span></li>
 <li><span class="citation" data-cites="rainey2016separation">Rainey (<a href="#ref-rainey2016separation" role="doc-biblioref">2016b</a>)</span></li>
 </ul>
-<p><strong>Recommended</strong></p>
+<p><em>Recommended</em></p>
 <ul>
 <li><span class="citation" data-cites="Nagler94">Nagler (<a href="#ref-Nagler94" role="doc-biblioref">1994</a>)</span></li>
 <li><span class="citation" data-cites="rainey2024separation">Rainey (<a href="#ref-rainey2024separation" role="doc-biblioref">2024</a>)</span></li>
@@ -9955,15 +9955,43 @@ window.Quarto = {
 <li><span class="citation" data-cites="rainey2014negligible">Rainey (<a href="#ref-rainey2014negligible" role="doc-biblioref">2014</a>)</span></li>
 </ul>
 </section>
-<section id="part-ii-a-causal-lens-and-binomial-extensions" class="level3">
-<h3 class="anchored" data-anchor-id="part-ii-a-causal-lens-and-binomial-extensions">Part II — A causal lens, and binomial extensions</h3>
-<p>Week 5, Sep 16 – Causal Mechanics and Identification: potential outcomes, estimands (ATE/ATT), propensity scores, g-computation</p>
-<p><strong>Required</strong></p>
+<section id="part-ii-binomial-extensions-and-a-causal-lens" class="level3">
+<h3 class="anchored" data-anchor-id="part-ii-binomial-extensions-and-a-causal-lens">Part II — Binomial extensions, and a causal lens</h3>
+<p><strong>Week 5, Sep 16 – Binomial Extensions II — Discrete-Time Hazards: the logit as a hazard, person-period (BTSCS) data, time dependence</strong></p>
+<p><em>Required</em></p>
+<ul>
+<li>Ward &amp; Ahlquist, 2018. Chapter 11</li>
+<li><span class="citation" data-cites="becktuck">Beck, Katz, and Tucker (<a href="#ref-becktuck" role="doc-biblioref">1998</a>)</span></li>
+<li><span class="citation" data-cites="carter2010back">Carter and Signorino (<a href="#ref-carter2010back" role="doc-biblioref">2010</a>)</span></li>
+</ul>
+<p><em>Recommended</em></p>
+<ul>
+<li><span class="citation" data-cites="metzgerjones2022">Metzger and Jones (<a href="#ref-metzgerjones2022" role="doc-biblioref">2022</a>)</span></li>
+<li><span class="citation" data-cites="wilsonbutler2007">Wilson and Butler (<a href="#ref-wilsonbutler2007" role="doc-biblioref">2007</a>)</span></li>
+<li><span class="citation" data-cites="svolik2008">Svolik (<a href="#ref-svolik2008" role="doc-biblioref">2008</a>)</span></li>
+</ul>
+<p><strong>Week 6, Sep 23 – Binomial Extensions III — Interactions: multiplicative terms, compression, and marginal effects in nonlinear models</strong></p>
+<p><em>Required</em></p>
+<ul>
+<li><span class="citation" data-cites="brambor2006understanding">Brambor, Clark, and Golder (<a href="#ref-brambor2006understanding" role="doc-biblioref">2006</a>)</span></li>
+<li><span class="citation" data-cites="berry2012improving">William D. Berry, Golder, and Milton (<a href="#ref-berry2012improving" role="doc-biblioref">2012</a>)</span></li>
+<li><span class="citation" data-cites="berry2010interaction">William D. Berry, DeMeritt, and Esarey (<a href="#ref-berry2010interaction" role="doc-biblioref">2010</a>)</span></li>
+<li><span class="citation" data-cites="hainmueller2019interaction">Hainmueller, Mummolo, and Xu (<a href="#ref-hainmueller2019interaction" role="doc-biblioref">2019</a>)</span></li>
+<li><span class="citation" data-cites="zhirnov2023">Zhirnov, Moral, and Sedashov (<a href="#ref-zhirnov2023" role="doc-biblioref">2023</a>)</span></li>
+</ul>
+<p><em>Recommended</em></p>
+<ul>
+<li><span class="citation" data-cites="mize2019interaction">Mize (<a href="#ref-mize2019interaction" role="doc-biblioref">2019</a>)</span></li>
+<li><span class="citation" data-cites="rainey2016compression">Rainey (<a href="#ref-rainey2016compression" role="doc-biblioref">2016a</a>)</span></li>
+<li><span class="citation" data-cites="liu2025conditional">Liu, Liu, and Xu (<a href="#ref-liu2025conditional" role="doc-biblioref">2025</a>)</span></li>
+</ul>
+<p><strong>Week 7, Sep 30 – Causal Mechanics and Identification: potential outcomes, estimands (ATE/ATT), propensity scores, g-computation</strong></p>
+<p><em>Required</em></p>
 <ul>
 <li><span class="citation" data-cites="keele2015">Keele (<a href="#ref-keele2015" role="doc-biblioref">2015</a>)</span></li>
 <li><span class="citation" data-cites="hernanrobins2020">(<a href="#ref-hernanrobins2020" role="doc-biblioref">Hernán and Robins 2020, chaps. 1–3</a> and 13)</span> (potential outcomes, the g-formula)</li>
 </ul>
-<p><strong>Recommended</strong></p>
+<p><em>Recommended</em></p>
 <ul>
 <li><span class="citation" data-cites="kingnielsen2019">Gary King and Nielsen (<a href="#ref-kingnielsen2019" role="doc-biblioref">2019</a>)</span></li>
 <li><span class="citation" data-cites="iacus2012cem">Iacus, King, and Porro (<a href="#ref-iacus2012cem" role="doc-biblioref">2012</a>)</span></li>
@@ -9972,78 +10000,50 @@ window.Quarto = {
 <li><span class="citation" data-cites="kampalmer2008">Kam and Palmer (<a href="#ref-kampalmer2008" role="doc-biblioref">2008</a>)</span></li>
 <li><span class="citation" data-cites="hendersonchatfield2011">Henderson and Chatfield (<a href="#ref-hendersonchatfield2011" role="doc-biblioref">2011</a>)</span></li>
 </ul>
-<p>Week 6, Sep 23 – Binomial Extension — Discrete-Time Hazards: the logit as a hazard, person-period (BTSCS) data, time dependence</p>
-<p><strong>Required</strong></p>
-<ul>
-<li>Ward &amp; Ahlquist, 2018. Chapter 11</li>
-<li><span class="citation" data-cites="becktuck">Beck, Katz, and Tucker (<a href="#ref-becktuck" role="doc-biblioref">1998</a>)</span></li>
-<li><span class="citation" data-cites="carter2010back">Carter and Signorino (<a href="#ref-carter2010back" role="doc-biblioref">2010</a>)</span></li>
-</ul>
-<p><strong>Recommended</strong></p>
-<ul>
-<li><span class="citation" data-cites="metzgerjones2022">Metzger and Jones (<a href="#ref-metzgerjones2022" role="doc-biblioref">2022</a>)</span></li>
-<li><span class="citation" data-cites="wilsonbutler2007">Wilson and Butler (<a href="#ref-wilsonbutler2007" role="doc-biblioref">2007</a>)</span></li>
-<li><span class="citation" data-cites="svolik2008">Svolik (<a href="#ref-svolik2008" role="doc-biblioref">2008</a>)</span></li>
-</ul>
-<p>Week 7, Sep 30 – Binomial Extension — Interactions: multiplicative terms, compression, and marginal effects in nonlinear models</p>
-<p><strong>Required</strong></p>
-<ul>
-<li><span class="citation" data-cites="brambor2006understanding">Brambor, Clark, and Golder (<a href="#ref-brambor2006understanding" role="doc-biblioref">2006</a>)</span></li>
-<li><span class="citation" data-cites="berry2012improving">William D. Berry, Golder, and Milton (<a href="#ref-berry2012improving" role="doc-biblioref">2012</a>)</span></li>
-<li><span class="citation" data-cites="berry2010interaction">William D. Berry, DeMeritt, and Esarey (<a href="#ref-berry2010interaction" role="doc-biblioref">2010</a>)</span></li>
-<li><span class="citation" data-cites="hainmueller2019interaction">Hainmueller, Mummolo, and Xu (<a href="#ref-hainmueller2019interaction" role="doc-biblioref">2019</a>)</span></li>
-<li><span class="citation" data-cites="zhirnov2023">Zhirnov, Moral, and Sedashov (<a href="#ref-zhirnov2023" role="doc-biblioref">2023</a>)</span></li>
-</ul>
-<p><strong>Recommended</strong></p>
-<ul>
-<li><span class="citation" data-cites="mize2019interaction">Mize (<a href="#ref-mize2019interaction" role="doc-biblioref">2019</a>)</span></li>
-<li><span class="citation" data-cites="rainey2016compression">Rainey (<a href="#ref-rainey2016compression" role="doc-biblioref">2016a</a>)</span></li>
-<li><span class="citation" data-cites="liu2025conditional">Liu, Liu, and Xu (<a href="#ref-liu2025conditional" role="doc-biblioref">2025</a>)</span></li>
-</ul>
 </section>
 <section id="part-iii-counts-and-durations-as-one-family" class="level3">
 <h3 class="anchored" data-anchor-id="part-iii-counts-and-durations-as-one-family">Part III — Counts and durations as one family</h3>
-<p>Week 8, Oct 7 – Event Counts I: Poisson, rates and offsets, equidispersion</p>
-<p><strong>Required</strong></p>
+<p><strong>Week 8, Oct 7 – Event Counts I: Poisson, rates and offsets, equidispersion</strong></p>
+<p><em>Required</em></p>
 <ul>
 <li>Ward &amp; Ahlquist, 2018. Chapter 10</li>
 <li>J. Scott Long. 1997. Chapter 8.1–8.2.</li>
 <li><span class="citation" data-cites="fordhamjcr">Fordham (<a href="#ref-fordhamjcr" role="doc-biblioref">1998</a>)</span></li>
 </ul>
-<p><strong>Recommended</strong></p>
+<p><em>Recommended</em></p>
 <ul>
 <li><span class="citation" data-cites="gowa98">Gowa (<a href="#ref-gowa98" role="doc-biblioref">1998</a>)</span></li>
 <li><span class="citation" data-cites="brandtwilliams2001">Brandt and Williams (<a href="#ref-brandtwilliams2001" role="doc-biblioref">2001</a>)</span></li>
 <li><span class="citation" data-cites="fogartymonogan2014">Fogarty and Monogan (<a href="#ref-fogartymonogan2014" role="doc-biblioref">2014</a>)</span></li>
 </ul>
 <p>Oct 14 – <em>no class, fall break</em></p>
-<p>Week 9, Oct 21 – Event Counts II: dispersion and zeros — negative binomial, zero-inflation, split populations</p>
-<p><strong>Required</strong></p>
+<p><strong>Week 9, Oct 21 – Event Counts II: dispersion and zeros — negative binomial, zero-inflation, split populations</strong></p>
+<p><em>Required</em></p>
 <ul>
 <li>J. Scott Long. 1997. Chapter 8.3–8.7.</li>
 <li><span class="citation" data-cites="clarkstrategic">Clark (<a href="#ref-clarkstrategic" role="doc-biblioref">2003</a>)</span></li>
 <li><span class="citation" data-cites="bagozzi2015forecasting">Bagozzi (<a href="#ref-bagozzi2015forecasting" role="doc-biblioref">2015</a>)</span></li>
 <li><span class="citation" data-cites="casiraghi2024">Casiraghi and Cusumano (<a href="#ref-casiraghi2024" role="doc-biblioref">2024</a>)</span></li>
 </ul>
-<p><strong>Recommended</strong></p>
+<p><em>Recommended</em></p>
 <ul>
 <li><span class="citation" data-cites="zorn98">C. J. W. Zorn (<a href="#ref-zorn98" role="doc-biblioref">1998</a>)</span></li>
 <li><span class="citation" data-cites="bagozzi2015ziop">Bagozzi et al. (<a href="#ref-bagozzi2015ziop" role="doc-biblioref">2015</a>)</span></li>
 </ul>
-<p>Week 10, Oct 28 – Count <span class="math inline">\(\leftrightarrow\)</span> Hazard Equivalence: the same event as a count and as a duration</p>
-<p><strong>Required</strong></p>
+<p><strong>Week 10, Oct 28 – Count <span class="math inline">\(\leftrightarrow\)</span> Hazard Equivalence: the same event as a count and as a duration</strong></p>
+<p><em>Required</em></p>
 <ul>
 <li>Janet Box-Steffensmeier and Brad Jones. 2004. <em>Event History Modeling</em>. Chapters 1–2</li>
 <li><span class="citation" data-cites="boxapsr">Box-Steffensmeier, Arnold, and Zorn (<a href="#ref-boxapsr" role="doc-biblioref">1997</a>)</span></li>
 <li><span class="citation" data-cites="altkingsignorino2001">Alt, King, and Signorino (<a href="#ref-altkingsignorino2001" role="doc-biblioref">2001</a>)</span></li>
 </ul>
-<p>Week 11, Nov 4 – Continuous-Time Hazards: parametric and semi-parametric duration models (exponential, Weibull, Cox)</p>
-<p><strong>Required</strong></p>
+<p><strong>Week 11, Nov 4 – Continuous-Time Hazards: parametric and semi-parametric duration models (exponential, Weibull, Cox)</strong></p>
+<p><em>Required</em></p>
 <ul>
 <li>Box-Steffensmeier and Jones. 2004. Chapters 3–5</li>
 <li><span class="citation" data-cites="zorn2000">C. J. W. Zorn (<a href="#ref-zorn2000" role="doc-biblioref">2000</a>)</span></li>
 </ul>
-<p><strong>Recommended</strong></p>
+<p><em>Recommended</em></p>
 <ul>
 <li><span class="citation" data-cites="licht2011">Licht (<a href="#ref-licht2011" role="doc-biblioref">2011</a>)</span></li>
 <li><span class="citation" data-cites="kropkoharden2020">Kropko and Harden (<a href="#ref-kropkoharden2020" role="doc-biblioref">2020</a>)</span></li>
@@ -10054,26 +10054,26 @@ window.Quarto = {
 </section>
 <section id="part-iv-choice-and-synthesis" class="level3">
 <h3 class="anchored" data-anchor-id="part-iv-choice-and-synthesis">Part IV — Choice, and synthesis</h3>
-<p>Week 12, Nov 11 – Choice I: multinomial and conditional logit, and prediction</p>
-<p><strong>Required</strong></p>
+<p><strong>Week 12, Nov 11 – Choice I: multinomial and conditional logit, and prediction</strong></p>
+<p><em>Required</em></p>
 <ul>
 <li>J. Scott Long. 1997. Chapter 6.</li>
 <li>Ward &amp; Ahlquist, 2018. Chapter 9</li>
 <li><span class="citation" data-cites="alvareznaglercollide">Alvarez and Nagler (<a href="#ref-alvareznaglercollide" role="doc-biblioref">1998</a>)</span></li>
 <li><span class="citation" data-cites="paolino2021">Paolino (<a href="#ref-paolino2021" role="doc-biblioref">2021</a>)</span></li>
 </ul>
-<p><strong>Recommended</strong></p>
+<p><em>Recommended</em></p>
 <ul>
 <li><span class="citation" data-cites="hainmueller2014conjoint">Hainmueller, Hopkins, and Yamamoto (<a href="#ref-hainmueller2014conjoint" role="doc-biblioref">2014</a>)</span></li>
 <li><span class="citation" data-cites="signorino2003">Signorino (<a href="#ref-signorino2003" role="doc-biblioref">2003</a>)</span></li>
 </ul>
-<p>Week 13, Nov 18 – Choice II: IIA — assessing it, and how much to worry; alternatives (multivariate probit) and the conditional–fixed-effects equivalence</p>
-<p><strong>Required</strong></p>
+<p><strong>Week 13, Nov 18 – Choice II: IIA — assessing it, and how much to worry; alternatives (multivariate probit) and the conditional–fixed-effects equivalence</strong></p>
+<p><em>Required</em></p>
 <ul>
 <li><span class="citation" data-cites="dowendersby2004">Dow and Endersby (<a href="#ref-dowendersby2004" role="doc-biblioref">2004</a>)</span></li>
 <li><span class="citation" data-cites="clarkreed2005">Clark and Reed (<a href="#ref-clarkreed2005" role="doc-biblioref">2005</a>)</span></li>
 </ul>
-<p><strong>Recommended</strong></p>
+<p><em>Recommended</em></p>
 <ul>
 <li><span class="citation" data-cites="lacyburden">Lacy and Burden (<a href="#ref-lacyburden" role="doc-biblioref">1999</a>)</span></li>
 <li><span class="citation" data-cites="zorniia">C. J. W. Zorn (<a href="#ref-zorniia" role="doc-biblioref">1996</a>)</span></li>
@@ -10082,7 +10082,7 @@ window.Quarto = {
 <li><span class="citation" data-cites="abramson2022">Abramson, Koçak, and Magazinnik (<a href="#ref-abramson2022" role="doc-biblioref">2022</a>)</span></li>
 </ul>
 <p>Nov 25 – <em>no class, Thanksgiving</em></p>
-<p>Week 14, Dec 2 – catch up</p>
+<p><strong>Week 14, Dec 2 – catch up</strong></p>
 </section>
 </section>
 <section id="references" class="level1 unnumbered">

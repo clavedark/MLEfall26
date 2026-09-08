@@ -157,3 +157,4 @@ worklog.md
 # self-contained renders and the .qmd sources follow the same "ignore sources"
 # rule as every other topic deck above.
 _reference/
+.positai
