@@ -245,6 +245,8 @@ We meet Wednesdays. Two dates are dark: fall break (Oct 14) and Thanksgiving (No
 
 -  Ward \& Ahlquist, 2018. Chapters 5, 6, 7
 
+### Part II — Binomial extensions, and a causal lens
+
 **Week 4, Sep 9 -- Binomial Extensions I --- Diagnostics, Classification, and Fit: quantities of interest (review), symmetry, classification and ROC, separation, rare events**
 
 *Required*
@@ -266,8 +268,6 @@ We meet Wednesdays. Two dates are dark: fall break (Oct 14) and Thanksgiving (No
 -  @esareypierce2012
 -  @ward2010pvalue
 -  @rainey2014negligible
-
-### Part II — Binomial extensions, and a causal lens
 
 **Week 5, Sep 16 -- Binomial Extensions II --- Discrete-Time Hazards: the logit as a hazard, person-period (BTSCS) data, time dependence**
 
