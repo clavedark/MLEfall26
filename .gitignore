@@ -141,6 +141,11 @@ llfmax26.R
 nr-logit.R
 compare-hand-glm.R
 maximization26.R
+# Same reason: the live-demo script extracted from buildtemplate26answers.qmd.
+# It is the completed build (log-likelihood, score, Hessian, maximizer), which
+# is the whole point of the in-class exercise. The student template's own
+# chunks are empty, so only the key version runs -- and only Dave gets it.
+buildtemplate26answers.R
 
 # PLSC 501 materials parked here — they belong to the 501 course, not this site.
 Coding Challenges Sp 2026.pptx
