@@ -1,6 +1,6 @@
 ---
-title: "Build Your Own Estimator"
-subtitle: "In-class build template"
+title: "Exercise #3 — Build Your Own Estimator"
+subtitle: "In-class build template, completed as homework"
 author: "Dave Clark"
 institute: "Binghamton University"
 date: September 2, 2026

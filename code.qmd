@@ -8,6 +8,9 @@ Posted as they're assigned. Turn in both your source (`.qmd`/`.R`) and the rende
 
 - [Exercise #1 — Distributions, Simulation, and the Log-Likelihood](ex12026.qmd) · [answer key](ex12026answers.qmd)
 - [Exercise #2 — Write the Maximizer](ex22026.qmd) · [answer key](ex22026answers.qmd)
+- [Exercise #3 — Build Your Own Estimator](buildtemplate26.qmd) — the in-class build template, completed as homework. Filed under `buildtemplate26`, not `ex32026`.
+- [Exercise #4 — Leaders, Data, and the Probability of Leaving Office](ex42026.qmd)
+
 - [Build Your Own Estimator](buildtemplate26.qmd) — the in-class build template. Read it here, but work in the `.qmd`: run
 
   ```r
@@ -30,5 +33,7 @@ Standalone R scripts, for slides that have one.
   *Source: Cooperative Election Study, Harvard University. [CES project site](https://cces.gov.harvard.edu).*
 - [Democratic peace (`dp.dta`)](https://github.com/clavedark/MLEfall26/blob/main/data/dp.dta) — dyad-year data, 1951–1985, 20,990 rows: militarized dispute onset (`dispute`) with a shared border, the capability ratio, the lower of the two Polity scores (`deml`), an alliance indicator, and joint IGO memberships. Used in the binary models, likelihood, and maximization slides. Stata format — read it with `haven::read_dta()`. Click **Download raw file**.
   *Source: Oneal, John R., and Bruce M. Russett. 1997. "The Classic Liberals Were Right: Democracy, Interdependence, and Conflict, 1950-1985." International Studies Quarterly 41(2): 267-294.*
+- [Leader-years (`leaderyears.csv`)](https://github.com/clavedark/MLEfall26/blob/main/data/leaderyears.csv) — 17,686 leader-years, 1840–2015: one row per year a leader held office, with how the spell ended, how the leader took power, gender, year of birth, and a five-way regional grouping cut from the country codes. Reshaped from Archigos 4.1. Used in exercise #4. Click **Download raw file**.
+  *Source: Goemans, Henk E., Kristian Skrede Gleditsch, and Giacomo Chiozza. 2009. "Introducing Archigos: A Dataset of Political Leaders." Journal of Peace Research 46(2): 269-283. [Archigos data page](https://www.rochester.edu/college/faculty/hgoemans/data.htm).*
 - [ITT data (`ITT.csv`)](https://github.com/clavedark/MLEfall26/blob/main/data/ITT.csv) — Ill-Treatment and Torture allegation counts by country-year, merged with World Bank (WDI) and Polity covariates; used in the `predictionOLS.R` script.
   *Source: Conrad, Courtenay R., Jillienne Haglund, and Will H. Moore. 2013. "Disaggregating Torture Allegations: Introducing the Ill-Treatment and Torture (ITT) Country-Year Data." International Studies Perspectives 14(2): 199-220. [ITT project page](https://faculty.ucmerced.edu/cconrad2/Academic/ITT_Data_Collection.html).*
