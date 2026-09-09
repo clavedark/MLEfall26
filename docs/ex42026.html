@@ -4123,7 +4123,7 @@ tr:nth-child(odd) { background-color: #f2f2f2; }
 <p><strong>On AI tools.</strong> Same policy as always: a bot to get <em>unstuck</em>, cited and annotated, and expect to explain your work.</p>
 <section id="the-data" class="level1">
 <h1>The data</h1>
-<p><a href="./code.html#data"><code>leaderyears.csv</code></a> is a <strong>leader-year</strong> file I built from Archigos 4.1 <span class="citation" data-cites="goemans2009archigos">(<a href="#ref-goemans2009archigos" role="doc-biblioref">Goemans, Gleditsch, and Chiozza 2009</a>)</span>, which codes every leader of every nation-state from 1875 through 2015 (a handful of spells were already underway in 1875, so a few years run earlier). One row is one year a leader spent in office. The columns:</p>
+<p><a href="https://raw.githubusercontent.com/clavedark/MLEfall26/main/data/leaderyears.csv"><code>leaderyears.csv</code></a> is a <strong>leader-year</strong> file I built from Archigos 4.1 <span class="citation" data-cites="goemans2009archigos">(<a href="#ref-goemans2009archigos" role="doc-biblioref">Goemans, Gleditsch, and Chiozza 2009</a>)</span>, which codes every leader of every nation-state from 1875 through 2015 (a handful of spells were already underway in 1875, so a few years run earlier). One row is one year a leader spent in office. The columns:</p>
 <table class="caption-top table">
 <colgroup>
 <col style="width: 50%">
@@ -4177,6 +4177,7 @@ tr:nth-child(odd) { background-color: #f2f2f2; }
 </tbody>
 </table>
 <p><strong>I built this file, and I built it wrong.</strong> There is a real error in it — not obvious, but plainly detectable if you look at the data properly, and consequential enough to change one of the conclusions you would draw from your models. It will not announce itself in your estimates: the broken table looks perfectly reasonable. Finding it is the first question.</p>
+<p>Read it straight from that URL — <code>read_csv()</code> takes a URL — so your code runs without a local <code>data/</code> folder and I can run exactly what you ran.</p>
 <p>You’ll also need a measure of <strong>regime type</strong>, which I am not giving you. Get either the Polity V country-year data or a V-Dem aggregate democracy index — find it, download it, read the codebook, and cite it.</p>
 <div style="page-break-after: always;"></div>
 </section>
