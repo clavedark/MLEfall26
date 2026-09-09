@@ -8,8 +8,8 @@ Posted as they're assigned. Turn in both your source (`.qmd`/`.R`) and the rende
 
 - [Exercise #1 — Distributions, Simulation, and the Log-Likelihood](ex12026.qmd) · [answer key](ex12026answers.qmd)
 - [Exercise #2 — Write the Maximizer](ex22026.qmd) · [answer key](ex22026answers.qmd)
-- [Exercise #3 — Build Your Own Estimator](buildtemplate26.qmd) — the in-class build template, completed as homework. Filed under `buildtemplate26`, not `ex32026`.
-- [Exercise #4 — Leaders, Data, and the Probability of Leaving Office](ex42026.qmd)
+- [Exercise #3 — Build Your Own Estimator](buildtemplate26.qmd) — the in-class build template, completed as homework. 
+- [Exercise #4 — Leaders and the Probability of Leaving Office](ex42026.qmd)
 
 ## Code
 
