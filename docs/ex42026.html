@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Dave Clark">
-<meta name="dcterms.date" content="2026-09-09">
+<meta name="dcterms.date" content="2026-09-11">
 
 <title>Exercise #4 — Leaders and the Probability of Leaving Office – MLE - Fall 2026</title>
 <style>
@@ -4080,7 +4080,7 @@ vertical-align: -.125em;
       <div>
       <div class="quarto-title-meta-heading">Published</div>
       <div class="quarto-title-meta-contents">
-        <p class="date">September 9, 2026</p>
+        <p class="date">September 11, 2026</p>
       </div>
     </div>
     
@@ -4185,7 +4185,7 @@ tr:nth-child(odd) { background-color: #f2f2f2; }
 <h1>Part I — The data</h1>
 <p>The three questions to keep asking, in order, are: <em>what should these data look like?</em>, <em>what do they actually look like?</em>, and <em>what does the difference imply?</em> That last one is the real question. A count that comes back wrong is telling you something specific about the file — about how it was built, about what it’s missing, about what a row actually is — and the value of the check is in the diagnosis, not in the number.</p>
 <p>The kinds of things worth being curious about: how many rows there are and how many there ought to be; what identifies a row uniquely; whether the values in a column are the values that column is allowed to take; whether the totals in one column are consistent with the totals in another; what happens to a variable at the edges of the data; and what a row <em>means</em> when you put two files side by side. I’m not giving you a list to work through. Be creative, be suspicious, and show me what you looked at.</p>
-<p><strong>1.</strong> Audit <code>leaderyears.csv</code> and find the error. Report what you checked, what you found, and what it implies about how the file was built. Report the checks that came back clean too — knowing what you ruled out is part of the answer.</p>
+<p><strong>1.</strong> Audit <code>leaderyears.csv</code> and find the error. Report what you checked, what you found, and what it implies about how the file was built - think closely about the structure of the data. These data could be structured differently. If they were, would this problem go away? Report the checks that came back clean too — knowing what you ruled out is part of the answer.</p>
 <p><strong>2.</strong> Fix it. Say what you changed, how many rows it affected, and why your fix is the right one.</p>
 <p><strong>3.</strong> Build a variable for the leader’s age. Check it before you use it.</p>
 <p><strong>4.</strong> Join your regime measure to the leader-year data. Report the row counts before and after, and how many leader-years failed to find a match.</p>

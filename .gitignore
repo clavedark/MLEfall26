@@ -60,6 +60,10 @@ readings/*
 !likelihood26.qmd
 # released deck: maximizing the log-likelihood
 !llfmax26.qmd
+# released deck: discrete-time hazards
+!discretehazards26.qmd
+# closing image for the hazards deck
+!software.jpeg
 # released deck: diagnostics, classification, and fit
 !binaryextensions126.qmd
 # released: codebook for the CES data used in exercise #1
@@ -89,6 +93,8 @@ docs/*
 !docs/likelihood26.html
 # released deck: maximizing the log-likelihood
 !docs/llfmax26.html
+# released deck: discrete-time hazards
+!docs/discretehazards26.html
 # released deck: diagnostics, classification, and fit
 !docs/binaryextensions126.html
 # released: codebook for the CES data used in exercise #1
@@ -100,6 +106,8 @@ docs/*
 !docs/ex22026.html
 # released EXERCISE: only the rendered page. `ex42026.qmd` stays ignored above.
 !docs/ex42026.html
+# released EXERCISE: only the rendered page. `ex52026.qmd` stays ignored above.
+!docs/ex52026.html
 # released ANSWER KEYS, each after its exercise was submitted. Only the rendered
 # page -- the `*answers.qmd` sources stay ignored above. Release a key only once
 # the exercise it answers is in.
@@ -154,6 +162,8 @@ maximization26.R
 buildtemplate26answers.R
 # Same reason: the continuous-run script extracted from ex42026answers.qmd.
 ex42026answers.R
+# Same reason: the continuous-run script extracted from ex52026answers.qmd.
+ex52026answers.R
 # The builder for data/leaderyears.csv. It documents a coding error planted in
 # the file students receive for exercise #4; publishing it hands them the answer.
 make-leaderyears.R
