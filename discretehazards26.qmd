@@ -216,7 +216,7 @@ Models like these are called hazard models, survival models, duration models, or
 ## What spells actually look like
 
 @fig-spells-real shows spells in the dispute data (left panel) and the Archigos leader survival data (right panel). Notice that spells can end in two ways. The unit can fail by experiencing the event of interest (a dispute, leaving office), or the unit can survive through the end of the observation period - it is **censored**. Each bar is one
-spell, starting at zero and running to the length we observe; a filled dot means the spell **ended** and a cross means it's **censored**.
+spell, starting at zero and running to the length we observe; a filled dot means the spell **ended** and a cross means it's **censored**.^[I used Claude code to generate Figures 2 and 13.]
 
 ```{r spells-real}
 #| echo: true
