@@ -167,6 +167,10 @@ ex52026answers.R
 # The builder for data/leaderyears.csv. It documents a coding error planted in
 # the file students receive for exercise #4; publishing it hands them the answer.
 make-leaderyears.R
+# Dave's own pass through exercise #4, written while working the problem. Not the
+# released key (that is ex42026answers.qmd) and not for sharing -- it is working
+# notes, and the filename makes it look like something it is not.
+ex4key.R
 
 # PLSC 501 materials parked here — they belong to the 501 course, not this site.
 Coding Challenges Sp 2026.pptx
