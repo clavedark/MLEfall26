@@ -106,8 +106,10 @@ docs/*
 !docs/ex22026.html
 # released EXERCISE: only the rendered page. `ex42026.qmd` stays ignored above.
 !docs/ex42026.html
-# released EXERCISE: only the rendered page. `ex52026.qmd` stays ignored above.
-!docs/ex52026.html
+# Exercise #5 is NOT released yet -- Dave still has work to do on it. The page was
+# published in bb0f085 by accident; the un-ignore line is removed and the file
+# untracked again. Restore this line when the exercise is ready:
+#   !docs/ex52026.html
 # released ANSWER KEYS, each after its exercise was submitted. Only the rendered
 # page -- the `*answers.qmd` sources stay ignored above. Release a key only once
 # the exercise it answers is in.
