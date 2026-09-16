@@ -124,6 +124,7 @@ def build(qmd_path, out_path, title, howto=None):
 
 build("binaryextensions126.qmd", "binaryextensions126.R", "Diagnostics, Classification, and Fit")
 build("prediction26.qmd", "prediction26.R", "Prediction Methods for MLE Models")
+build("discretehazards26.qmd", "discretehazards26.R", "Discrete-Time Hazards")
 build("buildtemplate26answers.qmd", "buildtemplate26answers.R", "Exercise #3 -- Build Your Own Estimator -- ANSWER KEY",
       howto=["# HOW TO RUN: open MLEfall26.Rproj FIRST, then this script. The ITT data are",
              "# read over the web, so no local data/ folder is needed -- but block [01]",
@@ -133,4 +134,8 @@ build("ex42026answers.qmd", "ex42026answers.R", "Leaders and the Probability of 
              "# resolves. Needs data/leaderyears.csv and data/p5v2018.csv. Run the blocks",
              "# in order -- Part I rewrites `ly` in place as it audits, fixes, derives, and",
              "# merges, so a later block run out of order sees the wrong data."])
-PY
+build("ex52026answers.qmd", "ex52026answers.R", "Build the Spell Data, Then Model the Hazard -- ANSWER KEY",
+      howto=["# HOW TO RUN: open MLEfall26.Rproj FIRST, then this script. Archigos is read",
+             "# over the web, but the Polity file is local (data/p5v2018.csv) and block [01]",
+             "# sources _common.R through here::here(). Run the blocks in order: Part I builds",
+             "# `leaderyears` and everything after it depends on that object."])

@@ -10,6 +10,7 @@ Posted as they're assigned. Turn in both your source (`.qmd`/`.R`) and the rende
 - [Exercise #2 — Write the Maximizer](ex22026.qmd) · [answer key](ex22026answers.qmd)
 - [Exercise #3 — Build Your Own Estimator](buildtemplate26.qmd) — the in-class build template, completed as homework. 
 - [Exercise #4 — Leaders and the Probability of Leaving Office](ex42026.qmd)
+- [Mechanism Paper Assignment](mechanismpaper26.qmd) — three short papers across the semester; due dates are in the assignment.
 
 ## Code
 
