@@ -106,6 +106,10 @@ docs/*
 !docs/ex22026.html
 # released EXERCISE: only the rendered page. `ex42026.qmd` stays ignored above.
 !docs/ex42026.html
+# released ASSIGNMENT: only the rendered page, following the exercise-family rule
+# above. `mechanismpaper26.qmd` stays ignored -- it holds no answers, so publishing
+# the source would be harmless, but the page is what students need.
+!docs/mechanismpaper26.html
 # Exercise #5 is NOT released yet -- Dave still has work to do on it. The page was
 # published in bb0f085 by accident; the un-ignore line is removed and the file
 # untracked again. Restore this line when the exercise is ready:
@@ -173,6 +177,10 @@ make-leaderyears.R
 # released key (that is ex42026answers.qmd) and not for sharing -- it is working
 # notes, and the filename makes it look like something it is not.
 ex4key.R
+# Same, for exercise #5: Dave's own pass, the simple in-class version of
+# ex52026answers.qmd. Exercise #5 is not even released yet (see the docs block
+# above), so this must not leak ahead of it.
+ex5key.R
 
 # PLSC 501 materials parked here — they belong to the 501 course, not this site.
 Coding Challenges Sp 2026.pptx
