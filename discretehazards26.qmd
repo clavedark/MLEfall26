@@ -2,7 +2,7 @@
 title: "Discrete-Time Hazards"
 author: "Dave Clark"
 institute: "Binghamton University"
-date: today
+date: 2026-09-13   # posted this day; pinned so re-renders stop restamping it
 bibliography: refs606.bib
 title-block-banner: TRUE
 format:
@@ -1115,9 +1115,7 @@ hazards, each a nonlinear function of $\widehat\beta$, and a first-order Taylor 
 approximation to it. King–Tomz–Wittenberg's simulation approach is the right one.
 
 ```{r sim-engine}
-#| echo: true
-#| code-fold: true
-#| code-summary: "code"
+#| echo: false
 
 set.seed(20260916)   # the draws below are the whole engine; fix the seed here so
                      # the simulated quantities do not move with chunk order
@@ -1151,9 +1149,7 @@ band <- function(M, p, what) {
 ## 1. The hazard, and 2. the survivor function
 
 ```{r fig-haz-surv}
-#| echo: true
-#| code-fold: true
-#| code-summary: "code"
+#| echo: false
 #| label: fig-haz-surv
 #| fig-height: 3.8
 

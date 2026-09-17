@@ -111,9 +111,10 @@ docs/*
 # the source would be harmless, but the page is what students need.
 !docs/mechanismpaper26.html
 # Exercise #5 is NOT released yet -- Dave still has work to do on it. The page was
-# published in bb0f085 by accident; the un-ignore line is removed and the file
-# untracked again. Restore this line when the exercise is ready:
-#   !docs/ex52026.html
+# published in bb0f085 by accident, pulled back the same day, and released
+# deliberately on 2026-09-16 once Dave had worked through it. Only the rendered
+# page; `ex52026.qmd` stays ignored above, and the key stays ignored entirely.
+!docs/ex52026.html
 # released ANSWER KEYS, each after its exercise was submitted. Only the rendered
 # page -- the `*answers.qmd` sources stay ignored above. Release a key only once
 # the exercise it answers is in.
@@ -178,8 +179,8 @@ make-leaderyears.R
 # notes, and the filename makes it look like something it is not.
 ex4key.R
 # Same, for exercise #5: Dave's own pass, the simple in-class version of
-# ex52026answers.qmd. Exercise #5 is not even released yet (see the docs block
-# above), so this must not leak ahead of it.
+# ex52026answers.qmd. The exercise is released; the key is not, and this is the
+# key in all but name.
 ex5key.R
 
 # PLSC 501 materials parked here — they belong to the 501 course, not this site.
@@ -189,7 +190,12 @@ challenge*-wage1-key.R
 # Claude Code local project config
 .claude/
 
-# Project worklog — local only.
+# Project worklog — local only. Named with a leading underscore so Quarto does
+# NOT render it: a root-level worklog.md is a renderable project input, and any
+# `quarto render` here silently produced docs/worklog.html (caught 2026-09-16).
+# The log names unreleased material, so that page must never exist. Both names
+# are ignored in case an older copy turns up.
+_worklog.md
 worklog.md
 
 # Reference copies of superseded long-form decks (see _reference/README.md).
