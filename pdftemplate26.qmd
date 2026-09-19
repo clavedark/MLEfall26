@@ -1,0 +1,123 @@
+---
+title: "Exercise #N"
+author: "Your Name"
+date: today
+format:
+  pdf:
+    geometry: margin=1in
+    fig-pos: "H"
+    include-in-header:
+      text: \usepackage{float}
+---
+
+<!--
+HOW TO USE THIS FILE
+
+Copy it, rename it, change the title and author, delete these comments, and
+write. Everything below the setup chunk is placeholder text to write over.
+
+Rendering it the first time will tell you whether your machine is set up:
+
+  quarto render yourfile.qmd
+
+If you get "No LaTeX installation found," you have two choices.
+
+  1. Install one, once:            quarto install tinytex
+  2. Skip LaTeX entirely: replace the whole format: block above with
+
+       format:
+         typst:
+           papersize: us-letter
+           fig-format: png
+           margin:
+             x: 1in
+             y: 1in
+
+     Typst ships inside Quarto, so there is nothing to install. It has no
+     floating figures, so it does not need the fig-pos or float lines. The
+     fig-format: png line is not optional -- Typst asks R for SVG figures by
+     default, and R cannot make SVG on a Mac without XQuartz installed. You
+     will know you have hit this if the render stops with "dev.control()
+     called without an open graphics device."
+
+FOR A PAPER RATHER THAN AN EXERCISE, add these to the pdf: block --
+
+    fontsize: 12pt
+    linestretch: 2          # double-spaced
+    number-sections: true
+
+-- and these at the top level, alongside title: and author: --
+
+    abstract: |
+      One paragraph.
+    bibliography: refs.bib
+    link-citations: true
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE,
+                      fig.align = "center", fig.width = 6.5, fig.height = 4)
+
+# print() wraps R output at this width; the default runs off the right margin
+options(width = 70)
+
+library(tidyverse)
+```
+
+# Setting up
+
+Write prose in the body of the document, outside the chunks. Put a heading on
+each section with `#`, and a subsection with `##`.
+
+Replace the data below with your own. This is a placeholder so the template
+renders on any machine without needing a file.
+
+```{r data}
+set.seed(20260918)
+
+d <- tibble(x = rnorm(200),
+            z = rbinom(200, 1, 0.5),
+            y = 1.5 + 0.8 * x - 0.5 * z + rnorm(200))
+```
+
+# Results
+
+Fit the model and show the table.
+
+```{r model}
+m <- lm(y ~ x + z, data = d)
+summary(m)
+```
+
+Refer to a number from the model in your prose by putting R inside backticks
+rather than typing it by hand, so it updates when the model does. The
+coefficient on `x` is `r round(coef(m)["x"], 3)`.
+
+```{r}
+#| label: fig-fit
+#| fig-cap: "Fitted values against x."
+
+ggplot(d, aes(x = x, y = y)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", formula = y ~ x) +
+  theme_minimal()
+```
+
+Give a figure a `label:` starting with `fig-` and a `fig-cap:`, then refer to
+it as @fig-fit and the number takes care of itself.
+
+# Notes
+
+Three things that go wrong in PDF and not in HTML:
+
+- **Long code lines get cut off at the right margin.** LaTeX will not wrap
+  them. Keep source lines under about 80 characters and break long pipes
+  across lines.
+- **Figures drift** to the top of the next page unless pinned. The `fig-pos`
+  and `float` lines in the header do that.
+- **Package startup messages print into the document** unless suppressed. The
+  `message = FALSE` in the setup chunk handles it.
+
+To hide code but keep its output, put `#| echo: false` at the top of a chunk.
+To run code and show nothing, use `#| include: false`. To show code without
+running it, use `#| eval: false`.

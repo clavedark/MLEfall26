@@ -15,10 +15,11 @@ Posted as they're assigned. Turn in both your source (`.qmd`/`.R`) and the rende
 
 ## Code
 
-Standalone R scripts, for slides that have one.
+Standalone R scripts, for slides that have one, and a starting template for your own documents.
 
 - [`predictionOLS26.R`](https://github.com/clavedark/MLEfall26/blob/main/predictionOLS26.R) — R script from the linear model prediction slides.
 - [`binarymodels26.R`](https://github.com/clavedark/MLEfall26/blob/main/binarymodels26.R) — R script from the binary models slides. Reads `dp.dta`, below.
+- [`pdftemplate26.qmd`](https://github.com/clavedark/MLEfall26/blob/main/pdftemplate26.qmd) — a short Quarto starter that renders to PDF, for exercise write-ups and for papers. Copy it, rename it, and write over the placeholder sections. It needs no data, so rendering it unchanged is a quick way to find out whether your machine is set up. Instructions are in the comment block at the top, including what to change for a paper and how to produce a PDF without installing LaTeX. Click **Download raw file**.
 
 ## Data
 

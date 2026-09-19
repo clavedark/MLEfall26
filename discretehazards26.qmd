@@ -15,7 +15,15 @@ filters:
 ---
 
 ```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+#| cache.extra: !expr tools::md5sum("_common.R")
 options(htmltools.dir.version = FALSE)
+
+# cache.extra above: this deck sets `cache: true`, and knitr's cache key is built
+# from the CHUNK's code, not from files it sources. So editing the palette in
+# _common.R left every cached figure drawing the OLD colors, silently -- and a
+# chunk that referenced a NEWLY added constant failed with "object not found",
+# because the cached setup environment predated it. Hashing the file into the
+# key makes a palette edit invalidate the caches that depend on it.
 
 # R starts in the C locale here, which cannot encode non-ASCII characters. Any
 # Greek letter, minus sign, or +/- typed into a ggplot title, subtitle, axis
@@ -126,6 +134,7 @@ But here's a question this model can't answer: **What is the effect of democracy
 #| code-summary: "code"
 #| label: fig-flat
 #| fig-height: 3.6
+#| fig-alt: "Predicted probability of a dispute plotted against years since the last dispute, from zero to thirty-four. The line is perfectly flat at about 0.04 across the whole range, inside a narrow confidence band."
 
 nd <- tibble(stime = 0:34, border = 0, deml = median(dp$deml),
              lncaprat = median(dp$lncaprat), ally = 0)
@@ -136,7 +145,7 @@ pred <- bind_cols(nd, predict(dpm1, newdata = nd, type = "link", se.fit = TRUE))
          ub = plogis(fit + 1.96 * se.fit))
 
 ggplot(pred, aes(stime, p)) +
-  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_grey, alpha = 0.7) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_greyfill, alpha = 0.7) +
   geom_line(color = bu_green, linewidth = 1) +
   scale_y_continuous(limits = c(0, 0.10)) +
   labs(title = "The memoryless model's answer",
@@ -224,6 +233,7 @@ spell, starting at zero and running to the length we observe; a filled dot means
 #| code-summary: "code"
 #| label: fig-spells-real
 #| fig-height: 4
+#| fig-alt: "Two panels, eighteen horizontal bars each, one bar per spell, sorted short to long. Left panel: dyad spells measured in years since the last dispute. Right panel: leader spells measured in years in office. A filled dot at the right end of a bar marks a spell that ended in failure; a cross marks one still running when the data end."
 
 set.seed(20260916)   # the spells below are a random draw; fix it so the figure is stable
 
@@ -318,6 +328,7 @@ tibble(
 #| code-summary: "code"
 #| label: fig-spells
 #| fig-height: 3.4
+#| fig-alt: "Five horizontal bars, one per case, against a time axis running from -3 to 11 with the observation window t = 0 to t = 8 shaded. Each bar is labelled with its kind. Case 2 starts before the window opens (left censored); case 4 continues past where it closes (right censored); case 3 fails exactly at the last period; cases 1 and 5 begin and end inside the window."
 
 # We observe t = 0 to t = 8 and nothing outside it. Two spells deliberately run
 # past an edge: case 2 begins before 0, case 4 is still going after 8.
@@ -341,7 +352,7 @@ ggplot(spells, aes(y = case)) +
             size = 3.0, color = "grey15") +
   scale_color_manual(values = c("uncensored" = bu_green,
                                 "left censored" = bu_lightgreen,
-                                "fails at last period" = bu_palegreen,
+                                "fails at last period" = bu_teal,
                                 "right censored" = bu_black),
                      guide = "none") +
   scale_x_continuous(breaks = c(-2, 0, 2, 4, 6, 8, 10), limits = c(-3, 11.5)) +
@@ -507,6 +518,7 @@ how many rows fell into it:
 #| code-summary: "code"
 #| label: fig-step1
 #| fig-height: 2.4
+#| fig-alt: "Bar chart of leader-years at risk against years in office, 1 to 25. The bars fall steeply and monotonically: the first year holds several thousand leader-years and the count drains to a few hundred by year 25."
 
 ggplot(dplyr::filter(lt, t <= 25), aes(t)) +
   geom_bar(fill = bu_lightgreen, color = bu_green) +
@@ -538,6 +550,7 @@ the table.
 #| code-summary: "code"
 #| label: fig-step3
 #| fig-height: 2.4
+#| fig-alt: "Bar chart of the empirical hazard, failures divided by units at risk, against years in office, 1 to 25. The bars sit around 0.2 and decline gently across the range, staying substantial throughout with no collapse."
 
 lt %>%
   group_by(t) %>%
@@ -565,6 +578,7 @@ line more than step 3 — the `cumprod()`:
 #| code-summary: "code"
 #| label: fig-step4
 #| fig-height: 2.4
+#| fig-alt: "Step plot of the survivor function against years in office, 1 to 25. It starts near one and falls steadily, dropping below 0.5 in the early years and reaching roughly 0.03 by year 25."
 
 lt %>%
   group_by(t) %>%
@@ -705,6 +719,7 @@ emp_dp %>%
 #| code-summary: "code"
 #| label: fig-empirical-dp
 #| fig-height: 6.5
+#| fig-alt: "Three stacked panels against years of peace, 0 to 25, for the dyad data. Top: spells still at risk, falling from about 1,735 to 275. Middle: the empirical hazard, which starts at 0.34, drops to 0.06 in a single step, then grinds below 0.02 and stays flat. Bottom: the survivor function, which falls sharply in the first two years and then flattens near 0.44."
 
 emp_dp25 <- emp_dp %>% dplyr::filter(t <= 25)
 
@@ -818,6 +833,7 @@ The baseline hazards are approximately the constant-only models - they include j
 #| code-summary: "code"
 #| label: fig-shapes
 #| fig-height: 4.2
+#| fig-alt: "Three side-by-side panels, one per baseline specification, each plotting the hazard against years since the last dispute with a confidence band. Constant: a flat line near 0.04. Monotonic: a line declining smoothly across the whole range. Cubic plus covariates: starts near 0.25, falls to 0.14 by year two and 0.02 by year five, bottoms out near 0.007 around year ten, then drifts slightly up."
 
 grid <- tibble(stime = 0:34) %>%
   mutate(stime2 = stime^2, stime3 = stime^3,
@@ -835,7 +851,7 @@ haz <- function(m, lab) {
 bind_rows(haz(h_const, "constant"), haz(h_mono, "monotonic"), haz(h_full, "cubic + X")) %>%
   mutate(model = factor(model, levels = c("constant", "monotonic", "cubic + X"))) %>%
   ggplot(aes(stime, h)) +
-  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_grey, alpha = 0.7) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_greyfill, alpha = 0.7) +
   geom_line(color = bu_green, linewidth = 0.9) +
   facet_wrap(~ model) +
   labs(title = "Three baseline hazards, Democratic Peace dispute data",
@@ -856,6 +872,7 @@ With the baseline free to vary, the $x$ variables are deviations from it. Here i
 #| code-summary: "code"
 #| label: fig-deml
 #| fig-height: 4
+#| fig-alt: "Three hazard curves plotted against years since the last dispute, 0 to 34, one per value of minimum democracy (-10, 0, +10), each with a confidence band and its own dash pattern. All three share the same shape: high in the first two years, then a rapid decline to near zero by year ten. In the earliest years the least democratic curve sits about two and a half times above the most democratic one; by year ten the three are indistinguishable."
 
 esample <- survivaldp %>% drop_na(dispute, stime, border, deml, lncaprat, ally)
 
@@ -887,14 +904,21 @@ hd <- map_dfr(c(-10, 0, 10), avg_hazard) %>%
                             labels = c("least democratic (-10)", "middle (0)",
                                        "most democratic (10)")))
 
-ggplot(hd, aes(stime, h, color = democracy, fill = democracy)) +
+ggplot(hd, aes(stime, h, color = democracy, fill = democracy, linetype = democracy)) +
   geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.45, color = NA) +
   geom_line(linewidth = 0.9) +
   scale_color_manual(values = c(bu_black, bu_lightgreen, bu_green)) +
   scale_fill_manual(values = c(bu_black, bu_lightgreen, bu_green)) +
+  # the dash pattern repeats what the color says, so the three curves stay
+  # separable in greyscale, on a washed-out projector, and for a reader with a
+  # color vision deficiency (WCAG 1.4.1)
+  scale_linetype_manual(values = bu_lty[1:3]) +
   labs(title = "Democracy shifts the baseline hazard up and down",
        subtitle = "Average effects: every case set to each value of democracy, at each survival time.",
-       x = "Years since the last dispute", y = "h(t)", color = NULL, fill = NULL) +
+       x = "Years since the last dispute", y = "h(t)",
+       # all three of color/fill/linetype must be NULL-titled or ggplot draws
+       # the redundant aesthetic as a SECOND legend instead of merging it in
+       color = NULL, fill = NULL, linetype = NULL) +
   theme_bu()
 ```
 
@@ -942,9 +966,13 @@ lt %>%
 Now the same three baselines, on the same specification we would use without any of this.
 
 ```{r leader-models}
-#| echo: true
-#| code-fold: true
-#| code-summary: "code"
+#| echo: false
+#| # HIDDEN (2026-09-19): this is Exercise #5, Part II/III. `code-fold` is NOT
+#| # hiding -- folded code ships in the HTML, in view-source, and in search.json,
+#| # where "leftoffice" was turning up in five public search entries. Only
+#| # `echo: false` keeps it off the page. The OUTPUT still renders, which is the
+#| # part students need; the dyad-side chunks stay visible because those teach
+#| # the technique on data that is not the assignment.
 
 l_const <- glm(leftoffice ~ polity2 + age + female + entry + region,
                family = binomial(link = "logit"), data = lt)
@@ -972,9 +1000,18 @@ covariates. **Polity falls from $0.054$ to $0.039$,
 about 28%, and leader age rises from $0.0159$ to $0.0221$, about 38%.**
 
 ```{r leader-lrt}
-#| echo: true
-#| code-fold: true
-#| code-summary: "code"
+#| include: false
+#| # `include: false`, NOT `echo: false` -- and the difference is the whole point.
+#| # `anova()` PRINTS BOTH MODEL FORMULAS in its Analysis of Deviance table, so
+#| # hiding the code still published
+#| #   Model 1: leftoffice ~ polity2 + age + female + entry + region
+#| #   Model 2: leftoffice ~ t + t2 + t3 + polity2 + age + female + entry + region
+#| # which is the answer to Exercise #5 Q5, in the OUTPUT. Nothing is lost by
+#| # suppressing it: the prose above already quotes chi-sq = 138.2 on 3 df, and
+#| # `dispute-lrt` shows the full deviance table on the DYAD data, which teaches
+#| # the technique without being the assignment.
+#| # Lesson for the next deck: check what a result PRINTS, not just what the
+#| # chunk shows. anova(), summary(), and print.glm all echo the formula.
 
 # The likelihood-ratio test quoted above: cubic baseline against constant.
 anova(l_const, l_cubic, test = "LRT")
@@ -1002,6 +1039,7 @@ the duration dependence instead.
 #| code-summary: "code"
 #| label: fig-two-shapes
 #| fig-height: 3.6
+#| fig-alt: "Two panels with independent y-axes, both plotting a fitted cubic hazard against survival time, 0 to 25. Left, dyads: the hazard collapses from about 0.25 to 0.02 by year five and 0.007 by year ten. Right, leaders: it decays gently from 0.22 to 0.19 at year five, 0.16 at ten, and 0.08 at twenty-five."
 
 dp_shape <- tibble(stime = 0:25) %>%
   mutate(stime2 = stime^2, stime3 = stime^3, border = 0,
@@ -1047,6 +1085,7 @@ trying to describe. Put them on the same axes. The bars are `failures / at risk`
 #| code-summary: "code"
 #| label: fig-fit-raw
 #| fig-height: 3.6
+#| fig-alt: "Two panels, dyads and leaders, each showing the raw hazard as bars and the model’s average fitted hazard as a line over them, against survival time 0 to 25. The line tracks the bars closely from year one onward in both panels; in the dyad panel the bar at year zero reaches 0.34 and the fitted line falls well short of it."
 
 emp <- bind_rows(emp_dp %>% mutate(data = "Dyads"),
                  emp_lt %>% mutate(data = "Leaders")) %>%
@@ -1063,7 +1102,10 @@ fit_lt <- map_dfr(1:25, function(tt) tibble(t = tt, data = "Leaders",
                    type = "response"))))
 
 ggplot(emp, aes(t, h)) +
-  geom_col(fill = bu_palegreen, width = 0.7) +
+  # raw data in neutral grey, model in BU green: the bars carry data so they
+  # need a 3:1 color, but a saturated green bar outweighs the fitted line and
+  # inverts the hierarchy the subtitle describes
+  geom_col(fill = bu_grey, width = 0.7) +
   geom_line(data = bind_rows(fit_dp, fit_lt), aes(t, h), color = bu_green, linewidth = 1) +
   facet_wrap(~ data, scales = "free_y") +
   labs(title = "The fitted cubic against the raw hazard",
@@ -1152,6 +1194,7 @@ band <- function(M, p, what) {
 #| echo: false
 #| label: fig-haz-surv
 #| fig-height: 3.8
+#| fig-alt: "Two panels against years in office, three curves each, one per Polity value (-10, 0, +10), distinguished by both color and dash pattern, with 95% simulated bands. Left panel, the hazard: all three decline slowly, from about 0.15 for Polity -10 and 0.28 for Polity +10 in the first year to 0.11 and 0.20 by year ten. Right panel, the survivor function: the same estimates separate sharply, with 46% of the most autocratic still in power at five years against 22% of the most democratic, and 25% against 6% at ten years."
 
 qi <- bind_rows(
   bind_rows(Map(function(M, p) band(M, p, "h(t): risk of leaving this year"), H, c(-10, 0, 10))),
@@ -1164,15 +1207,16 @@ qi <- bind_rows(
          what = factor(what, levels = c("h(t): risk of leaving this year",
                                         "S(t): still in office")))
 
-ggplot(qi, aes(t, est, color = polity, fill = polity)) +
+ggplot(qi, aes(t, est, color = polity, fill = polity, linetype = polity)) +
   geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.45, color = NA) +
   geom_line(linewidth = 0.9) +
   facet_wrap(~ what, scales = "free_y") +
   scale_color_manual(values = c(bu_black, bu_lightgreen, bu_green)) +
   scale_fill_manual(values = c(bu_black, bu_lightgreen, bu_green)) +
+  scale_linetype_manual(values = bu_lty[1:3]) +
   labs(title = "The same estimates, told two ways",
        subtitle = "Left: the annual risk. Right: the share still in power. 95% simulated intervals.",
-       x = "Years in office", y = NULL, color = NULL, fill = NULL) +
+       x = "Years in office", y = NULL, color = NULL, fill = NULL, linetype = NULL) +
   theme_bu() +
   theme(legend.position = "bottom")
 ```
@@ -1219,9 +1263,13 @@ Being a median it is unbothered by the long tail, which matters in these data, w
 monarchs served for decades and would drag a mean around.
 
 ```{r median-tenure}
-#| echo: true
-#| code-fold: true
-#| code-summary: "code"
+#| echo: false
+#| # HIDDEN (2026-09-19): this is Exercise #5, Part II/III. `code-fold` is NOT
+#| # hiding -- folded code ships in the HTML, in view-source, and in search.json,
+#| # where "leftoffice" was turning up in five public search entries. Only
+#| # `echo: false` keeps it off the page. The OUTPUT still renders, which is the
+#| # part students need; the dyad-side chunks stay visible because those teach
+#| # the technique on data that is not the assignment.
 
 med_draw <- function(M) apply(M, 2, function(col) {
   w <- which(col < 0.5); if (length(w)) w[1] else NA_integer_
@@ -1382,6 +1430,7 @@ other cause never removes anyone from the risk set, and the two "probabilities" 
 #| code-summary: "code"
 #| label: fig-cif
 #| fig-height: 4
+#| fig-alt: "Two panels, closed autocracy and full democracy, each plotting three cumulative incidence curves against years in office, 1 to 20, distinguished by both color and dash pattern: still in office, left regularly, removed irregularly. In both panels the three curves sum to one at every year. Under democracy the regular-exit curve rises fast and dominates; under autocracy the still-in-office curve stays far higher and irregular removal takes a visibly larger share."
 
 # No R package computes the CIF for DISCRETE-time, person-period data, so we do
 # the arithmetic by hand. For CONTINUOUS time there are two:
@@ -1594,4 +1643,9 @@ logit answers neither and looks like it answered both.
 
 In November we come back to all of this in continuous time, where survival time is the dependent variable rather than a regressor.
 
-![](software.jpeg)
+<!-- Alt text goes in the {fig-alt=} attribute, NOT in the []. Pandoc renders
+     `![text](img)` as a figure with `text` as a VISIBLE <figcaption> and leaves
+     the img with no alt attribute at all -- so the obvious way to write this
+     puts the description on the screen for everyone and still gives a screen
+     reader nothing. Verified both ways 2026-09-19. -->
+![](software.jpeg){fig-alt="Meme headed \"If statistics programs/languages were cars...\" with five panels: Excel is a man with his head in his hands beside a broken-down car; SPSS is a clown car; SAS is an immaculate 1930s luxury coupe; Stata is a sensible blue family SUV; and R is the entire armed convoy from Mad Max: Fury Road."}

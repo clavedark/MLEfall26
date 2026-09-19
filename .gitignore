@@ -73,6 +73,12 @@ readings/*
 # have to be able to open and edit the .qmd itself. It contains no answers -- the
 # nine TODO chunks are empty. `buildtemplate26answers.qmd` stays ignored above.
 !buildtemplate26.qmd
+# released SOURCE ONLY -- a minimal .qmd -> PDF starter for write-ups and papers.
+# Deliberately has NO rendered page: its instructions live in an HTML comment
+# block, which a rendered page would swallow, leaving students the placeholder
+# text and none of the guidance. Linked from the Code section of code.qmd as a
+# GitHub blob, the same way the .R scripts there are.
+!pdftemplate26.qmd
 
 # Rendered output: ignore everything under docs/, then re-include the published
 # pages and the shared assets GitHub Pages needs to serve them.
@@ -182,6 +188,14 @@ ex4key.R
 # ex52026answers.qmd. The exercise is released; the key is not, and this is the
 # key in all but name.
 ex5key.R
+# The FULL exercise #5 key, 153 lines, and the most dangerous file in the repo:
+# it starts from the raw Archigos URL, so it answers Part I (build the
+# person-period data) as well as Parts II and III. It was untracked but NOT
+# ignored until 2026-09-19 -- a single `git add -A` would have published the
+# whole key while the exercise was live. It escaped the rule above only because
+# of the `dc` in the name, so match the family, not one spelling.
+ex5*key*.R
+ex5keydc.R
 
 # PLSC 501 materials parked here — they belong to the 501 course, not this site.
 Coding Challenges Sp 2026.pptx
