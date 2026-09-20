@@ -3,7 +3,7 @@ title: "Prediction Methods in the Linear Model"
 # subtitle: "A preview of the MLE prediction toolkit, in the familiar OLS setting"
 author: "Dave Clark"
 institute: "Binghamton University"
-date: today
+date: 2026-08-12   # first published this day; pinned so re-renders stop restamping it
 bibliography: refs606.bib
 title-block-banner: TRUE
 format:
@@ -16,6 +16,12 @@ filters:
 ---
 
 ```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+#| cache.extra: !expr tools::md5sum("_common.R")
+#| # knitr keys the cache on the CHUNK's code, not on files the chunk sources.
+#| # Without this line a palette edit in _common.R leaves every cached figure
+#| # drawing the OLD colors and says nothing; a newly added constant fails with
+#| # "object not found" from a stale setup environment. Hashing the file in makes
+#| # a _common.R edit invalidate the caches that depend on it.
 options(htmltools.dir.version = FALSE)
 knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
                       warning = FALSE, error = FALSE, message = FALSE)

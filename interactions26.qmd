@@ -1,0 +1,1278 @@
+---
+title: "Interactions in Nonlinear Models"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: 2026-09-17   # posted this day; pinned so re-renders stop restamping it
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: true
+filters:
+  - parse-latex
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+#| cache.extra: !expr tools::md5sum("_common.R")
+#| # knitr keys the cache on the CHUNK's code, not on files the chunk sources.
+#| # Without this line a palette edit in _common.R leaves every cached figure
+#| # drawing the OLD colors and says nothing; a newly added constant fails with
+#| # "object not found" from a stale setup environment. Hashing the file in makes
+#| # a _common.R edit invalidate the caches that depend on it.
+options(htmltools.dir.version = FALSE)
+
+# R starts in the C locale here, which cannot encode non-ASCII characters. Any
+# Greek letter, minus sign, or +/- typed into a ggplot title, subtitle, axis
+# label, or annotation gets drawn as the literal text <U+03B1>. Setting a UTF-8
+# ctype fixes it for the whole document.
+Sys.setlocale("LC_CTYPE", "en_US.UTF-8")
+
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+library(haven)
+library(patchwork)
+library(broom)
+library(modelsummary)
+library(kableExtra)
+
+source("_common.R")   # Binghamton palette + theme_bu()
+
+set.seed(20260917)
+
+# First running data: Oneal & Russett democratic peace, dyad-year -- the same
+# data and mostly the same model we have been using since week 1.
+dp <- read_dta(here::here("data", "dp.dta"))
+dp$lncaprat <- log(dp$caprat)   # a capability ratio is multiplicative, so model it on the log scale
+
+# Second running data: the leader-years file from last week. One row per year a
+# leader held office; leftoffice marks the year the spell ends. t is built on the
+# full file, BEFORE the Polity join, so that dropped years cannot shift the clock.
+leaders <- read_csv(here::here("data", "leaderyears.csv"), show_col_types = FALSE) %>%
+  mutate(leftoffice = if_else(exitreason == "Still in Office", 0L, leftoffice),
+         yrborn = na_if(yrborn, -999),
+         age    = year - yrborn) %>%
+  arrange(obsid, year) %>%
+  group_by(obsid) %>%
+  mutate(t = row_number()) %>%
+  ungroup()
+
+polity <- read_csv(here::here("data", "p5v2018.csv"), show_col_types = FALSE) %>%
+  dplyr::select(ccode, year, polity2)
+
+lt <- leaders %>%
+  left_join(polity, by = c("ccode", "year"), relationship = "many-to-one") %>%
+  filter(!is.na(polity2), !is.na(age), entry != "Unknown") %>%
+  mutate(entry = factor(entry, levels = c("Regular", "Irregular", "Foreign Imposition")),
+         t2 = t^2, t3 = t^3)
+```
+
+<style>
+table, th, td { font-size: 18px; }
+tr:nth-child(odd) { background-color: #f2f2f2; }
+</style>
+
+# Goals
+
+Back in the [first week's slides](binarymodels26.html) I mentioned that for a logit coefficient,  changing *any* $x_k$ shifts the prediction along the CDF, so changing a control variable changes the predicted probability even when the variable you care about sits still — and that we would come back to what @Nagler94 calls the "inherent" interactivity of these models. Time to revisit the always-present "inherent" interactivity and multiplicative interactions.
+
+Here's where we're headed: 
+
+- In a nonlinear model, the effect of $x_1$ **already depends on** $x_2$, whether or not you asked for it. This is **compression**, and it is a property of the link function, not of your theory.
+- A multiplicative term $\beta_3 x_1 x_2$ does something **different**. Compression makes the effect of $x_1$ vary in *probability* space, in a shape the link dictates. A product term makes it vary in the *linear predictor*, which is where a conditional hypothesis actually lives.
+- Because both channels are running at once, three questions follow: should I include the interaction? Is the linear form it imposes **right**? And which of several possible **quantities** answers my question?
+
+Social scientists have been arguing about interaction terms in nonlinear models for decades, and have been misinterpreting interactions frequently for just as long. @brambor2006understanding is the discipline's standard on specifying and interpreting the linear case, and everything in it still applies here in the nonlinear setting. @berry2010interaction and @berry2012improving argue we can sometimes evaluate conditional claims relying on compression rather than interactions, though @rainey2016compression disagrees, arguing for the interaction term. @hainmueller2019interaction is about whether the product term you wrote down describes your data. @zhirnov2023 is about which quantity you should have been reporting all along.
+
+Everything you already know about multiplicative interactions in the linear model still holds. If that material is distant in your memory, please review the [501 slides on interactions](https://clavedark.github.io/501sp24/interactions24.html) before going further — I am going to assume you know this material.
+
+# Interactions in the linear model, briefly
+
+Start where the intuition is easiest. In
+
+$$
+E[y] = \beta_0 + \beta_1 x_1 + \beta_2 x_2,
+$$
+
+the effect of $x_1$ is $\partial E[y] / \partial x_1 = \beta_1$. It does not depend on $x_2$, it does not depend on the value of $x_1$, and it does not depend on where in the data you are standing. That constancy is the assumption of **structural stability** — the same slope for everyone —  if your theory says the effect of $x_1$ is bigger for some cases than others, structural stability is the assumption we need to relax.
+
+We relax it by multiplying:
+
+$$
+E[y] = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \beta_3 x_1 x_2 ,
+$$
+
+and now
+
+$$
+\frac{\partial E[y]}{\partial x_1} = \beta_1 + \beta_3 x_2 .
+$$
+
+The effect of $x_1$ is a **function** of $x_2$ rather than a constant at the coefficient. Three consequences follow, and they are the ones @brambor2006understanding spend their article on:
+
+- **Include the constituent terms.** $x_1$ and $x_2$ both belong in the model on their own. Dropping one imposes a restriction you almost certainly did not intend. For example, if you exclude $x_1$, you impose $\beta_1 = 0$ — which says the effect of $x_1$ is zero *when $x_2 = 0$*, not that it is zero everywhere, since $\partial E[y]/\partial x_1 = \beta_3 x_2$ is still alive at every other value of $x_2$. And it does nothing to make the effect of $x_2$ unconditional: that is still $\beta_2 + \beta_3 x_1$. You have imposed a restriction at one point on $x_2$ and left the conditionality everywhere else, which is almost never the restriction anyone means to impose.
+- **Every interpretation is conditional.** $\beta_1$ is not "the effect of $x_1$." It is the effect of $x_1$ *when $x_2 = 0$*, which is meaningful only if $x_2 = 0$ is a real, observed, interesting value. $\beta_3$ is not "the interaction effect" either; it is how much the effect of $x_1$ changes per unit of $x_2$.
+- **Inference is conditional too.** To ask whether the effect of $x_1$ differs from zero when $x_2 = 5$, you need a standard error on $\beta_1 + 5\beta_3$, not on $\beta_1$ and not on $\beta_3$. That means the covariance:
+
+$$
+\mathrm{Var}(\widehat\beta_1 + x_2 \widehat\beta_3) = \mathrm{Var}(\widehat\beta_1) + x_2^2\,\mathrm{Var}(\widehat\beta_3) + 2 x_2 \,\mathrm{Cov}(\widehat\beta_1, \widehat\beta_3).
+$$
+
+We did this arithmetic in the [prediction slides](prediction26.html) for the quadratic, where the effect of democracy was $\beta_d + 2d\beta_{d^2}$ and the same three-term variance showed up. It is the same calculation; only the multiplier changes. [Matt Golder's site](https://mattgolder.com/interactions) is the best single reference for interaction standard errors.
+
+An important note about the linear model: **in the linear model, if you want the effect of $x_1$ to depend on $x_2$, you have to include a multiplicative interaction.** Nothing else will do it for you. This is important because the nonlinear case is a bit different.
+
+# Two sources of interaction
+
+In the nonlinear models, the effect of $x_1$ depends on the value of $x_2$ whether you include a multiplicative term or not.
+
+Before any algebra, here is the contrast in one picture. Both panels have the same structure — $x_1$ continuous, $x_2$ binary, $x_2$ shifting the intercept — and neither is fitted to anything. The staircases take a one-unit step in $x_1$ and measure what it buys in probability.
+
+```{r lin-vs-logit}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-lin-logit
+#| fig-cap: "The same one-unit step in $x_1$, taken at three places and in both groups. Left, a linear probability model; right, a logit. Neither model contains a product term."
+#| fig-alt: "Two panels, each showing two upward-sloping curves for the x2 = 0 and x2 = 1 groups with small staircase marks at three positions. In the left panel the curves are straight parallel lines and every staircase riser is labelled 0.070. In the right panel the curves are S-shaped and the risers are labelled 0.085, 0.190 and 0.044 for one group and 0.157, 0.127 and 0.018 for the other, so the same step buys very different amounts depending on position and group."
+#| fig-width: 11
+#| fig-height: 4.9
+
+lp_b <- c(b0 = 0.50, b1 = 0.07, b2 = 0.12)   # linear probability model
+lg_b <- c(b0 = 0.00, b1 = 0.80, b2 = 1.00)   # logit, same structure
+
+f_lin <- function(x1, x2) lp_b["b0"] + lp_b["b1"] * x1 + lp_b["b2"] * x2
+f_log <- function(x1, x2) plogis(lg_b["b0"] + lg_b["b1"] * x1 + lg_b["b2"] * x2)
+
+x1_grid  <- seq(-5, 5, 0.02)
+step_at  <- c(-3, 0, 3)                      # where we take the one-unit step
+
+# the curve for one model, both groups: Pr(y=1) at every x1 on the grid
+curves <- function(f) expand_grid(x1 = x1_grid, x2 = c(0, 1)) %>%
+  mutate(pr = f(x1, x2))
+
+# the staircases: at each step_at value, what one unit of x1 buys in each group.
+# lo is Pr at the bottom of the step, hi is Pr one unit later, rise is the gap.
+risers <- function(f) expand_grid(a = step_at, x2 = c(0, 1)) %>%
+  mutate(lo = f(a, x2), hi = f(a + 1, x2), rise = hi - lo)
+
+step_panel <- function(f, ttl) {
+  cv <- curves(f) %>% mutate(grp = factor(x2, levels = c(0, 1),
+                                          labels = c("x2 = 0", "x2 = 1")))
+  # group 0's label sits below its riser and group 1's above, so the two stay
+  # apart where the curves crowd together near the ceiling
+  rs <- risers(f) %>% mutate(ly = if_else(x2 == 0, lo - 0.045, hi + 0.045))
+
+  ggplot(cv, aes(x = x1, y = pr, color = grp, linetype = grp)) +
+    geom_line(linewidth = 0.9) +
+    geom_segment(data = rs, aes(x = a, xend = a + 1, y = lo, yend = lo),
+                 inherit.aes = FALSE, color = bu_black, linewidth = 0.5) +
+    geom_segment(data = rs, aes(x = a + 1, xend = a + 1, y = lo, yend = hi),
+                 inherit.aes = FALSE, color = bu_black, linewidth = 0.7) +
+    geom_text(data = rs, aes(x = a + 1.1, y = ly, label = sprintf("%.3f", rise)),
+              inherit.aes = FALSE, hjust = 0, size = 3.1, color = bu_black) +
+    scale_color_manual(values = c("x2 = 0" = bu_green, "x2 = 1" = bu_lightgreen),
+                       name = NULL) +
+    scale_linetype_manual(values = bu_two_lty, name = NULL) +
+    coord_cartesian(ylim = c(-0.03, 1.07), xlim = c(-5, 5.8)) +
+    labs(title = ttl, x = expression(x[1]), y = "Pr(y = 1)") +
+    theme_bu() +
+    theme(plot.title = element_text(size = 11), legend.position = "inside",
+          legend.position.inside = c(0.86, 0.16), legend.background = element_blank())
+}
+
+step_panel(f_lin, "Linear: every 1-unit step buys 0.070") |
+  step_panel(f_log, "Logit: the same step buys 0.018 to 0.190")
+```
+
+In the linear model every step is an increase of $0.070$ — the same at $x_1 = -3$ as at $x_1 = 3$, and the same in both groups. That constancy is structural stability. In the logit the same step produces increases anywhere from $0.018$ to $0.190$, a factor of ten, and **which group gets the bigger step changes as you move along $x_1$**: $x_2 = 1$ gains more on the left, less in the middle and at the right. So "the effect of $x_1$ is larger for group 1" is not even a well-formed claim here without saying *where*. Note that neither panel contains an interaction term.
+
+
+## Compression: the model is already "inherently" interactive
+
+In the logit,
+
+$$
+Pr(y=1 \mid x) = \Lambda(x\beta) = \frac{1}{1+e^{-x\beta}},
+$$
+
+and the marginal effect of $x_1$ is not $\beta_1$. Differentiating through the link,
+
+$$
+\begin{aligned}
+\frac{\partial Pr(y=1)}{\partial x_1} &= \frac{\partial \Lambda(x\beta)}{\partial (x\beta)} \cdot \frac{\partial (x\beta)}{\partial x_1} \\[4pt]
+&= \lambda(x\beta)\,\beta_1 \\[4pt]
+&= \Lambda(x\beta)\big(1 - \Lambda(x\beta)\big)\,\beta_1 .
+\end{aligned}
+$$
+
+Look closely at the last line. The effect of $x_1$ on the probability is the coefficient $\beta_1$ **times a weight**, and the weight is the logistic density evaluated at the linear predictor, $x\beta$. Generically, for any link whose CDF is $F$ with density $f$, the marginal effect is
+
+$$
+\frac{\partial Pr(y=1)}{\partial x_1} = f(x\beta)\,\beta_1 ,
+$$
+
+and it is the *density* $f$ that does the weighting. The logit is the case where that density has a tidy closed form in terms of its own CDF,
+
+$$
+\begin{aligned}
+\lambda(x\beta) &= \Lambda(x\beta)\big(1 - \Lambda(x\beta)\big) \\
+&= p\big(1 - p\big),
+\end{aligned}
+$$
+
+which is why you see $p(1-p)\widehat\beta_1$ everywhere. Do not carry that form to other links: the probit's weight is $\phi(x\beta)$, and $\phi(0) = 0.399$, not $\Phi(0)(1-\Phi(0)) = 0.25$.
+
+So $\beta_1$ is weighted by the **height of the density** at $x\beta$ — not by an area under it. (An area under the density is what you get for a *discrete* change in $x$, and we come to that below.)
+
+Let's think explicitly about what's in $x\beta$. Everything. $x_2$ is in there, and $x_3$, and the constant. So the weight — and therefore the effect of $x_1$ — **depends on the values of every other variable in the model**. Move $x_2$, and you have changed the weight and so moved the effect of $x_1$ — in this specific sense, the effect of $x_1$ depends on the values of the other variables, and so the model is interactive. 
+
+This is **compression**. The term is from @berry2010interaction, and it describes what the weight does: as $x\beta$ moves away from zero and the predicted probability heads toward 0 or 1, the weight shrinks, so the same coefficient buys less and less probability. Effects get compressed against the floor and the ceiling. @Nagler94 makes the same observation from the other direction, describing these models as "'interactive' in all of their variables" with the interactivity inherent in the specification rather than chosen by the analyst [@Nagler94; @Nagler91; @aiNorton2003; @berry2010interaction].
+
+Let's look at the weight.
+
+```{r weight}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-weight
+#| fig-cap: "The logistic weight $\\lambda(x\\beta) = \\Lambda(1-\\Lambda)$, with the observed range of the linear predictor in the democratic peace model marked. The weight peaks at 0.25 where $x\\beta = 0$, and the democratic peace data sit almost entirely to the left of that peak."
+#| fig-alt: "The logistic weight, a bell-shaped curve rising to a maximum of 0.25 at a linear predictor of zero and falling away symmetrically on both sides. A shaded band covers roughly minus seven to minus one on the horizontal axis, marking the range of the linear predictor actually observed in the democratic peace model: it sits entirely on the low, flat left shoulder of the curve, well away from the peak."
+#| fig-width: 9
+#| fig-height: 4.5
+
+m0 <- glm(dispute ~ border + deml + lncaprat + ally,
+          family = binomial(link = "logit"), data = dp)
+
+xb_obs <- predict(m0, type = "link")          # observed linear predictions
+grid   <- tibble(xb = seq(-8, 4, 0.02)) %>%
+  mutate(lambda = plogis(xb) * (1 - plogis(xb)),
+         pr     = plogis(xb))
+
+ggplot(grid, aes(x = xb)) +
+  annotate("rect", xmin = min(xb_obs), xmax = max(xb_obs),
+           ymin = 0, ymax = 0.26, fill = bu_palegreen, alpha = 0.55) +
+  geom_line(aes(y = lambda), color = bu_green, linewidth = 1) +
+  annotate("segment", x = 0, xend = 0, y = 0, yend = 0.25,
+           linetype = "dashed", color = bu_grey) +
+  annotate("text", x = 1.3, y = 0.243, hjust = 0, size = 3.6, color = bu_black,
+           label = "max weight 0.25, at xb = 0") +
+  annotate("text", x = mean(range(xb_obs)), y = 0.13, size = 3.6, color = bu_black,
+           label = "range of xb in the\ndemocratic peace model") +
+  labs(x = expression(x*beta), y = expression(lambda(x*beta))) +
+  theme_bu()
+```
+
+The weight is largest — exactly $0.25$ — at $x\beta = 0$, where the predicted probability is one half, and it falls away symmetrically in both directions. Disputes are rare in these data, so the model lives out on the left tail where the weight is small. And notice what that means: the weight varies by a factor of several across the observed range, so the *same* $\beta_1$ produces meaningfully different effects for different cases, entirely because those cases differ on the other covariates.
+
+::: {.callout-note title="Important concept"}
+Compression means the nonlinear model is interactive in all of its variables by construction. You do not have to specify anything to get it, and you cannot turn it off. It is a consequence of using a link function that flattens toward 0 and 1.
+:::
+
+## Mapping onto the CDF
+
+Let's reduce the model to two variables — a continuous $x_1$ you care about and a dummy control $d$:
+
+$$
+Pr(y = 1) = \Lambda(\beta_1 x_1 + \beta_d d).
+$$
+
+@fig-cdf-shift below shows predictions from this model, so the linear predictor, $x\beta$ mapped onto the probability space. The horizontal axis is the linear predictor; for a $d = 0$ case, the effecet is just $\beta_1 x_1$ — so **moving right along the axis means a larger value of the variable of interest**. The two CDFs are at the two values of the dummy variable.
+
+Call the dummy's coefficient $\beta_d = \delta$, and set it to $1$ for this figure — an ordinary size for a logit coefficient. The dummy adds $\delta$ to the linear predictor, which is an **intercept shift**. Just like the linear model, dummy variables are **differential intercepts** added to the value of $\widehat{\beta_0}$. But in the binomial model, we care about the probability, and the probability is the CDF evaluated at $x\beta$ — so shifting $x\beta$ slides you along the curve, and how much probability you pick up by sliding depends on how steep the curve is at any given point.
+
+```{r cdf-shift}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-cdf-shift
+#| fig-cap: "One dummy control on the logistic curve, with no data behind it. Left: both groups lie on the same curve, the $d=1$ group shifted by $\\delta = 1$, and the four vertical segments are the effect of the dummy. Right: that same vertical distance at every value of $x\\beta$."
+#| fig-alt: "Two panels. The left panel shows two S-shaped logistic curves, a solid one for the d=0 group and a dashed one for d=1 shifted to the left; vertical segments between them at four positions are labelled 0.029, 0.150, 0.231 and 0.072, so the same dummy produces very different probability changes depending on position. The right panel plots that difference at every position as a single hump-shaped curve carrying the same four labelled points, peaking just left of zero rather than at zero."
+#| fig-width: 10
+#| fig-height: 4.4
+
+delta <- 1     # the dummy's coefficient, on the linear-predictor scale
+
+g <- tibble(xb = seq(-6, 6, 0.01)) %>%
+  mutate(`d = 0` = plogis(xb),
+         `d = 1` = plogis(xb + delta),
+         gap     = `d = 1` - `d = 0`)      # vertical distance between the curves
+
+g_long <- g %>% pivot_longer(c(`d = 0`, `d = 1`),
+                             names_to = "grp", values_to = "pr")
+
+# four places to measure the vertical distance between the curves
+marks <- tibble(xb = c(-4, -2, 0, 2)) %>%
+  mutate(lo = plogis(xb), hi = plogis(xb + delta), gap = hi - lo)
+
+p_curves <- ggplot(g_long, aes(x = xb, y = pr, color = grp, linetype = grp)) +
+  geom_line(linewidth = 0.9) +
+  geom_segment(data = marks, aes(x = xb, xend = xb, y = lo, yend = hi),
+               inherit.aes = FALSE, color = bu_black, linewidth = 0.6) +
+  geom_point(data = marks, aes(x = xb, y = lo), inherit.aes = FALSE,
+             color = bu_black, size = 1.2) +
+  geom_point(data = marks, aes(x = xb, y = hi), inherit.aes = FALSE,
+             color = bu_black, size = 1.2) +
+  geom_text(data = marks, aes(x = xb + 0.22, y = (lo + hi) / 2,
+                              label = sprintf("%.3f", gap)),
+            inherit.aes = FALSE, hjust = 0, size = 3.2, color = bu_black) +
+  scale_color_manual(values = c("d = 0" = bu_green, "d = 1" = bu_lightgreen),
+                     name = NULL) +
+  scale_linetype_manual(values = bu_two_lty, name = NULL) +
+  labs(x = expression(x*beta~"for the"~d==0~"group"), y = "Pr(y = 1)",
+       color = NULL, linetype = NULL) +
+  theme_bu() +
+  theme(legend.position = "inside", legend.position.inside = c(0.14, 0.86),
+        legend.background = element_blank())
+
+p_gap <- ggplot(g, aes(x = xb, y = gap)) +
+  geom_vline(xintercept = -delta / 2, color = bu_grey, linetype = "dotted") +
+  geom_line(color = bu_green, linewidth = 0.9) +
+  geom_point(data = marks, aes(x = xb, y = gap), color = bu_black, size = 1.3) +
+  geom_text(data = marks, aes(x = xb, y = gap + 0.016,
+                              label = sprintf("%.3f", gap)),
+            size = 3.2, color = bu_black) +
+  annotate("text", x = -1.9, y = 0.215, hjust = 1, size = 3.1, color = bu_black,
+           label = "peak at -delta/2,\nnot at 0") +
+  labs(x = expression(x*beta~"for the"~d==0~"group"),
+       y = expression(Pr(y==1~"|"~d==1) - Pr(y==1~"|"~d==0))) +
+  theme_bu()
+
+p_curves | p_gap
+```
+
+Look at the left panel of @fig-cdf-shift. The two CDFs are the *same curve*, one slid horizontally by $\delta$. The four vertical segments measure the effect of being in the $d=1$ group rather than the $d=0$ group, and they are all different: $0.029$ out in the left tail, $0.150$ partway up, $0.231$ at the middle, back down to $0.072$ on the way to the ceiling. Same $\delta$ every time. Different effect every time.
+
+The right panel is the same quantity at every position rather than at four of them — the vertical distance between the two curves, written $Pr(y=1 \mid d=1) - Pr(y=1 \mid d=0)$, which is all the $y$-axis there means. The four points on it are the four segments from the left panel. And remember what the horizontal axis is: cases further right have a larger $x_1$. So shifting the value of the control variable changes the effect of $x_1$, magnifying to varying degrees across the range of $x\beta$. 
+
+**A very important note here:** the CDF on the left of @fig-cdf-shift shows the predicted probability of $y$ for the cases where $x_2=0$ and where $x_2=1$ over the values of $x_1$. The distances between the two CDFs (.029, .15, .231, etc.) are the differences in the probability of $y$ given a change in $x\beta$. In the case of a dummy variable change, **these are the marginal effects of $x_d$ on $Pr(y=1)$ across the values of $x_1$.** This is an important quantity of interest we'll use in examining interaction effects.
+
+## Is the gap between the two CDFs the density?
+
+Not quite. The vertical distance between the two curves is
+
+$$
+\Lambda(x\beta + \delta) - \Lambda(x\beta) = \int_{x\beta}^{x\beta + \delta} \lambda(u)\,du ,
+$$
+
+which is just what a CDF is — a difference of two CDFs is the density accumulated *between* them. So the gap is an **area** under the density rather than a height on it, and the width of that area is $\delta$ itself: a bigger coefficient means a wider strip and so a larger effect.
+
+```{r density-area}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-density-area
+#| fig-cap: "The same four numbers as areas. Each shaded strip runs from $x\\beta$ to $x\\beta + \\delta$ under the logistic density; its area is the vertical gap at that $x\\beta$ in @fig-cdf-shift. The strips are all $\\delta$ wide because $\\delta$ is what the dummy adds to the linear predictor."
+#| fig-alt: "The bell-shaped logistic density with four shaded vertical strips under it, each one unit wide, centred at minus four, minus two, zero and two. The strips are labelled 0.029, 0.150, 0.231 and 0.072 — the same four numbers that label the gaps between the two CDF curves in the previous figure. A double-headed arrow over the leftmost strip marks its width as delta equals one."
+#| fig-width: 8
+#| fig-height: 4.4
+
+# one strip per mark, running from xb to xb + delta: the interval the dummy moves
+# a case across, so the strip width IS delta and is not a display choice
+strips <- tibble(xb = numeric(0), x = numeric(0), y = numeric(0))
+
+for (i in seq_len(nrow(marks))) {
+  left  <- marks$xb[i]                       # this strip starts here
+  xs    <- seq(left, left + delta, length.out = 200)   # ... and is delta wide
+  strips <- bind_rows(strips,
+                      tibble(xb = left, x = xs, y = dlogis(xs)))
+}
+
+ggplot(tibble(x = seq(-6, 6, 0.01), y = dlogis(x)), aes(x = x, y = y)) +
+  geom_area(data = strips, aes(x = x, y = y, group = xb),
+            fill = bu_palegreen, alpha = 0.85) +
+  geom_line(color = bu_green, linewidth = 0.9) +
+  # sit each label clear of its own strip: the density is highest at whichever
+  # end of [xb, xb+delta] is nearest zero, so clear THAT height
+  geom_text(data = marks,
+            aes(x = xb + delta / 2,
+                y = dlogis(pmin(pmax(0, xb), xb + delta)) + 0.022,
+                label = sprintf("%.3f", gap)),
+            inherit.aes = FALSE, size = 3.2, color = bu_black) +
+  annotate("segment", x = -4, xend = -3, y = 0.145, yend = 0.145,
+           color = bu_black, linewidth = 0.5,
+           arrow = grid::arrow(ends = "both", length = unit(0.05, "in"))) +
+  annotate("text", x = -3.5, y = 0.158, size = 3.2, color = bu_black,
+           label = "width = delta = 1") +
+  labs(x = expression(x*beta~"for the"~d==0~"group"), y = expression(lambda(x*beta))) +
+  theme_bu()
+```
+
+Imagine a smaller $\delta$ - so the coefficient on the dummy variable is small; the shaded area in fig-density-area is smaller, and the weight ($p(1-p)$) in the marginal effect $p(1-p)*\beta_i$ is also smaller. But that same area also has different weight depending on whether we evaluate it at $x\beta=-3$ or $x\beta=0$.
+
+**This is compression, visualized geometrically.** Whether a case sits at $x\beta = -4$ or $x\beta = 0$ is determined by its *other covariates*. So the effect of the dummy depends on the other variables in the model — not because we specified an interaction, but because the curve is not a straight line. On a straight line the gap would be $\delta$ everywhere, which is exactly the linear model's structural stability. Bend the line and structural stability is gone whether you wanted it gone or not.
+
+
+
+# Compression in the democratic peace model
+
+Let's examine the familiar democratic peace logit — disputes on contiguity, weak-link democracy, the logged capability ratio, and alliance. **There is no product term in this model.** Let's ask whether the effect of democracy is different for contiguous dyads than for non-contiguous ones.
+
+```{r compression-border}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+X <- model.matrix(m0)
+b <- coef(m0)
+
+# average marginal effect of democracy, with border set to a value for every case
+ame_deml <- function(bord) {
+  Xi <- X
+  Xi[, "border"] <- bord                   # counterfactual: all dyads contiguous, or none
+  p <- plogis(as.vector(Xi %*% b))
+  mean(p * (1 - p)) * b["deml"]            # average weight, times the coefficient
+}
+
+# average predicted probability at the same two counterfactuals
+avg_pr <- function(bord) {
+  Xi <- X
+  Xi[, "border"] <- bord
+  mean(plogis(as.vector(Xi %*% b)))
+}
+
+comp <- tibble(border = c(0, 1),
+               avg_pr = map_dbl(border, avg_pr),
+               ame    = map_dbl(border, ame_deml))
+comp
+```
+
+```{r compression-ratio, echo=FALSE}
+r_comp <- comp$ame[2] / comp$ame[1]
+```
+
+The average marginal effect of a one-unit change in weak-link democracy is `r round(comp$ame[1], 5)` among non-contiguous dyads and `r round(comp$ame[2], 5)` among contiguous ones. The second is **`r round(r_comp, 2)` times** the first.
+
+There's no interaction term in this model, and the coefficient on democracy is a single number, $`r round(b["deml"], 4)`$, and it is the same number for every dyad in the sample. And yet the model says democracy's pacifying effect is about two and a half times larger among neighbors than among distant pairs. This is due to the changing weight (from the PDF) and nonlinearity of the model. Contiguity raises the average predicted probability of a dispute from `r round(comp$avg_pr[1], 3)` to `r round(comp$avg_pr[2], 3)`, which slides those dyads up the curve toward the steeper part, where the weight is bigger and the same coefficient translates into greater probability of a dispute.
+
+Another way to examine this is to think about the change in predicted dispute probability over the entire range of Polity for a contiguous dyad and then for a non-contiguous dyad.
+
+```{r compression-dd}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# move every dyad from full autocracy to full democracy, and see how much
+# Pr(dispute) drops -- once with border off, once with border on
+dd_deml <- function(bord) {
+  Xa <- X; Xa[, "border"] <- bord; Xa[, "deml"] <- -10
+  Xb <- X; Xb[, "border"] <- bord; Xb[, "deml"] <-  10
+  mean(plogis(as.vector(Xb %*% b))) - mean(plogis(as.vector(Xa %*% b)))
+}
+
+tibble(border = c(0, 1), change_in_pr = map_dbl(border, dd_deml))
+```
+
+Moving the whole sample from $-10$ to $+10$ on democracy drops the average probability of a dispute by `r sprintf("%.1f", abs(dd_deml(0))*100)` percentage points among non-contiguous dyads and `r sprintf("%.1f", abs(dd_deml(1))*100)` percentage points among contiguous ones. Same coefficient, same model, no product term, and a difference of a factor of `r round(dd_deml(1)/dd_deml(0), 2)`.
+
+Note that these are substantively interesting and not just toy oddities of the model. Democracy does more work in suppressing conflict in the contiguous pair of states, other things equal. Remember that `deml` is the *weak-link* score, the lower of the two Polity scores in the dyad, so moving it to $+10$ means **both** states are full democracies. Making that move drops the probability of a dispute by `r sprintf("%.1f", abs(dd_deml(1))*100)` percentage points between immediate neighbors, but only `r sprintf("%.1f", abs(dd_deml(0))*100)` percentage points between more distant states. Those are percentage *points* on a baseline of about 10 and 4 percent respectively — in relative terms both drops are around three quarters. 
+
+## Predicted probabilities
+
+Let's generate average predicted probabilities across the values of Polity, and for two types of dyads: contiguous and non-contiguous. 
+
+```{r group-curves}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-groups
+#| fig-cap: "Panel A: average predicted probability of a dispute across weak-link democracy, with contiguity set on and then off for the whole sample. Panel B: the average marginal effect of contiguity — the vertical distance between the two curves in A — at each value of democracy. Bands are 95% delta-method intervals. There is no product term in this model."
+#| fig-alt: "Two stacked panels sharing a democracy axis. Panel A shows two declining probability curves near the floor of the scale, the contiguous group from about 0.10 down to 0.03 and the non-contiguous group from about 0.04 to 0.01, each with a narrow confidence band. Panel B shows the distance between them as a single positive curve declining from about 0.063 to 0.018 with its own band, never touching zero."
+#| fig-width: 9
+#| fig-height: 6.4
+
+V <- vcov(m0)
+dem_grid <- seq(-10, 10, 0.5)
+
+# ---- PANEL A: average predicted probability, contiguity off and then on ----
+grp <- expand_grid(deml = dem_grid, border = c(0, 1))
+grp$pr <- NA_real_
+grp$se <- NA_real_
+
+for (i in seq_len(nrow(grp))) {
+
+  Xi <- X                                          # counterfactual COPY
+  Xi[, "deml"]   <- grp$deml[i]                    # this democracy score, every dyad
+  Xi[, "border"] <- grp$border[i]                  # contiguity off (0) or on (1), every dyad
+  # lncaprat and ally are NOT set: each dyad keeps its own
+
+  p         <- plogis(as.vector(Xi %*% b))         # n predicted probabilities
+  grp$pr[i] <- mean(p)                             # their average
+  g         <- colMeans(p * (1 - p) * Xi)          # gradient of the average wrt beta
+  grp$se[i] <- sqrt(as.numeric(t(g) %*% V %*% g))
+}
+
+grp <- grp %>%
+  mutate(grp = factor(border, levels = c(0, 1),
+                      labels = c("not contiguous", "contiguous")),
+         lo = pr - 1.96 * se, hi = pr + 1.96 * se)
+
+# ---- PANEL B: average marginal effect of contiguity, at each democracy value ----
+# border is binary, so its "marginal effect" is the 0 -> 1 discrete change,
+# computed for every dyad and then averaged
+gapd     <- tibble(deml = dem_grid)
+gapd$ame <- NA_real_
+gapd$se  <- NA_real_
+
+for (i in seq_along(dem_grid)) {
+
+  X0 <- X                                          # two counterfactual COPIES
+  X1 <- X
+  X0[, "deml"]   <- dem_grid[i]                    # same democracy score in both
+  X1[, "deml"]   <- dem_grid[i]
+  X0[, "border"] <- 0                              # nobody contiguous
+  X1[, "border"] <- 1                              # everybody contiguous
+
+  p0 <- plogis(as.vector(X0 %*% b))                # n predictions with border = 0
+  p1 <- plogis(as.vector(X1 %*% b))                # n predictions with border = 1
+
+  gapd$ame[i] <- mean(p1 - p0)                     # average the n differences
+  g           <- colMeans(p1 * (1 - p1) * X1) - colMeans(p0 * (1 - p0) * X0)
+  gapd$se[i]  <- sqrt(as.numeric(t(g) %*% V %*% g))
+}
+
+gapd <- gapd %>% mutate(lo = ame - 1.96 * se, hi = ame + 1.96 * se)
+
+p_lev <- ggplot(grp, aes(x = deml, y = pr, color = grp, linetype = grp)) +
+  geom_ribbon(aes(x = deml, ymin = lo, ymax = hi, group = grp),
+              inherit.aes = FALSE, fill = bu_palegreen, alpha = 0.45) +
+  geom_line(linewidth = 0.9) +
+  scale_color_manual(values = c("not contiguous" = bu_green,
+                                "contiguous" = bu_lightgreen), name = NULL) +
+  scale_linetype_manual(values = bu_two_lty, name = NULL) +
+  labs(title = "A. Average predicted probability",
+       x = NULL, y = "Pr(dispute)", color = NULL, linetype = NULL) +
+  theme_bu() +
+  theme(plot.title = element_text(size = 11, face = "bold"),
+        legend.position = "inside", legend.position.inside = c(0.79, 0.84),
+        legend.background = element_blank(),
+        panel.border = element_rect(color = bu_grey, fill = NA, linewidth = 0.3))
+
+p_dif <- ggplot(gapd, aes(x = deml, y = ame)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = bu_palegreen, alpha = 0.45) +
+  geom_line(color = bu_green, linewidth = 0.9) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = bu_grey) +
+  expand_limits(y = 0) +
+  labs(title = "B. Average marginal effect of contiguity (the gap in A)",
+       x = "weak-link democracy", y = "change in Pr(dispute)") +
+  theme_bu() +
+  theme(plot.title = element_text(size = 11, face = "bold"),
+        panel.border = element_rect(color = bu_grey, fill = NA, linewidth = 0.3))
+
+p_lev / p_dif + plot_layout(heights = c(2, 1.25))
+```
+
+Panel A of @fig-groups is the left panel of @fig-cdf-shift, zoomed way in on the lower-left corner. Disputes are rare, so both groups live down near the floor of the curve, and neither line gets anywhere near the steep middle.
+
+Panel B plots the vertical distance between the two curves in Panel A — **the average marginal effect of contiguity**, at each value of democracy. Contiguity is binary, so its "marginal effect" is the discrete $0 \to 1$ change, computed for every dyad in the sample and then averaged; the bands are delta-method intervals on that average. It runs from `r round(gapd$ame[1], 3)` among the most autocratic dyads down to `r round(gapd$ame[nrow(gapd)], 3)` among the most democratic, a factor of `r round(gapd$ame[1]/gapd$ame[nrow(gapd)], 1)`, and the interval never comes near zero. So contiguity matters `r round(gapd$ame[1]/gapd$ame[nrow(gapd)], 1)` times as much for autocracies as for democracies, in a model that contains no interaction of any kind.
+
+This illustrates an important point about inherent interactivity in nonlinear models. Absent an explicit multiplicative interaction, we can still say the effect of democracy on conflict depends on contiguity. That effect is small and slopes gradually downward among non-contiguous states; for contiguous states it is considerably larger and steeper. 
+
+We can tell the same story but from another vantage point if we look at Panel B. The average marginal effect of contiguity is **positive** — contiguity raises the probability of a dispute everywhere - the curve in Panel B sits above zero across the whole range — but it is **declining** in democracy, which is Panel B's downward slope. The marginal effect of contiguity is positive, but declines with democracy.  
+
+
+## The value of marginal effects
+
+For nonlinear models, coefficients imply constant effects - take a look at any of the coefficient tables we've discussed this semester, and you'll see things like $\widehat\beta_{\text{contiguity}} = `r round(coef(m0)['border'], 2)`$. That single estimate can easily lead us to think this is the estimated effect for any scenario we can construct in the data. 
+
+But the discussion above illustrates this is not true. We should spend time exploring and then illustrating to our readers where the effects are larger or smaller as we've done in the case of democracy and geographic contiguity. There, we've shown that the effect of contiguity is large in exacerbating conflict propensity among non-democratic states. Those states are already more prone to conflict, and sharing a border fans those flames far more than among democratic states that share borders. In other words, the effect of contiguity is not constant. 
+
+Marginal effects are a quantity that help us tell that story. The marginal effect of contiguity depends on the value of democracy such that the poisonous effect of shared borders diminishes with increasing democracy. 
+
+
+# Why use multiplicative interactions? 
+
+If compression already makes the effect of democracy depend on contiguity, why would anyone write down $\beta_3(\text{deml} \times \text{border})$?
+
+Because the two work in different places. With a product term the marginal effect becomes
+
+$$
+\frac{\partial Pr(y=1)}{\partial x_1} = \underbrace{\lambda(x\beta)}_{\text{compression}} \cdot \underbrace{(\beta_1 + \beta_3 x_2)}_{\text{specified interaction}},
+$$
+
+and both factors now vary with $x_2$ (remember, $x_2$ is part of $x\beta$). The first term is the link doing its thing and is the source of compression (and you can't remove it). The second factor is the result of the interaction and derives from your theory; you get it only if you explicitly include it in the model, and its magnitude and sign are estimated from the data rather than dictated by the curve.
+
+That distinction is meaningful. Compression can only make an effect *larger in the middle and smaller in the tails*. It cannot make an effect change sign like an interaction can. It cannot make an effect larger among cases that are already at high probability; an interaction can. If your hypothesis is "democracy pacifies weak dyads and provokes strong ones," no amount of compression will produce it, because sign changes are not in the link's repertoire — the weight $\Lambda(1-\Lambda)$ is strictly positive everywhere.
+
+Thinking of the curves in @fig-cdf-shift and you can see what the product term buys. In @fig-cdf-shift the dummy moved the curve sideways but left its shape alone, so the two groups were the same curve in two locations. A multiplicative term changes the *slope* of the linear predictor in the focal variable, from $\beta_1$ to $\beta_1 + \beta_3$ — so the group-1 curve is no longer the group-0 curve relocated. It is a different curve as the figure below demonstrates.
+
+```{r cdf-slope}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-cdf-slope
+#| fig-cap: "Two groups, illustrative values. Left column: the groups differ only by an intercept shift. Right column: they differ by an intercept shift and a product term. Top row, the curves; bottom row, the difference between them, which is the effect of group membership."
+#| fig-alt: "Four panels in two columns, both columns showing two groups. In the left column, labelled no product term, the two S-shaped curves are the same curve shifted sideways, and the difference between them below is a symmetric hump peaking around 0.25 and positive everywhere. In the right column, labelled with a product term, the group-one curve is much flatter, the two curves cross at about x1 equals two, and the difference below is taller, peaks well left of centre at about 0.42, and then falls through zero and goes negative."
+#| fig-width: 9.5
+#| fig-height: 6
+
+bb1 <- 0.8      # slope in the focal variable x1
+dd  <- 1.04     # the group shift: what the dummy adds to the linear predictor
+b3_values <- c("no product term" = 0, "with a product term" = -0.45)
+
+x1_seq <- seq(-8, 8, 0.05)
+dcurv  <- tibble(x1 = numeric(0), g = numeric(0), pr = numeric(0), panel = character(0))
+
+for (lab in names(b3_values)) {
+  b3 <- b3_values[[lab]]                     # 0 in the left panel, -0.45 in the right
+  for (g in c(0, 1)) {                       # the two groups
+    # Pr(y=1) = Lambda( b1*x1 + delta*g + b3*x1*g ); the last term is the product
+    pr <- plogis(bb1 * x1_seq + dd * g + b3 * x1_seq * g)
+    dcurv <- bind_rows(dcurv,
+                       tibble(x1 = x1_seq, g = g, pr = pr, panel = lab))
+  }
+}
+dcurv <- dcurv %>%
+  mutate(grp = factor(g, levels = c(0, 1), labels = c("group 0", "group 1")))
+
+dgap <- dcurv %>%
+  dplyr::select(x1, grp, pr, panel) %>%
+  pivot_wider(names_from = grp, values_from = pr) %>%
+  mutate(gap = `group 1` - `group 0`)
+
+q_lev <- ggplot(dcurv, aes(x = x1, y = pr, color = grp)) +
+  geom_line(linewidth = 1) +
+  facet_wrap(~ panel) +
+  scale_color_manual(values = c("group 0" = bu_green, "group 1" = bu_lightgreen),
+                     name = NULL) +
+  labs(x = NULL, y = "Pr(y = 1)") +
+  theme_bu() + theme(legend.position = "top")
+
+q_gap <- ggplot(dgap, aes(x = x1, y = gap)) +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = bu_grey) +
+  facet_wrap(~ panel) +
+  labs(x = expression(x[1]), y = "difference in Pr") +
+  theme_bu()
+
+q_lev / q_gap + plot_layout(heights = c(2, 1.2))
+```
+
+The left column of @fig-cdf-slope is @fig-cdf-shift again: two copies of one curve, and a difference that is a symmetric hump, positive everywhere, with its peak in the middle and its shape given by the link. As above, this illustrates compression and is a built-in feature of binomial models.
+
+The right column is what a interaction term can do and compression cannot. The group-1 curve is flatter, the two curves **cross**, and the difference in the bottom panel goes negative past the crossing point. Group membership (group==1) increases the probability on the left of the curve and decreases it on the right. Notice also that the difference peaks well off center, and that it tops out at `r sprintf("%.2f", max(dgap$gap[dgap$panel == "with a product term"]))` against the compression-only hump's `r sprintf("%.2f", max(dgap$gap[dgap$panel == "no product term"]))` — the product term changed the size of the effect, where it peaks, its symmetry, and its sign.
+
+So why bother with an interaction if the model is already interactive? Because compression gives you one shape and a product term gives a different one. Really, I should say compression plus interaction give another - the panels on the right side include both because these nonlinear models **always include compression**. 
+
+::: {.callout-note title="Important concept"}
+Compression and a specified interaction are not substitutes. Compression is a fixed, always-on, link-determined pattern in the probability space. A product term is an estimated, theory-driven change in the linear predictor. A binomial model always has compression; whether it has an interaction term is determined by your theory.
+:::
+
+## Testing an interaction, Democracy x Contiguity
+
+Let's evaluate a model including the explicit multiplicative interaction between Polity and contiguity, and comparing that model to the model without. In effect, we're testing compression versus compression plus interaction. 
+
+```{r border-interaction}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-border
+#| tbl-cap: "Democratic peace, with and without a democracy-by-contiguity product term."
+
+m1 <- glm(dispute ~ border * deml + lncaprat + ally,
+          family = binomial(link = "logit"), data = dp)
+
+modelsummary(list("No product term" = m0, "With product term" = m1),
+             stars = TRUE, gof_map = c("nobs", "logLik", "aic"),
+             coef_rename = c("border" = "Contiguous",
+                             "deml" = "Weak-link democracy",
+                             "lncaprat" = "ln(capability ratio)",
+                             "ally" = "Allied",
+                             "border:deml" = "Contiguous x Democracy"),
+             output = "kableExtra")
+```
+
+```{r border-lrt}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+anova(m0, m1, test = "LRT")
+```
+
+The product term is $`r round(coef(m1)["border:deml"], 4)`$ with a standard error of $`r round(sqrt(vcov(m1)["border:deml","border:deml"]), 4)`$ — a $z$ of about `r round(coef(m1)["border:deml"]/sqrt(vcov(m1)["border:deml","border:deml"]), 2)`, which is nowhere near anything. The likelihood ratio test agrees: $\chi^2 = `r round(anova(m0, m1, test = "LRT")$Deviance[2], 2)`$ on one degree of freedom, $p = `r round(anova(m0, m1, test = "LRT")[["Pr(>Chi)"]][2], 2)`$. The specified interaction adds nothing.
+
+Now let's compare the average marginal effects from the two (but not lose sight of the fact that the interaction model is not a better fit to the data). 
+
+```{r compare-ratios}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+X1 <- model.matrix(m1)
+b1 <- coef(m1)
+
+# same calculation as before, but the product column has to move with border
+ame_deml_int <- function(bord) {
+  Xi <- X1
+  Xi[, "border"]      <- bord
+  Xi[, "border:deml"] <- bord * Xi[, "deml"]
+  p <- plogis(as.vector(Xi %*% b1))
+  mean(p * (1 - p)) * (b1["deml"] + bord * b1["border:deml"])
+}
+
+tibble(model = c("no product term", "with product term"),
+       ame_border0 = c(ame_deml(0), ame_deml_int(0)),
+       ame_border1 = c(ame_deml(1), ame_deml_int(1))) %>%
+  mutate(ratio = ame_border1 / ame_border0)
+```
+
+The model with no product term says democracy's effect is `r round(r_comp, 2)` times larger among neighbors. The model with a product term — an insignificant one — says `r round(ame_deml_int(1)/ame_deml_int(0), 2)` times larger. Any conditional effect between democracy and contiguity arises from compression, not from the interaction. 
+
+::: {.callout-note title="Important point"}
+A null product term does not mean "no interaction." It means no interaction *beyond what the link was already doing via compression*. Reporting "I find no interaction effect" after a table like @tbl-border is a substantively false statement about this model, which says democracy matters two and a half times as much among neighbors. The model is pretty clearly interactive, just through compression, not through a multiplicative interaction.
+:::
+
+
+
+## Testing the interaction of Democracy x Capabilities
+
+Let's examine another interaction in the same data. The substantive question is, surprisingly, one not often asked in the conflict literature: does democracy's pacifying effect depend on the balance of power between the two states? The two variables are not the same kind of thing, and it matters later. The capability ratio is continuous — `r format(length(unique(dp$lncaprat)), big.mark=",")` distinct values in `r format(nrow(dp), big.mark=",")` rows. Weak-link democracy is a **21-point ordered index**: every value from $-10$ to $+10$, integers only, and every one of them observed. We enter it as a single linear term, which is what the literature conventionally does and which quietly assumes the 21 steps are evenly spaced in their effect on the log-odds. That is an assumption, not a measurement fact.
+
+```{r caprat-interaction}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-caprat
+#| tbl-cap: "Democratic peace, with a democracy-by-capability-ratio product term."
+
+m2 <- glm(dispute ~ border + deml * lncaprat + ally,
+          family = binomial(link = "logit"), data = dp)
+
+modelsummary(list("No product term" = m0, "Democracy x Capabilities" = m2),
+             stars = TRUE, gof_map = c("nobs", "logLik", "aic"),
+             coef_rename = c("border" = "Contiguous",
+                             "deml" = "Weak-link democracy",
+                             "lncaprat" = "ln(capability ratio)",
+                             "ally" = "Allied",
+                             "deml:lncaprat" = "Democracy x ln(cap ratio)"),
+             output = "kableExtra")
+
+anova(m0, m2, test = "LRT")
+```
+
+The interaction model fits the data better than the model without:  $\chi^2 = `r round(anova(m0, m2, test = "LRT")$Deviance[2], 1)`$ on one degree of freedom, $p < 0.0001$. So let's interpret the interaction model, but be cautious about interpreting the coefficients just as we were in the interactive linear model.
+
+The coefficient on democracy is $`r round(coef(m2)["deml"], 4)`$. That is **not** the effect of democracy. It is the effect of democracy when $\text{lncaprat} = 0$ — that is, in a perfectly matched dyad, where the two states have identical capabilities. That value actually exists in the data (the minimum), so the number is interpretable here. It often is not. The coefficient on the capability ratio, $`r round(coef(m2)["lncaprat"], 4)`$, is likewise the effect of the capability ratio among fully autocratic dyads, where $\text{deml} = -10$... except that is wrong, and it is wrong in a way worth catching: $\text{deml} = 0$ is a *middling* Polity score, not an autocratic one, so that coefficient describes an anocratic dyad. Recognize when your constituent variable has a meaningful zero somewhere odd.
+
+## Describing the interaction 
+
+Describing an interaction finding means answering two questions - many folks skip the second one:
+
+1. **How does the effect of democracy change as the power balance changes?** The answer is a marginal effect plot.
+2. **Do the cases that function describes actually exist?** A conditional-effect plot will give you an effect at every value of the moderating variable whether or not any dyads exist there. We need to evaluate where the data actually support predictions.
+
+We will do them in that order, and the second will change the answer to the first. Take question 1 first.
+
+## The conditional effect, on the log-odds scale
+
+The quantity is the effect of democracy **as a function of** the capability ratio:
+
+$$
+\frac{\partial (x\beta)}{\partial \text{deml}} = \widehat\beta_{\text{deml}} + \widehat\beta_{\text{deml} \times \text{cap}} \cdot \text{lncaprat},
+$$
+
+Its standard error is the three-term variance from the top of these slides, so let's write it out for this model and put numbers in it.
+
+Notation first, to keep the display readable: let $w$ stand for `lncaprat`, and write $\widehat\beta_d$ for the democracy coefficient and $\widehat\beta_{dc}$ for the interaction. The conditional effect is then $\widehat\beta_d + w\,\widehat\beta_{dc}$; a sum in which one piece is multiplied by a constant — and the variance of such a sum is
+
+$$
+\begin{aligned}
+\mathrm{Var}\big(\widehat\beta_d + w\,\widehat\beta_{dc}\big)
+ &= \mathrm{Var}(\widehat\beta_d) \\[2pt]
+ &\quad + w^{2}\,\mathrm{Var}(\widehat\beta_{dc}) \\[2pt]
+ &\quad + 2w\,\mathrm{Cov}(\widehat\beta_d,\,\widehat\beta_{dc}).
+\end{aligned}
+$$
+
+That is a **variance**. What we plot, and what goes in an interval, is its square root:
+
+$$
+\mathrm{SE}\big(\widehat\beta_d + w\,\widehat\beta_{dc}\big) =
+\sqrt{\mathrm{Var}(\widehat\beta_d) + w^{2}\,\mathrm{Var}(\widehat\beta_{dc}) + 2w\,\mathrm{Cov}(\widehat\beta_d,\,\widehat\beta_{dc})} ,
+$$
+
+which is the form @brambor2006understanding give. Keep the two apart when you read the numbers below: the three terms add up inside the square root, so they are on the variance scale, and only the last column is a standard error.
+
+
+
+**Why plot the linear predictor and not the probability?** To facilitate seeing where the effect is and where the data are. The linear prediction **isolates the interaction you specified from the compression that was there anyway**. Everything in the first half of these slides said the effect of democracy varies across cases even with no product term. On the probability scale you cannot see which of the two channels is doing the work, because they multiply. In the linear plot, compression is gone — $\lambda(x\beta)$ has dropped out — and what is left is your product term and nothing else.
+
+So read this plot as a statement about the model and data, not about interpretation. We will put it back on the probability scale later, where it is interpretable but no longer clean.
+
+
+
+```{r conditional-effect}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-brambor
+#| fig-cap: "The conditional effect of weak-link democracy on the log-odds of a dispute, across the logged capability ratio, with 95% confidence bands. The histogram underneath shows where the data actually are."
+#| fig-alt: "Two stacked panels sharing a horizontal axis of the logged capability ratio. The upper panel plots the effect of democracy on the log-odds of a dispute as a straight rising line with a widening confidence band: about minus 0.11 at a ratio of zero, crossing zero at 5.98 where a dotted marker is drawn, and reaching about plus 0.06 at the right edge. The lower panel is a histogram of the capability ratio showing dyad-year counts, roughly flat near 600 to 800 across the left two thirds and then falling away sharply; a dashed line marks the 90th percentile, which sits essentially on top of the crossing point above."
+#| fig-width: 9
+#| fig-height: 6
+
+b2 <- coef(m2); V2 <- vcov(m2)
+w  <- seq(0, 9, 0.05)
+
+cond <- tibble(lncaprat = w) %>%
+  mutate(eff = b2["deml"] + lncaprat * b2["deml:lncaprat"],
+         se  = sqrt(V2["deml", "deml"] +
+                    lncaprat^2 * V2["deml:lncaprat", "deml:lncaprat"] +
+                    2 * lncaprat * V2["deml", "deml:lncaprat"]),
+         lo  = eff - 1.96 * se,
+         hi  = eff + 1.96 * se)
+
+cross <- -b2["deml"] / b2["deml:lncaprat"]     # where the conditional effect hits zero
+
+p_eff <- ggplot(cond, aes(x = lncaprat, y = eff)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = bu_palegreen, alpha = 0.5) +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = bu_grey) +
+  annotate("segment", x = cross, xend = cross, y = -0.13, yend = 0,
+           linetype = "dotted", color = bu_black) +
+  annotate("text", x = cross - 0.1, y = -0.115, hjust = 1, size = 3.6, color = bu_black,
+           label = paste0("crosses zero at ", round(cross, 2))) +
+  labs(x = NULL, y = "effect of democracy on log-odds of dispute") +
+  theme_bu()
+
+p_hist <- ggplot(dp, aes(x = lncaprat)) +
+  geom_histogram(bins = 45, fill = bu_green, color = "white", linewidth = 0.2) +
+  geom_vline(xintercept = quantile(dp$lncaprat, 0.9), linetype = "dashed", color = bu_black) +
+  annotate("text", x = quantile(dp$lncaprat, 0.9) + 0.15, y = Inf, vjust = 1.6,
+           hjust = 0, size = 3.4, color = bu_black, label = "90th percentile") +
+  labs(x = "ln(capability ratio)", y = "dyad-years") +
+  theme_bu()
+
+p_eff / p_hist + plot_layout(heights = c(2.2, 1))
+```
+
+Read @fig-brambor from the left. Among evenly matched dyads democracy is strongly pacifying, about $`r round(b2["deml"], 3)`$ on the log-odds and tightly estimated. As the power gap widens the pacifying effect shrinks, crosses zero at a logged capability ratio of about `r round(cross, 2)`, and turns positive. Read literally, the model says democracy pacifies matched dyads and *provokes* badly mismatched ones.
+
+That is a real answer to question 1, and if we stopped here we would report it. The standard error is doing its job, the band widens where it should, and the interval excludes zero at both ends.
+
+Which is exactly why question 2 matters. Everything just described is a property of a line; none of it is a claim about the data. **Look at the histogram underneath**, and notice that the interesting half of the finding — the part where the sign turns positive — sits out where the bars have run out.
+
+# Does the counterfactual exist?
+
+This goes to the second question above. Before asking whether an effect is *precisely* estimated, ask whether the cases it describes **exist** — whether the counterfactual you are claiming from the predictions is a real kind of dyad, or one the model invented by extending a line past the last observation.
+
+That is a key part of @hainmueller2019interaction's argument - be cognizant of the empirical claims your data can and cannot support. 
+
+## Where the data actually are
+
+```{r support-facts, echo=FALSE}
+w_pos <- seq(0, 9, 0.01)
+eff_pos <- b2["deml"] + w_pos * b2["deml:lncaprat"]
+se_pos  <- sqrt(V2["deml","deml"] + w_pos^2 * V2["deml:lncaprat","deml:lncaprat"] +
+                2 * w_pos * V2["deml","deml:lncaprat"])
+w_sig <- min(w_pos[eff_pos - 1.96*se_pos > 0])
+```
+
+Let's cut the moderator, ln(capabilities) into deciles and count. Each row is a tenth of the sample, so the width of a row's range tells you how stretched the data are there, and the `disputes` column tells you what is actually estimating the model.
+
+```{r support}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-support
+#| tbl-cap: "The capability ratio by decile. Each decile holds a tenth of the dyad-years. The last column translates the log scale into a capability ratio."
+
+cross_dec <- findInterval(cross, quantile(dp$lncaprat, seq(0, 1, 0.1)),
+                          rightmost.closed = TRUE)
+
+dp %>%
+  mutate(decile = ntile(lncaprat, 10)) %>%
+  group_by(decile) %>%
+  summarise(from = min(lncaprat), to = max(lncaprat),
+            n = n(), disputes = sum(dispute), .groups = "drop") %>%
+  mutate(`ln(cap ratio)` = paste0(sprintf("%.2f", from), " - ", sprintf("%.2f", to)),
+         `capability ratio` = paste0(round(exp(from)), ":1 - ", round(exp(to)), ":1"),
+         `Pr(dispute)`   = disputes / n,
+         note = if_else(decile == cross_dec, "<- effect crosses zero in here", "")) %>%
+  dplyr::select(decile, `ln(cap ratio)`, `capability ratio`, n, disputes,
+                `Pr(dispute)`, note) %>%
+  kbl(digits = c(0, 0, 0, 0, 0, 4, 0),
+      col.names = c("decile", "ln(cap ratio)", "capability ratio", "dyad-years",
+                    "disputes", "Pr(dispute)", "")) %>%
+  kable_styling(full_width = FALSE) %>%
+  row_spec(cross_dec, bold = TRUE)
+```
+
+Now put @fig-brambor next to @tbl-support. The dotted line in the figure sits at $\text{lncaprat} = `r round(cross, 2)`$, and the bold row of the table is the decile that contains it: the **`r cross_dec`th**, running from `r round(quantile(dp$lncaprat, (cross_dec-1)/10), 2)` to `r round(quantile(dp$lncaprat, cross_dec/10), 2)`. That is the `r round(100*mean(dp$lncaprat < cross), 1)`th percentile of the data. Everything to the right of that line — the entire region where this model says democracy *provokes* conflict — is the top `r round(100*(1 - mean(dp$lncaprat < cross)), 0)`% of dyads.
+
+And the effect does not become *statistically* positive until `r round(w_sig, 2)`, which is inside the last decile, at the `r round(100*mean(dp$lncaprat < w_sig), 1)`th percentile. The claim rests on the sparsest two-tenths of one percent of the sample.
+
+Look at the last two rows of @tbl-support for the reason this is worse than a row count suggests. The top decile alone spans `r round(quantile(dp$lncaprat, 0.9), 2)` to `r round(max(dp$lncaprat), 2)` — about a third of the moderator's entire range squeezed into one tenth of the observations — and what estimates a logit is not rows but **events**. Read the `disputes` column down: it is the count of ones, and in a rare-outcome model those thin out long before the sample size does.
+
+## What the data say instead
+
+The natural objection is that this is just imprecision, and the widening band already reported it. It is not. The product term is not only extrapolating *far*, it is extrapolating **along a shape we imposed**, and that shape can be checked directly.
+
+@hainmueller2019interaction's binning estimator does it in four steps, and it is worth being concrete about each one because the regression looks odd the first time you see it.
+
+1. **Cut the moderator into bins.** Here, terciles of `lncaprat` — a `low`, `mid` and `high` third of the dyad-years, roughly 7,000 each.
+2. **Refit, letting democracy have its own slope inside every bin.** That is what `bin:deml` does *without* a `deml` term of its own in the formula: with no main effect to be a deviation from, R returns one democracy coefficient per bin, each estimated only from the dyads in that bin. We do the same for `lncaprat` so each bin gets its own capability slope too, and `border` and `ally` stay common across bins.
+3. **Plot those three coefficients** at the median `lncaprat` of their bin, on top of the straight line the product-term model drew.
+4. **Ask whether the three points lie on the line.** They are estimates of the same quantity — the effect of democracy at that part of the capability range — computed two ways. The line got there by assuming the effect moves linearly in `lncaprat`. The points did not assume anything of the kind: each one is free to be whatever the dyads in its bin say.
+
+So this is a test of the functional form, with the bins as the flexible alternative and the line as the restriction. If the assumption is harmless the points scatter around the line; if it is not, they tell you what shape the data actually have.
+
+```{r binning}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-binning
+#| fig-cap: "The binning estimator. Points are separately-estimated effects of democracy within terciles of the capability ratio, plotted at the bin medians, against the line the product term implies."
+#| fig-alt: "A rising straight line with a confidence band, the conditional effect implied by the product term, running from about minus 0.11 up through zero. Three point estimates with intervals are overlaid at the tercile medians: the low and middle bins sit at about minus 0.083 and minus 0.088, essentially level with each other and below the line in the middle, and the high bin sits at about plus 0.013 with an interval that comfortably covers zero."
+#| fig-width: 9
+#| fig-height: 5
+
+dpb <- dp %>%
+  mutate(bin = cut(lncaprat,
+                   breaks = quantile(lncaprat, c(0, 1/3, 2/3, 1)),
+                   include.lowest = TRUE,
+                   labels = c("low", "mid", "high")))
+
+# a separate democracy slope, and a separate capability slope, inside each bin
+mbin <- glm(dispute ~ border + ally + bin + bin:deml + bin:lncaprat,
+            family = binomial(link = "logit"), data = dpb)
+
+bin_med <- dpb %>% group_by(bin) %>% summarise(med = median(lncaprat), n = n())
+
+bins <- tidy(mbin) %>%
+  filter(str_detect(term, ":deml")) %>%
+  mutate(bin = str_remove(str_remove(term, ":deml"), "bin")) %>%
+  left_join(bin_med, by = "bin") %>%
+  mutate(lo = estimate - 1.96 * std.error,
+         hi = estimate + 1.96 * std.error)
+
+ggplot(cond, aes(x = lncaprat)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = bu_palegreen, alpha = 0.5) +
+  geom_line(aes(y = eff), color = bu_green, linewidth = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = bu_grey) +
+  geom_pointrange(data = bins, aes(x = med, y = estimate, ymin = lo, ymax = hi),
+                  color = bu_black, size = 0.5) +
+  labs(x = "ln(capability ratio)",
+       y = "effect of democracy on log-odds of dispute") +
+  theme_bu()
+```
+
+```{r binning-tab}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+bins %>%
+  mutate(linear_implied = b2["deml"] + med * b2["deml:lncaprat"]) %>%
+  dplyr::select(bin, n, median_lncaprat = med, binned = estimate, lo, hi, linear_implied)
+```
+
+**Read the middle bin first — it is where the disagreement is.** The line has to travel from about $-0.095$ at the low bin's median to $-0.012$ at the high bin's, so it must pass through roughly $-0.056$ in between. The data in that middle third say $`r round(bins$estimate[2], 3)`$, with an interval of $[`r round(bins$lo[2], 3)`, `r round(bins$hi[2], 3)`]$ — and the line's value sits **outside** it. The middle bin is statistically indistinguishable from the low bin ($`r round(bins$estimate[1], 3)`$ against $`r round(bins$estimate[2], 3)`$, a gap of `r round(abs(bins$estimate[2]-bins$estimate[1]), 3)`), where the line says the two should differ by about $0.04$.
+
+Now notice what the *other* two bins do, because this is the part that is easy to get backwards. They **agree** with the line. At the low bin the line says $-0.095$ and the interval is $[`r round(bins$lo[1], 3)`, `r round(bins$hi[1], 3)`]$, which contains it. At the high bin the line says $-0.012$ and the interval is $[`r round(bins$lo[3], 3)`, `r round(bins$hi[3], 3)`]$, which also contains it. The high bin's estimate is not distinguishable from zero — but neither is the line's prediction there, so that bin is not evidence of anything. **A bin that fails to reject is not a bin that disagrees.**
+
+So the case rests on the middle third, and it is worth testing rather than eyeballing. Fit the interaction with a linear moderator, then add bin-specific democracy shifts on top, and ask whether those shifts are jointly zero:
+
+```{r binning-test}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# restricted: the effect of democracy moves linearly in lncaprat
+b_lin <- glm(dispute ~ border + ally + bin + bin:lncaprat + deml + deml:lncaprat,
+             family = binomial(link = "logit"), data = dpb)
+# flexible: the same, plus a separate democracy shift in each bin
+b_flex <- glm(dispute ~ border + ally + bin + bin:lncaprat + deml + deml:lncaprat +
+                bin:deml,
+              family = binomial(link = "logit"), data = dpb)
+
+anova(b_lin, b_flex, test = "LRT")
+```
+
+```{r binning-test-vals, echo=FALSE}
+bt <- anova(b_lin, b_flex, test = "LRT")
+```
+
+It rejects: $\chi^2 = `r round(bt$Deviance[2], 2)`$ on `r bt$Df[2]` degrees of freedom, $p = `r round(bt[["Pr(>Chi)"]][2], 4)`$. **The linear form is wrong in these data**, and the failure is in the middle of the distribution rather than out in the sparse tail.
+
+What shape is it, then? Flat and then falling away: democracy pacifies near-parity *and* moderately mismatched dyads by about the same amount, and stops mattering among the badly mismatched. And that shape explains where the sign change came from. A straight line forced through a flat-then-drop pattern has to keep descending past the last bin to fit the left-hand part, and descending past zero is what produces "democracy provokes." The reversal is a property of the line, not a feature the bins ever show.
+
+Be careful about how much the binning proves on its own, though. The high bin averages the effect across everything from a `r round(exp(quantile(dp$lncaprat, 2/3)))`:1 capability gap to `r round(exp(max(dp$lncaprat)))`:1, so "about zero over that whole range" is consistent with an effect that is mildly negative for most of it. What rules the reversal out is the combination: the shape here, the common support from @tbl-support, and — as we will see below — the fact that on the probability scale the interval never clears zero anywhere.
+
+::: {.callout-note title="Important concept"}
+Common support and functional form are the same problem wearing two hats. Common support tells you *where* the model is speaking without data. The shape you imposed determines *what it says* there. Checking only the first leaves you saying "the estimate is uncertain at the extreme"; checking both lets you say what the data actually support, which here is a different substantive claim.
+:::
+
+So describe it accurately. Democracy's pacifying effect is about the same among evenly matched and moderately mismatched dyads, and it disappears among badly mismatched ones. Whether it reverses is not something these data can support: the bins never show it, and the region where the line claims it holds a fifth of one percent of the dyads.
+
+Know your data - and make this same demand of the authors you read. When a paper you're reading shows you a figure like this, think about the underlying data distribution and whether or to what extent those data are likely to support the predictive claims the paper shows you. 
+
+# Predicted probabilities and marginal effects
+
+Everything from here on is one of two quantities, and it is worth slowing down on what each one *is*, because one of the two has a name that actively misleads.
+
+A **predicted probability** is the easy one. Feed a set of covariate values through the model and it returns $Pr(y=1)$ for that kind of case. It is a level. It has the units of the thing you care about, and you can say it out loud to a person: *two balanced autocracies have about a 9% chance of a dispute in a given year.*
+
+A **marginal effect** is a *change* in that probability. Not a level, a difference — how much $Pr(y=1)$ moves when you move an $x$. The name is the problem: "marginal" here means *at the margin*, in the calculus sense of a derivative, and it has nothing to do with marginal as in "small" or "barely" or with a marginal distribution. Reading it as "the effect of a small change" is closer to right than any other everyday sense of the word, and if the term keeps tripping you up, silently substitute **"the change in the predicted probability"** every time you see it. That is all anyone means.
+
+Two flavors, and the difference can be consequential:
+
+- A **derivative**, $\partial Pr(y=1)/\partial x_1$, is the instantaneous rate of change — the slope of the predicted-probability curve at a point. It is the right object for a genuinely continuous $x$ and it is what most software hands you by default.
+- A **discrete difference** is $Pr(y=1 \mid x_1 = b) - Pr(y=1 \mid x_1 = a)$ — the change over an interval you name. This is the only sensible quantity for a binary $x$, since there is no "instantaneous" change in going from not-contiguous to contiguous, and it is usually the more interpretable one even for continuous variables, because you get to choose an interval anyone can picture.
+
+@zhirnov2023 (three Binghamton Ph.D.s!) make the case that political scientists default to the derivative when the hypothesis they wrote down is a discrete-difference claim. Pick deliberately; say which one you picked.
+
+**Our democracy variable is a case in point.** Polity is an index of 21 integer values, so there is no such thing as a half-point move — the derivative is the limit of a change that cannot happen. It is still a perfectly good *approximation* to the smallest change that can:
+
+```{r deriv-vs-step}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+X2 <- model.matrix(m2)
+
+dem_vals   <- -10:9                          # every step you could actually take
+deriv_gap  <- tibble(deml = dem_vals)
+deriv_gap$derivative <- NA_real_             # instantaneous rate at deml
+deriv_gap$one_point  <- NA_real_             # actual change from deml to deml + 1
+
+for (i in seq_along(dem_vals)) {
+
+  # the derivative at this democracy value, averaged over the sample
+  Xi <- X2                                           # counterfactual COPY
+  Xi[, "deml"]          <- dem_vals[i]               # this democracy score, every dyad
+  Xi[, "deml:lncaprat"] <- dem_vals[i] * Xi[, "lncaprat"]
+  p  <- plogis(as.vector(Xi %*% b2))
+  deriv_gap$derivative[i] <-
+    mean(p * (1 - p) * (b2["deml"] + b2["deml:lncaprat"] * Xi[, "lncaprat"]))
+
+  # the change you would actually observe by moving one whole point up the index
+  Xa <- X2; Xa[, "deml"] <- dem_vals[i]
+  Xa[, "deml:lncaprat"] <- dem_vals[i] * Xa[, "lncaprat"]
+  Xb <- X2; Xb[, "deml"] <- dem_vals[i] + 1
+  Xb[, "deml:lncaprat"] <- (dem_vals[i] + 1) * Xb[, "lncaprat"]
+  deriv_gap$one_point[i] <- mean(plogis(as.vector(Xb %*% b2))) -
+                            mean(plogis(as.vector(Xa %*% b2)))
+}
+
+deriv_gap <- deriv_gap %>%
+  mutate(pct = 100 * (derivative - one_point) / abs(one_point))
+
+deriv_gap %>% filter(deml %in% c(-10, -7, 0, 7))
+```
+
+Across the whole index the derivative runs between `r sprintf("%.1f", min(abs(deriv_gap$pct)))`% and `r sprintf("%.1f", max(abs(deriv_gap$pct)))`% larger in magnitude than the actual one-point step — close, and consistently in the same direction.
+
+So the derivative is fine here, and I use it in Panel A below. But notice which way the argument runs: it is fine *because it happens to approximate the discrete quantity well*, not because it is the natural quantity. When the two diverge — a coarser index, a steeper part of the curve — trust the one that describes a transition a case could actually make. Note also that this index is lumpy: `r sprintf("%.0f", 100*mean(dp$deml %in% c(-7,-9)))`% of the sample sits at just two values, $-7$ and $-9$, and the middle of the scale is thin — the common-support problem from the last section exists on a second axis.
+
+There is also the question of *whose* effect. Compute the marginal effect for every case in the sample and average, and you have an **average marginal effect** — the effect for the cases you actually observed, which is the default in these slides and the safer choice. Compute it once at the sample means instead and you have a **marginal effect at the means**, which describes a single synthetic case that may exist nowhere, which is the trap the last section was about.
+
+## Both quantities, on the capability interaction
+
+Let's plot the average predicted probabilities for each value of democracy and setting ln(capabilities) to the three values from the terciles in the binning exercise above. Interacting two continuous variables (or in our case, one continuous and one many-categoried variable) leaves us with too many possible combinations of our interacted variables. The common solution is to choose a finite number of sensible values of one of them. So I'm computing across all of Polity for three values of ln(capabilities). 
+
+The three capability ratios are the tercile medians from the binning, translated out of logs so they say something: $`r round(exp(1.02))` : 1$, $`r round(exp(3.06))` : 1$ and $`r round(exp(5.37))` : 1$. These would correspond to dyads near parity, dyads with imbalances, and dyads with extreme imbalances. Confidence bands are delta-method intervals on the average.
+
+```{r pp-interaction}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-pp
+#| fig-cap: "Average adjusted predictions: the average predicted probability of a dispute if every dyad in the sample had the stated democracy score and capability ratio, with its own contiguity and alliance left as observed. Bands are 95% delta-method intervals."
+#| fig-alt: "Three downward-sloping curves of predicted dispute probability against weak-link democracy, one per capability ratio, each with a confidence band. The 3-to-1 curve falls steeply from about 0.093 to 0.016; the 21-to-1 curve falls less; the 215-to-1 curve is nearly flat from about 0.027 to 0.021. They fan out widely at the autocratic end and converge near a democracy score of six, where the bands overlap heavily."
+#| fig-width: 9
+#| fig-height: 4.8
+
+X2 <- model.matrix(m2)
+
+cr_levels <- c(1.02, 3.06, 5.37)                  # tercile medians of lncaprat
+cr_labels <- paste0(round(exp(cr_levels)), " : 1")
+dem_grid  <- seq(-10, 10, 0.5)
+
+# one row for every (democracy, capability ratio) pair we want a prediction at
+pp     <- expand_grid(deml = dem_grid, cr = cr_levels)
+pp$pr  <- NA_real_                                # average predicted probability
+pp$se  <- NA_real_                                # its delta-method standard error
+
+for (i in seq_len(nrow(pp))) {
+
+  Xi <- X2                                        # counterfactual COPY of the design matrix
+  Xi[, "deml"]          <- pp$deml[i]             # this democracy score, for every dyad
+  Xi[, "lncaprat"]      <- pp$cr[i]               # this capability ratio, for every dyad
+  Xi[, "deml:lncaprat"] <- pp$deml[i] * pp$cr[i]  # the product column tracks BOTH of them
+  # border and ally are deliberately NOT set: each dyad keeps its own
+
+  p        <- plogis(as.vector(Xi %*% b2))        # n predicted probabilities
+  pp$pr[i] <- mean(p)                             # their average
+
+  g        <- colMeans(p * (1 - p) * Xi)          # gradient of that average wrt beta
+  pp$se[i] <- sqrt(as.numeric(t(g) %*% V2 %*% g))
+}
+
+pp <- pp %>%
+  mutate(grp = factor(cr, levels = cr_levels, labels = cr_labels),
+         lo  = pr - 1.96 * se,
+         hi  = pr + 1.96 * se)
+
+# the four corners quoted in the text below, pulled out as plain numbers
+pp_par_lo <- pp$pr[pp$deml == -10 & pp$cr == cr_levels[1]]
+pp_par_hi <- pp$pr[pp$deml ==  10 & pp$cr == cr_levels[1]]
+pp_gap_lo <- pp$pr[pp$deml == -10 & pp$cr == cr_levels[3]]
+pp_gap_hi <- pp$pr[pp$deml ==  10 & pp$cr == cr_levels[3]]
+
+ggplot(pp, aes(x = deml, y = pr, color = grp, linetype = grp)) +
+  geom_ribbon(aes(x = deml, ymin = lo, ymax = hi, group = grp), inherit.aes = FALSE,
+              fill = bu_palegreen, alpha = 0.4) +
+  geom_line(linewidth = 0.9) +
+  scale_color_bu(name = "capability ratio") +
+  scale_linetype_bu(name = "capability ratio") +
+  labs(x = "weak-link democracy", y = "average Pr(dispute)") +
+  theme_bu() +
+  theme(legend.position = "inside", legend.position.inside = c(0.78, 0.8),
+        legend.background = element_blank())
+```
+
+
+The figure facilitates describing the conditional effect. Among near-parity dyads (about $3:1$), moving from full autocracy to full democracy takes the probability of a dispute from `r sprintf("%.3f", pp_par_lo)` to `r sprintf("%.3f", pp_par_hi)` — about `r sprintf("%.1f", abs(pp_par_hi-pp_par_lo)*100)` percentage points. Among badly mismatched dyads (about $215:1$) the same transition from autocratic to democratic takes it from `r sprintf("%.3f", pp_gap_lo)` to `r sprintf("%.3f", pp_gap_hi)`, a drop of `r sprintf("%.1f", abs(pp_gap_hi-pp_gap_lo)*100)` percentage points. Democratization buys roughly `r round((pp_par_hi-pp_par_lo)/(pp_gap_hi-pp_gap_lo), 0)` times as much peace between equals as between a great power and a weak one.
+
+This is an interesting finding not often represented in the literature. Democratic institutions appear to constrain the use of capabilities even when we disaggregate balanced and imbalanced pairs of states. Non-democratic institutions allow leaders to use capabilities more freely and they appear to do so. The disaggregation indicates that balanced autocrats are considerably more likely to fight than are imbalanced autocrats. Balanced democrats are no more conflict prone than are imbalanced democratic pairs. 
+
+Two more things @fig-pp shows that @fig-brambor cannot. **The curves cross**, at about democracy $=$ `r round(-b2["lncaprat"]/b2["deml:lncaprat"], 1)`. That is the interaction read from the other side: the vertical distance between curves is the effect of the *capability ratio*, and it vanishes right there. An interaction is symmetric, so "democracy's effect depends on the power balance" and "the power balance's effect depends on democracy" are one claim — it's important to consider how you state the interaction hypothesis and what quantities you predict given your theory model.
+
+## Marginal Effects 
+
+Let's turn to marginal effects. Both panels below are **average** marginal effects — computed once for every dyad in the sample and then averaged, exactly as the predictions above were — and both are on the **probability** scale. The two below differ only in what counts as "a change in democracy."
+
+**Panel A, the derivative.** For each dyad: hold its own contiguity and alliance, set its capability ratio to the value on the horizontal axis, and evaluate
+$$
+\frac{\partial Pr(\text{dispute})}{\partial\,\text{deml}} = \lambda(x_i\beta)\big(\widehat\beta_{\text{deml}} + \widehat\beta_{\text{deml}\times\text{cap}} \cdot \text{lncaprat}\big).
+$$
+Average those `r format(nrow(dp), big.mark=",")` numbers. Note what is inside: the bracket is the log-odds (linear) conditional effect from @fig-brambor, and $\lambda(x_i\beta)$ is the compression weight from the first half of the deck. The probability-scale effect is the two of them multiplied, which is exactly why this figure is not a straight line and @fig-brambor is.
+
+**Panel B, the discrete difference.** For each dyad, predict twice — once with `deml` set to $-10$, once at $+10$, capability ratio set to the axis value both times — subtract, and average the differences. No derivative anywhere; it is the gap between two average adjusted predictions, the same quantity the endpoints of @fig-pp give.
+
+Intervals on both are the delta method, with the gradient taken through whichever of those two calculations produced the estimate.
+
+The tick marks along the bottom of each panel are a **rug plot** — one short vertical mark per observation, placed at that case's value on the horizontal axis. It is the cheapest way to put the data underneath a fitted line, and it costs one line of code (`geom_rug()`). Read it as a flattened histogram: dense black where cases pile up, sparse where they thin out. Here it tells you at a glance that the right-hand third of both panels is drawn over very little data, which is the point the whole previous section had to make with a table.
+
+```{r pp-and-me}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-ppme
+#| fig-cap: "Two marginal effects of democracy from the same model. Left: the average derivative, the change in Pr(dispute) per one-point move in democracy. Right: the average discrete change over the full range of democracy. Both at each value of the capability ratio, with delta-method intervals."
+#| fig-alt: "Two panels against the logged capability ratio. The left panel shows the average derivative of dispute probability with respect to democracy, rising from about minus 0.008 toward zero and flattening out just above it. The right panel shows the discrete change over the full democracy range, rising from about minus 0.11 on the same shape. Both have confidence bands that widen to the right, and in both the band still includes zero everywhere past the crossing point. A rug along the bottom shows the data thinning out to the right."
+#| fig-width: 10
+#| fig-height: 4.5
+
+cr_grid <- seq(0, 9, 0.1)          # capability ratios to evaluate at
+
+# ---- PANEL A: average marginal effect of democracy (a derivative) -----------
+ame_est <- numeric(length(cr_grid))
+ame_se  <- numeric(length(cr_grid))
+
+for (i in seq_along(cr_grid)) {
+
+  Xi <- X2                                              # counterfactual COPY
+  Xi[, "lncaprat"]      <- cr_grid[i]                   # this capability ratio, every dyad
+  Xi[, "deml:lncaprat"] <- Xi[, "deml"] * cr_grid[i]    # product tracks BOTH columns
+  # deml is deliberately NOT set. Every dyad keeps its own democracy score, which
+  # is what makes this an AVERAGE marginal effect rather than the effect at some
+  # constructed democracy value.
+
+  p     <- plogis(as.vector(Xi %*% b2))                 # n predicted probabilities
+  slope <- b2["deml"] + cr_grid[i] * b2["deml:lncaprat"]  # effect on the LOG-ODDS
+
+  ame_est[i] <- mean(p * (1 - p)) * slope               # weight each case, then average
+
+  # delta gradient: the estimate is mean(weight) x slope, and beta moves both
+  g <- colMeans(p * (1 - p) * (1 - 2 * p) * Xi) * slope
+  g["deml"]          <- g["deml"] + mean(p * (1 - p))
+  g["deml:lncaprat"] <- g["deml:lncaprat"] + mean(p * (1 - p)) * cr_grid[i]
+  ame_se[i] <- sqrt(as.numeric(t(g) %*% V2 %*% g))
+}
+
+# ---- PANEL B: average discrete change, democracy from -10 to +10 -----------
+dd_est <- numeric(length(cr_grid))
+dd_sd  <- numeric(length(cr_grid))
+
+for (i in seq_along(cr_grid)) {
+
+  Xlo <- X2                                             # two counterfactual COPIES
+  Xhi <- X2
+  Xlo[, "lncaprat"]      <- cr_grid[i]                  # same capability ratio in both
+  Xhi[, "lncaprat"]      <- cr_grid[i]
+  Xlo[, "deml"]          <- -10                         # fully autocratic
+  Xhi[, "deml"]          <-  10                         # fully democratic
+  Xlo[, "deml:lncaprat"] <- -10 * cr_grid[i]            # products track both columns
+  Xhi[, "deml:lncaprat"] <-  10 * cr_grid[i]
+
+  plo <- plogis(as.vector(Xlo %*% b2))                  # n predictions at deml = -10
+  phi <- plogis(as.vector(Xhi %*% b2))                  # n predictions at deml = +10
+
+  dd_est[i] <- mean(phi - plo)                          # average the n differences
+
+  g <- colMeans(phi * (1 - phi) * Xhi) - colMeans(plo * (1 - plo) * Xlo)
+  dd_sd[i] <- sqrt(as.numeric(t(g) %*% V2 %*% g))
+}
+
+me_d <- tibble(lncaprat = cr_grid, est = ame_est, se = ame_se,
+               panel = "A. Derivative: per one-point move")
+me_c <- tibble(lncaprat = cr_grid, est = dd_est,  se = dd_sd,
+               panel = "B. Discrete: full -10 to +10 move")
+
+me_panel <- function(d) d %>%
+  mutate(lo = est - 1.96 * se, hi = est + 1.96 * se) %>%
+  ggplot(aes(x = lncaprat, y = est)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = bu_palegreen, alpha = 0.45) +
+  geom_line(color = bu_green, linewidth = 0.9) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = bu_grey) +
+  geom_rug(data = slice_sample(dp, n = 1500), aes(x = lncaprat), inherit.aes = FALSE,
+           alpha = 0.15, color = bu_grey) +
+  labs(title = unique(d$panel), x = "ln(capability ratio)", y = "change in Pr(dispute)") +
+  theme_bu() +
+  theme(plot.title = element_text(size = 11, face = "bold"),
+        panel.border = element_rect(color = bu_grey, fill = NA, linewidth = 0.3))
+
+me_panel(me_d) | me_panel(me_c)
+```
+
+In either panel, the finding is that becoming more democratic reduces the chances of conflict for dyads at parity, but has little or no effect for dyads with imbalances. Put differently, the marginal effect of an increase in democracy is to decrease the chances of conflict across the range of capabilities, but that dampening effect gets smaller as capability ratios get larger. By the time ln(capabilities) reaches about 5, democracy exerts no measurable effect on conflict. 
+
+Panel B is a better one for these data - it's differenced and set up between the cases where Polity is -10 and +10. We can say something explicit about the change in $x$ here, and the effects are on a more meaningful scale because of the large change in $x$. The marginal effect of moving from -10 to +10 on Polity for a dyad at parity is to reduce the chances of conflict by about 8 percentage points. Again, because Polity is discrete, this is a marginally more appropriate method, though you can see in the figures it really doesn't matter. 
+
+Compare these to the predicted probabilities and you'll see they tell the same basic story. In @fig-pp, reading left-to-right, you can see the probability of conflict for a dyad at parity declines over the range of democracy from about 9.5% to something close to zero. In @fig-ppme, reading just at the left side, for dyads at parity, an increase in democracy is associated with a decrease of about 8 percentage points in the chance of conflict. These are just different ways to represent and discuss conditional effects.
+
+# Include a multiplicative interaction or not? 
+
+My view is conditionally with Rainey. **If you have an explicit conditional expectation, state it and measure it** — write the multiplicative interaction and test it. A conditional claim deserves a parameter of its own, and leaning on curvature to carry an argument you could have specified is a bad trade.
+
+If you *don't* have a conditional expectation, it is still reasonable, and I'd argue desirable, to look at the effect of your variable of interest at several values of an interesting control. That is common practice and usually good practice. You are describing what your model implies, which is what interpretation is for, and you will frequently learn something.
+
+**But don't label it.** Do not write "compression" or "inherent interaction" in a paper. The label adds nothing to the interpretation — the effects are the effects either way — and it will needlessly earn you a reviewer who does not know this literature saying *wait a minute, I don't see an interaction in your table*. You will then spend a response letter explaining link functions to somebody who did not ask. Report the effect of $x_1$ at several values of the control, describe what you find, and leave this fairly rarified vocabulary out of it.
+
+
+
+# Take away points
+
+1. **Nonlinear models are interactive in all of their variables.** The marginal effect is $\lambda(x\beta)\beta_k$, the weight depends on every covariate, so the effect of $x_1$ depends on $x_2$ with no product term anywhere. This is compression.
+2. **On the curve, a dummy is an intercept shift, and that is the whole story.** Sliding $x\beta$ by a constant buys different amounts of probability depending on how steep the curve is where you land. A product term does something the shift cannot — it changes the slope, so the two group curves are no longer the same curve in two places, and their difference can grow, move, or change sign.
+3. **Compression is not your theory.** It is a fixed shape — effects biggest near $Pr = 0.5$, shrinking toward both tails — that the link imposes. It cannot change a sign, and it cannot represent a conditional claim that is not about curvature.
+4. **So a null product term does not mean "no interaction."** In the democratic peace model democracy's effect is two and a half times larger among contiguous dyads, and the product term testing exactly that is nowhere near significant.
+5. **Specify the interaction your theory claims, and test it.** Then report *effects* at meaningful values of the moderator, with the conditional standard error that includes the covariance term — not the coefficients.
+6. **Interpret this way; don't *name* it this way.** Looking at the effect of $x_1$ at several values of an interesting control is common and usually good practice, with or without a product term. Calling it "compression" or "inherent interaction" in a manuscript adds nothing to the interpretation and earns you a reviewer who says they don't see an interaction in your table.
+7. **Check the two assumptions nobody checks.** Plot the binned effects against the line your product term drew, and put a histogram of the moderator under every conditional-effect plot. A sign change out where there is no data is not a finding.
+8. **Say which quantity you are reporting and why.** Logit-scale conditional effects are straight lines by construction; probability-scale effects carry compression too, and they are what your hypothesis was about.
+9. **Plot the predicted probabilities before you plot the effects.** An effect is a distance between two of them — the gap between group curves, or the slope of one. Levels let a reader judge whether a difference is big; a difference on its own does not.
+10. **Ask whether the counterfactual exists before you ask whether it is precise.** A conditional-effect plot draws a line at every value of the moderator whether or not cases live there, and the shape you imposed decides what it says out in the empty region. Here that manufactured a sign change the data do not support.
+
+# Coming up next
+
+Next week we leave the binomial family and take up causal mechanics and identification — potential outcomes, estimands, and g-computation. That last one will look familiar sooner than you expect: the g-formula is the average-effects computation from the [prediction slides](prediction26.html), done to a counterfactual and given a causal interpretation. The counterfactual design matrices we built by hand today are the same objects.
+
+# References

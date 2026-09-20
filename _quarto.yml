@@ -28,6 +28,13 @@ website:
           - text: repo
             href: https://github.com/clavedark/MLEfall26
 
+# Applies to every page, including the topic decks that declare their own
+# `filters: - parse-latex` — a project-level filter is additive, not overridden
+# (verified 2026-09-19). See the header of table-scope.lua for what it does and
+# what it cannot reach.
+filters:
+  - table-scope.lua
+
 format:
   html:
     theme:

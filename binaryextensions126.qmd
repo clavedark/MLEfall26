@@ -2,7 +2,7 @@
 title: "Diagnostics, Classification, and Fit"
 author: "Dave Clark"
 institute: "Binghamton University"
-date: today
+date: 2026-09-07   # first published this day; pinned so re-renders stop restamping it
 bibliography: refs606.bib
 title-block-banner: TRUE
 format:
