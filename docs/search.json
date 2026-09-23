@@ -438,7 +438,7 @@
     "href": "code.html#code",
     "title": "Exercises & Code",
     "section": "Code",
-    "text": "Code\nStandalone R scripts, for slides that have one, and a starting template for your own documents.\n\npredictionOLS26.R \u2014 R script from the linear model prediction slides.\npdftemplate26.qmd \u2014 a short Quarto starter that renders to PDF, for exercise write-ups and for papers. Copy it, rename it, and write over the placeholder sections. It needs no data, so rendering it unchanged is a quick way to find out whether your machine is set up. Instructions are in the comment block at the top, including what to change for a paper and how to produce a PDF without installing LaTeX. Click Download raw file."
+    "text": "Code\nStandalone R scripts, for slides that have one, and a starting template for your own documents.\n\npredictionOLS26.R \u2014 R script from the linear model prediction slides.\nbinarymodels26.R \u2014 R script from the binary models slides. Reads dp.dta, below.\npdftemplate26.qmd \u2014 a short Quarto starter that renders to PDF, for exercise write-ups and for papers. Copy it, rename it, and write over the placeholder sections. It needs no data, so rendering it unchanged is a quick way to find out whether your machine is set up. Instructions are in the comment block at the top, including what to change for a paper and how to produce a PDF without installing LaTeX. Click Download raw file."
   },
   {
     "objectID": "code.html#data",
