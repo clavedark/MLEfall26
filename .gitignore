@@ -164,9 +164,17 @@ sandbox26.R
 snoop.jpeg
 zorntweet.png
 
+# Deck companion scripts, kept local for now. predictionOLS26.R is the only one
+# published. binarymodels26.R was published and pulled back on 2026-09-23.
+binarymodels26.R
+binaryextensions126.R
+discretehazards26.R
+likelihood26.R
+prediction26.R
+
 # Companion .R scripts that ARE the answer to exercise #2 (hand-rolled Newton-
 # Raphson for the logit: log-likelihood, score, Hessian, the loop, the SEs).
-# Unlike binarymodels26.R these must never be published -- a single `git add -A`
+# Unlike the deck scripts above these must never be published -- a single `git add -A`
 # would put the graded work in the public repo as a plain script.
 llfmax26.R
 nr-logit.R
