@@ -1144,7 +1144,9 @@ hazards, each a nonlinear function of $\widehat\beta$, and a first-order Taylor 
 approximation to it. King–Tomz–Wittenberg's simulation approach is the right one.
 
 ```{r sim-engine}
-#| echo: false
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
 
 set.seed(20260916)   # the draws below are the whole engine; fix the seed here so
                      # the simulated quantities do not move with chunk order
@@ -1178,7 +1180,9 @@ band <- function(M, p, what) {
 ## 1. The hazard, and 2. the survivor function
 
 ```{r fig-haz-surv}
-#| echo: false
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
 #| label: fig-haz-surv
 #| fig-height: 3.8
 #| fig-alt: "Two panels against years in office, three curves each, one per Polity value (-10, 0, +10), distinguished by both color and dash pattern, with 95% simulated bands. Left panel, the hazard: all three decline slowly, from about 0.15 for Polity -10 and 0.28 for Polity +10 in the first year to 0.11 and 0.20 by year ten. Right panel, the survivor function: the same estimates separate sharply, with 46% of the most autocratic still in power at five years against 22% of the most democratic, and 25% against 6% at ten years."
