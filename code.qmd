@@ -10,7 +10,7 @@ Posted as they're assigned. Turn in both your source (`.qmd`/`.R`) and the rende
 - [Exercise #2 — Write the Maximizer](ex22026.qmd) · [answer key](ex22026answers.qmd)
 - [Exercise #3 — Build Your Own Estimator](buildtemplate26.qmd) — the in-class build template, completed as homework. 
 - [Exercise #4 — Leaders and the Probability of Leaving Office](ex42026.qmd)
-- [Exercise #5 — Build the Spell Data, Then Model the Hazard](ex52026.qmd)
+- [Exercise #5 — Build the Spell Data, Then Model the Hazard](ex52026.qmd) · [answer key](ex52026answers.qmd)
 - [Mechanism Paper Assignment](mechanismpaper26.qmd) — three short papers across the semester; due dates are in the assignment.
 
 ## Code
@@ -19,6 +19,7 @@ Standalone R scripts, for slides that have one, and a starting template for your
 
 - [`predictionOLS26.R`](https://github.com/clavedark/MLEfall26/blob/main/predictionOLS26.R) — R script from the linear model prediction slides.
 - [`binarymodels26.R`](https://github.com/clavedark/MLEfall26/blob/main/binarymodels26.R) — R script from the binary models slides. Reads `dp.dta`, below.
+- [`avg-preds-step-by-step.R`](https://github.com/clavedark/MLEfall26/blob/main/avg-preds-step-by-step.R) — average effects for the Exercise #5 hazard model, built one step at a time: one leader-year, then three, then the whole sample, then every year of tenure at three Polity values, with delta-method and simulated intervals. It is Part III of the Exercise #5 answer key as a plain script. Reads Archigos from the web and the Polity V file (`p5v2018.csv`) you downloaded for the exercise, saved in `data/`. Click **Download raw file**.
 - [`pdftemplate26.qmd`](https://github.com/clavedark/MLEfall26/blob/main/pdftemplate26.qmd) — a short Quarto starter that renders to PDF, for exercise write-ups and for papers. Copy it, rename it, and write over the placeholder sections. It needs no data, so rendering it unchanged is a quick way to find out whether your machine is set up. Instructions are in the comment block at the top, including what to change for a paper and how to produce a PDF without installing LaTeX. Click **Download raw file**.
 
 ## Data

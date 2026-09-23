@@ -130,6 +130,7 @@ docs/*
 # the exercise it answers is in.
 !docs/ex12026answers.html
 !docs/ex22026answers.html
+!docs/ex52026answers.html
 # released: the rendered in-class build template, so students can read it in a
 # browser while they work in the .qmd. `docs/buildtemplate26answers.html` is NOT
 # released -- it is the key, and it is what gets projected in class.
