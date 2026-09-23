@@ -966,13 +966,9 @@ lt %>%
 Now the same three baselines, on the same specification we would use without any of this.
 
 ```{r leader-models}
-#| echo: false
-#| # HIDDEN (2026-09-19): this is Exercise #5, Part II/III. `code-fold` is NOT
-#| # hiding -- folded code ships in the HTML, in view-source, and in search.json,
-#| # where "leftoffice" was turning up in five public search entries. Only
-#| # `echo: false` keeps it off the page. The OUTPUT still renders, which is the
-#| # part students need; the dyad-side chunks stay visible because those teach
-#| # the technique on data that is not the assignment.
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
 
 l_const <- glm(leftoffice ~ polity2 + age + female + entry + region,
                family = binomial(link = "logit"), data = lt)
@@ -1000,18 +996,9 @@ covariates. **Polity falls from $0.054$ to $0.039$,
 about 28%, and leader age rises from $0.0159$ to $0.0221$, about 38%.**
 
 ```{r leader-lrt}
-#| include: false
-#| # `include: false`, NOT `echo: false` -- and the difference is the whole point.
-#| # `anova()` PRINTS BOTH MODEL FORMULAS in its Analysis of Deviance table, so
-#| # hiding the code still published
-#| #   Model 1: leftoffice ~ polity2 + age + female + entry + region
-#| #   Model 2: leftoffice ~ t + t2 + t3 + polity2 + age + female + entry + region
-#| # which is the answer to Exercise #5 Q5, in the OUTPUT. Nothing is lost by
-#| # suppressing it: the prose above already quotes chi-sq = 138.2 on 3 df, and
-#| # `dispute-lrt` shows the full deviance table on the DYAD data, which teaches
-#| # the technique without being the assignment.
-#| # Lesson for the next deck: check what a result PRINTS, not just what the
-#| # chunk shows. anova(), summary(), and print.glm all echo the formula.
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
 
 # The likelihood-ratio test quoted above: cubic baseline against constant.
 anova(l_const, l_cubic, test = "LRT")
@@ -1263,13 +1250,9 @@ Being a median it is unbothered by the long tail, which matters in these data, w
 monarchs served for decades and would drag a mean around.
 
 ```{r median-tenure}
-#| echo: false
-#| # HIDDEN (2026-09-19): this is Exercise #5, Part II/III. `code-fold` is NOT
-#| # hiding -- folded code ships in the HTML, in view-source, and in search.json,
-#| # where "leftoffice" was turning up in five public search entries. Only
-#| # `echo: false` keeps it off the page. The OUTPUT still renders, which is the
-#| # part students need; the dyad-side chunks stay visible because those teach
-#| # the technique on data that is not the assignment.
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
 
 med_draw <- function(M) apply(M, 2, function(col) {
   w <- which(col < 0.5); if (length(w)) w[1] else NA_integer_
