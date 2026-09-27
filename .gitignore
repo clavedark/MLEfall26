@@ -68,6 +68,8 @@ readings/*
 !binaryextensions126.qmd
 # released deck: interactions in nonlinear models
 !interactions26.qmd
+# released deck: a causal lens on the binomial
+!causallens26.qmd
 # released: codebook for the CES data used in exercise #1
 !cescodebook26.qmd
 # released IN-CLASS TEMPLATE, and the only exercise-family file published as
@@ -107,6 +109,8 @@ docs/*
 !docs/binaryextensions126.html
 # released deck: interactions in nonlinear models
 !docs/interactions26.html
+# released deck: a causal lens on the binomial
+!docs/causallens26.html
 # released: codebook for the CES data used in exercise #1
 !docs/cescodebook26.html
 # released EXERCISE: only the rendered page. `ex12026.qmd` stays ignored above --

@@ -1,0 +1,1251 @@
+---
+title: "A Causal Lens on the Binomial Model"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: true
+filters:
+  - parse-latex
+---
+
+<!--
+Causal-lens deck (Fall 2026). New-for-2026 with no 2024 analog, so the prose still wants Dave's
+eye for voice. Running example: 2020 CES, treatment = a college degree, outcome = a two-party vote
+for Biden, confounders = age/sex/race/religion; party ID is the mediator, turnout the collider.
+Note: HTML comments pass through to the rendered page source.
+-->
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+#| cache.extra: !expr tools::md5sum("_common.R")
+#| # knitr keys the cache on the CHUNK's code, not on files the chunk sources.
+#| # Without this line a palette edit in _common.R leaves every cached figure
+#| # drawing the OLD colors and says nothing; a newly added constant fails with
+#| # "object not found" from a stale setup environment. Hashing the file in makes
+#| # a _common.R edit invalidate the caches that depend on it.
+options(htmltools.dir.version = FALSE)
+
+# R starts in the C locale here, which cannot encode non-ASCII characters. Any
+# Greek letter, minus sign, or +/- typed into a ggplot title, subtitle, axis
+# label, or annotation gets drawn as the literal text <U+03B1>. Setting a UTF-8
+# ctype fixes it for the whole document.
+Sys.setlocale("LC_CTYPE", "en_US.UTF-8")
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+library(modelsummary)
+library(broom)
+library(marginaleffects)
+
+# Binghamton palette + plotting helpers (bucolors, bu_green, scale_color_bu, ...)
+source(here::here("_common.R"))
+
+set.seed(20260923)
+```
+
+<style>
+table, th, td {
+    font-size: 18px;
+}
+tr:nth-child(odd) {
+  background-color: #f2f2f2;
+}
+</style>
+
+# A causal lens
+
+## Questions
+
+- We already estimate effects. When is an effect actually an *effect* — a causal quantity — and not just a slope or an association?
+- What do we have to assume to interpret a marginal effect as a causal effect?
+- Do we need new machinery, or can we get there with the logit and the marginal effects we already know?
+
+The short answer to the last question is that we mostly get there with tools we already own. This week is not a new paradigm; it is a lens laid over the binomial model we've been fitting for a month. The estimand changes, and the assumptions we need change; the *estimation* is largely the average marginal effect from the [quantities-of-interest notes](prediction26.html), interpreted differently. For a reading aimed squarely at political science — causal inference from a political-methodology point of view — @keele2015 is the place to start.
+
+::: {.callout-note title="Where this fits"}
+This is the causal augmentation of the tools you already have, and it follows one argument from start to finish.
+
+1. **The problem.** The raw difference between treated and untreated units mixes the effect we want with **selection bias**: the treated would have differed from the untreated even without treatment. That is, the treatment is not randomly applied.
+2. **What we want.** We define the effect precisely — the **estimand** — using potential outcomes.
+3. **What we must assume.** Conditioning on (controlling for) the right covariates removes the selection bias (**ignorability**). A causal graph, or **DAG**, is how we decide which covariates are the right ones. It shows where the selection bias comes from: a backdoor path built from two arrows, one into the treatment and one into the outcome.
+4. **Two ways to remove the bias.** Work on the arrow into the outcome by modeling the outcome (**g-computation**), or cut the arrow into the treatment by modeling who gets treated and then reweight (**the propensity score**). A third estimator combines the two approaches. All three are logits and quantities of interest you already know.
+5. **What we can and cannot check in this framework.** Overlap and balance can be checked; ignorability cannot.
+
+Finally, we'll step back to the **landscape** of methods we can use when ignorability fails, and we'll find that selection and censoring are the same missing-data problem. Everything this week belongs to one family of methods, **selection on observables**: methods that assume the variables driving both treatment and outcome are measured, and adjust for them. The other family, **design-based** methods (e.g., instrumental variables, regression discontinuity, difference-in-differences), gets its leverage from how treatment was assigned instead, which lets it handle confounders we did not measure. I am **not** trying to teach that family here; it's the topic of another course. The framing throughout today is that this *augments* OLS and MLE, it does not replace them.
+:::
+
+# A running example
+
+I'll make this concrete with the 2020 Cooperative Election Study, the CES data you have already worked with this term. The causal question is "does a **college degree** raise the probability of **voting Democratic**?" The **treatment** — the variable whose effect we want — is holding a four-year degree or more; call it $D$. The **outcome** — the variable the treatment might change — is a two-party vote for Biden over Trump in the 2020 election; call it $Y$. Both are binary, so everything this week lives in the binomial world we know well.
+
+```{r data setup}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+ces_raw <- read_csv(here::here("data", "ces.csv"), show_col_types = FALSE)
+
+ces <- ces_raw %>%
+  transmute(
+    college = as.integer(educ %in% c("4-year", "Post-grad")),      # treatment: a college degree
+    voteDem = case_when(                                            # outcome: two-party vote
+      votechoice == "Joe Biden (Democrat)"         ~ 1L,
+      votechoice == "Donald J. Trump (Republican)" ~ 0L,
+      TRUE                                         ~ NA_integer_),
+    age, sex, race, religion,                                       # confounders
+    pid7) %>%                                                       # party ID (a mediator)
+  drop_na()
+
+# the raw difference: share voting Biden among graduates minus among non-graduates
+raw_diff <- with(ces, mean(voteDem[college == 1]) - mean(voteDem[college == 0]))
+```
+
+The sample is `r format(nrow(ces), big.mark = ",")` two-party voters with complete data. Of these, `r round(100*mean(ces$college))`% hold a college degree and `r round(100*mean(ces$voteDem))`% voted for Biden. Among graduates, `r round(100*mean(ces$voteDem[ces$college == 1]))`% voted for Biden; among non-graduates, `r round(100*mean(ces$voteDem[ces$college == 0]))`%. That is a raw difference of `r round(100 * raw_diff, 1)` percentage points. That is the share of graduates voting for Biden minus the share of non-graduates voting for Biden:
+
+$$
+\bar{Y}_{\text{college}} - \bar{Y}_{\text{no college}} = `r sprintf("%.3f", mean(ces$voteDem[ces$college == 1]))` - `r sprintf("%.3f", mean(ces$voteDem[ces$college == 0]))` = `r sprintf("%.3f", raw_diff)`.
+$$
+
+Is that the effect of a college degree? Almost certainly not, or not all of it. People who go to college differ from people who don't in ways that also shape how they vote — they are younger, less religious, and differ by race. Some of the `r round(100 * raw_diff, 1)` points is due to college, and some is rooted in **who** goes to college or who **selects into** the college sample. Separating those two is the whole problem this week, and we will come back to this number several times as we build the tools to take it apart.
+
+# Potential outcomes and estimands
+
+## The counterfactual setup
+
+The setup here is the **potential-outcomes** framework, often called the Rubin causal model after @rubin1974; @holland1986 gave it that name. Start with a binary treatment $D_i \in \{0,1\}$ and an outcome $Y_i$. For each unit we imagine **two** potential outcomes:
+
+- $Y_i(1)$: the outcome unit $i$ *would* realize under treatment,
+- $Y_i(0)$: the outcome unit $i$ *would* realize under control.
+
+The individual causal effect is $\tau_i = Y_i(1) - Y_i(0)$. The trouble — the *fundamental problem of causal inference* [@holland1986] — is that we only ever see one of the two. What we observe is the **switching equation**,
+
+$$
+Y_i = D_i \, Y_i(1) + (1 - D_i)\, Y_i(0),
+$$
+
+which says: if $i$ is treated we see $Y_i(1)$ and the control (untreated) outcome is missing; if $i$ is untreated we see $Y_i(0)$ and the treatment outcome is missing. Notice the framing already: a causal effect is a **missing-data** problem. Half of the data we would need for $\tau_i$ is never observed. Remember this point for later.
+
+Here is what that looks like in the running example. @tbl-po shows eight CES respondents, four with a college degree and four without. Each has two **potential outcomes**: how they would have voted with a degree, $Y_i(1)$, and how they would have voted without one, $Y_i(0)$. We see exactly one of them. The graduates' $Y_i(0)$ and the non-graduates' $Y_i(1)$ are question marks, and no amount of data collection fills them in; they are unobserved and non-randomly so.
+
+```{r po-table}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-po
+#| tbl-cap: "Eight respondents, two potential outcomes each, one observed. 1 = voted Biden, 0 = voted Trump."
+
+# four graduates and four non-graduates, drawn at random
+po_rows <- ces %>%
+  group_by(college) %>%
+  slice_sample(n = 4) %>%
+  ungroup() %>%
+  slice_sample(prop = 1)
+
+po_rows %>%
+  transmute(age, race,
+            `college (D)` = college,
+            `voted Biden (Y)` = voteDem,
+            `Y(1)` = if_else(college == 1, as.character(voteDem), "?"),   # observed only if treated
+            `Y(0)` = if_else(college == 0, as.character(voteDem), "?")) %>%  # observed only if untreated
+  knitr::kable(align = "c")
+```
+
+A note on notation, because it is easy to misread. The number in parentheses is the *treatment*, not the vote. $Y_i(1)$ is how respondent $i$ would vote *with* a college degree; $Y_i(0)$ is how the same respondent would vote *without* one. Every respondent has both, whether or not they actually went to college. And each potential outcome is itself a vote, so each can be 1 (Biden) or 0 (Trump): a respondent with $Y_i(1) = 0$ is someone who would vote for Trump if they had a degree.
+
+Now read across a row. A respondent with a degree (treated) shows their observed vote in the $Y(1)$ column and a question mark in $Y(0)$, because we do not know how that person would have voted had they not gone to college. A respondent without a degree (untreated) shows their observed vote in the $Y(0)$ column and a question mark in $Y(1)$, because we do not know how they would have voted had they gone to college. Every causal estimate this week is a strategy for filling in, or averaging around, those question marks.
+
+Repeating from above, the quantity we would like for each respondent is
+
+$$
+\tau_i = Y_i(1) - Y_i(0),
+$$
+
+but one of the two terms is always a question mark. The missing term is **counterfactual**: it is the outcome under the treatment the respondent did *not* receive, so it never happens and can never be observed. The question we are really asking is "how would this graduate have voted without a degree, and how would this non-graduate have voted with one?" We cannot answer that for any single respondent, which is why the next step is to aim at averages.
+
+## What we can estimate: estimands
+
+We cannot recover $\tau_i$ for a single unit, but we can target averages. An **estimand** is the quantity we want to know, defined before we choose any model or estimator — in the language of the [quantities-of-interest notes](prediction26.html), it is the quantity of interest, stated in potential-outcomes terms. The three we will use:
+
+- **ATE**, the average treatment effect: $\; \tau_{\text{ATE}} = E[\,Y_i(1) - Y_i(0)\,]$. This is the effect averaged over the whole population.
+- **ATT**, the average treatment effect on the treated: $\; \tau_{\text{ATT}} = E[\,Y_i(1) - Y_i(0) \mid D_i = 1\,]$. This is the effect averaged over the units that actually got treated.
+- **CATE**, the conditional average treatment effect: $\; \tau_{\text{CATE}}(x) = E[\,Y_i(1) - Y_i(0) \mid X_i = x\,]$. This is the effect at a covariate profile. This one you already know in another guise: it is the marginal effect evaluated *at* a covariate profile rather than averaged over the sample — the at-means-vs-average distinction from the quantities-of-interest notes, wearing a causal hat.
+
+## Why the raw difference is not the effect
+
+We can now say exactly what is wrong with the raw difference of `r round(100 * raw_diff, 1)` points. The raw difference compares the observed outcomes of the treated with the observed outcomes of the untreated, $E[Y_i \mid D_i = 1] - E[Y_i \mid D_i = 0]$. By the switching equation, the treated show us $Y_i(1)$ and the untreated show us $Y_i(0)$, so the raw difference is $E[Y_i(1) \mid D_i = 1] - E[Y_i(0) \mid D_i = 0]$. Now add and subtract the same term — the untreated outcome of the treated, $E[Y_i(0) \mid D_i = 1]$, one of the question-mark columns:
+
+$$
+\begin{aligned}
+E[Y_i \mid D_i = 1] - E[Y_i \mid D_i = 0]
+&= E[Y_i(1) \mid D_i = 1] - E[Y_i(0) \mid D_i = 0] \\[14pt]
+&= E[Y_i(1) \mid D_i = 1] - E[Y_i(0) \mid D_i = 1] \\[6pt]
+&\qquad + E[Y_i(0) \mid D_i = 1] - E[Y_i(0) \mid D_i = 0] \\[14pt]
+&= \underbrace{E[Y_i(1) - Y_i(0) \mid D_i = 1]}_{\text{ATT}} \\[14pt]
+&\qquad + \underbrace{E[Y_i(0) \mid D_i = 1] - E[Y_i(0) \mid D_i = 0]}_{\text{selection bias}}
+\end{aligned}
+$$
+
+The first term is the ATT, the effect on the people who went to college. The second term is **selection bias**: how differently graduates and non-graduates would have voted *if neither had gone to college*. If graduates would have been more Democratic anyway — because they are younger and less religious, say — the selection-bias term is positive and the raw difference overstates the effect of college on voting Democratic. 
+
+The raw difference equals the ATT only when the selection-bias term is zero, which is what random assignment guarantees and observational data do not. Everything that follows is a way of getting rid of that second term, selection bias. We'll generate an estimate of the ATT and then attempt to measure the selection bias. 
+
+::: {.callout-tip title="You already know most of this under other names"}
+A lot of the vocabulary this week is new names for things we've already encountered. The causal terms add an assumption, but the computations are the same as what we've learned so far.
+
+| causal-inference term | what it means | where you have seen it |
+|---|---|---|
+| estimand | the quantity we want, defined before any model | the quantity of interest |
+| confounder | a variable that causes both treatment and outcome | the omitted variable in omitted variable bias |
+| conditioning on $X$ | holding $X$ fixed — by putting it in the model, stratifying on it, matching or weighting on it, or restricting the sample to one value of it | "controlling for" $X$ |
+| outcome model | a model of $Y$ given the treatment and covariates | every logit you have fit so far |
+| treatment model | a model of $D$ given covariates | a logit with the treatment on the left-hand side |
+| propensity score | the predicted probability of treatment | `predict(type = "response")` from that logit |
+| counterfactual prediction | predict each case with $D$ set to a value it may not have taken | the average-effects computation: set $x$ to a value for every case and predict |
+| g-computation estimate of the ATE | the average of those predicted contrasts | the average marginal effect of a binary variable; `avg_comparisons()` |
+| CATE | the effect at a covariate profile | the effect at means, or at a chosen scenario |
+| ATT | the average contrast over the treated cases only | an average effect computed over a subset of the data |
+:::
+
+## Identification
+
+An estimand is **identified** if, under a stated set of assumptions, we could compute it exactly from the observed data if we had unlimited data. Identification is a question about assumptions and what the data could tell us in principle, and it comes before the two questions most of this course has been about: **estimation** (how to compute the quantity from the sample we have) and **inference** (how uncertain that computation is). If the effect is not identified, more data only buys a more precise estimate of the wrong quantity. We've encountered identification in a narrower sense already: a parameter is identified when the data can pin it down, which is why the coefficients on two perfectly collinear variables are not identified. Causal identification applies the same idea to the causal effect, and what does the pinning down is a set of assumptions. @keele2015 surveys causal inference from a political-methodology point of view through exactly this lens — the assumptions needed to give an estimate a causal interpretation.
+
+The estimands are defined without any model. To *estimate* them from observed data, we need identifying assumptions. Two are sufficient for now: 
+
+1. **Conditional ignorability** (unconfoundedness): $\; \{Y_i(1), Y_i(0)\} \perp D_i \mid X_i$. Once we condition on the covariates $X$, treatment is as-good-as-random. This is the strong, untestable assumption; everything ahead depends on it.
+2. **Positivity** (overlap): $\; 0 < \Pr(D_i = 1 \mid X_i = x) < 1$ for all $x$. Every covariate profile has some chance of being treated and some chance of being control, or there is no counterfactual to compare against.
+
+Under these, the missing potential outcomes are recoverable *on average*, and the estimands above become estimable from data we actually have. Assuming conditional ignorability, and then adjusting for the measured $X$, is what defines **selection on observables**, the family of methods this week covers.
+
+Ignorability is the assumption everything else leans on, and written as a conditional independence statement it is hard to reason with. It says "condition on the right $X$ and treatment is as-good-as-random" — but which $X$? More covariates is not the answer; some variables make things worse when we condition on them. To decide what belongs in $X$, we need a way to write down what we think causes what. Causal graphs are a tool for doing exactly this.
+
+# Drawing the assumptions: DAGs
+
+The primary goal here is to determine which variables we condition on, and which we must leave alone using a Directed Acyclic Graph (DAG). The set of variables we condition on is called the **adjustment set**. The goal is a *sufficient* adjustment set: one that closes every backdoor path from $D$ to $Y$ and includes nothing the treatment itself affects. A sufficient adjustment set is what ignorability asks for, stated in terms of the graph. Selection bias is the problem; ignorability says conditioning on the right $X$ removes it; the DAG is how we find the right $X$, and it will also show us *where* the selection bias comes from, which is what the estimators outlined below are designed to address.
+
+## Nodes, arrows, and paths
+
+A **Directed Acyclic Graph**, or DAG, is a picture of our causal assumptions [@hernanrobins2020, ch. 6]. Each variable is a **node**. An **arrow** from $A$ to $B$ says $A$ may directly affect $B$. The arrows are *directed* — they point one way, from cause to effect — and the graph is *acyclic*, meaning no variable can cause itself by following arrows around a loop.
+
+The arrows we leave *out* matter as much as the ones we draw. An arrow says "may affect"; a missing arrow says "does not affect," which is the stronger claim. We've talked about excluded variables as assuming $\beta_{\text{excluded}=0}$; this is the same thing. Every missing arrow is an assumption, and the DAG makes those assumptions visible so a reader can argue with them.
+
+A **path** is any route between two nodes along the arrows, ignoring which way they point. Two kinds of path connect a treatment $D$ to an outcome $Y$:
+
+- A **causal path** leaves $D$ and follows the arrows to $Y$. For instance, $D \rightarrow Y$, or $D \rightarrow M \rightarrow Y$. These carry the effect we want.
+- A **backdoor path** starts with an arrow pointing *into* $D$. For example, $D \leftarrow X \rightarrow Y$ connects $D$ and $Y$ without being any part of $D$'s effect. Backdoor paths are how confounding gets into an estimate.
+
+Last, two words for timing. A **pre-treatment** variable is fixed before treatment happens — age, race, parents' education. A **post-treatment** variable is determined after, and treatment may affect it — party ID, turnout, income after graduation.
+
+Potential outcomes and DAGs come from two different traditions, and methodologists argue about how much each needs the other. For our purposes they do different jobs. Potential outcomes define the estimand. The DAG tells us which variables to condition on so that ignorability is plausible.^[The potential-outcomes framework grew out of Jerzy Neyman's work on agricultural experiments in the 1920s and was extended to observational studies by Donald Rubin [@rubin1974]; @holland1986 is the classic statement of it for a general audience. The graphical approach is Judea Pearl's [@pearl1995], developed in computer science and widely adopted in epidemiology. The two are largely compatible — a DAG implies a particular set of ignorability assumptions — but they emphasize different things, and @imbens2020 compares what each is good for from the point of view of applied economics.]
+
+## Three structures
+
+Every DAG, however big, is built from three structures. @fig-structures shows them, each with a treatment $D$, an outcome $Y$, a third variable, and an arrow from $D$ to $Y$, which is the effect we are after.^[I used Claude Code Opus 5.5 to build several of the figures in these slides.]
+
+```{r dag-helpers}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Plain-ggplot DAG drawing. Each node is a box: centre (x, y), half-width w,
+# half-height h. Arrows run centre to centre, trimmed back to the box edges.
+trim_edges <- function(edges, nodes, by = character()) {
+  edges %>%
+    left_join(nodes %>% select(all_of(by), name, x, y, w, h),
+              by = c(by, "from" = "name")) %>%
+    left_join(nodes %>% select(all_of(by), name, xend = x, yend = y, wend = w, hend = h),
+              by = c(by, "to" = "name")) %>%
+    mutate(dx = xend - x, dy = yend - y,
+           t0 = pmin(w / abs(dx), h / abs(dy)),           # fraction of the edge inside the "from" box
+           t1 = pmin(wend / abs(dx), hend / abs(dy)),     # fraction inside the "to" box
+           gap = 0.06 / sqrt(dx^2 + dy^2),                # small gap between arrow and box
+           xs = x + (t0 + gap) * dx,    ys = y + (t0 + gap) * dy,
+           xe = xend - (t1 + gap) * dx, ye = yend - (t1 + gap) * dy)
+}
+
+# arrows: the line, then a short solid segment at the tip carrying the arrowhead,
+# so dashed edges still get solid heads
+geom_dag_edges <- function(e) {
+  list(
+    geom_segment(data = e, aes(x = xs, y = ys, xend = xe, yend = ye,
+                               linetype = dashed),
+                 color = bu_green, linewidth = 0.7),
+    geom_segment(data = e, aes(x = xe - 0.02 * dx, y = ye - 0.02 * dy, xend = xe, yend = ye),
+                 color = bu_green, linewidth = 0.7,
+                 arrow = arrow(length = unit(0.13, "inches"), type = "closed")))
+}
+```
+
+```{r structures}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-structures
+#| fig-cap: "The three structures. In each, D is the treatment, Y the outcome, and the arrow from D to Y is the effect we're interested in."
+#| fig-alt: "Three small causal graphs side by side, each with D at lower left, Y at lower right, an arrow from D to Y, and a third variable above them. In the fork, arrows run from the confounder X down to both D and Y. In the chain, an arrow runs from D up to the mediator M and from M down to Y. In the collider, arrows run from both D and Y up into C."
+#| fig-width: 9
+#| fig-height: 2.8
+
+panels <- c("Fork: a confounder", "Chain: a mediator", "Collider: a common effect")
+
+st_nodes <- expand_grid(panel = panels, name = c("D", "Y", "Z")) %>%
+  mutate(x = case_when(name == "D" ~ 0, name == "Y" ~ 4, TRUE ~ 2),
+         y = if_else(name == "Z", 1.8, 0),
+         w = if_else(name == "Z", 0.9, 0.35),
+         h = if_else(name == "Z", 0.45, 0.3),
+         label = case_when(name != "Z" ~ name,
+                           panel == panels[1] ~ "X\nconfounder",
+                           panel == panels[2] ~ "M\nmediator",
+                           TRUE               ~ "C\ncollider"))
+
+st_edges <- tribble(
+  ~panel,    ~from, ~to,
+  panels[1], "Z",   "D",      # fork: X causes D and Y
+  panels[1], "Z",   "Y",
+  panels[1], "D",   "Y",
+  panels[2], "D",   "Z",      # chain: D causes M, M causes Y
+  panels[2], "Z",   "Y",
+  panels[2], "D",   "Y",
+  panels[3], "D",   "Z",      # collider: D and Y both cause C
+  panels[3], "Y",   "Z",
+  panels[3], "D",   "Y") %>%
+  mutate(dashed = FALSE)
+
+st_e <- trim_edges(st_edges, st_nodes, by = "panel")
+
+ggplot() +
+  geom_dag_edges(st_e) +
+  geom_rect(data = st_nodes, aes(xmin = x - w, xmax = x + w, ymin = y - h, ymax = y + h),
+            fill = "white", color = bu_black, linewidth = 0.5) +
+  geom_text(data = st_nodes, aes(x, y, label = label), size = 3.8,
+            color = bu_black, lineheight = 0.9) +
+  facet_wrap(~ factor(panel, levels = panels)) +
+  scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "22"), guide = "none") +
+  coord_equal(clip = "off") +
+  theme_void() +
+  theme(strip.text = element_text(size = 12, face = "bold", margin = margin(b = 8)))
+```
+
+- **Fork.** $X$ causes both $D$ and $Y$. That makes $X$ a **confounder**, and $D \leftarrow X \rightarrow Y$ is a backdoor path: $D$ and $Y$ move together partly because $X$ moves both of them. Conditioning on $X$ **closes** the path. It does this not by removing either arrow but by holding $X$ fixed: among units with the same value of $X$, $X$ cannot move $D$ and $Y$ together, so the association that ran through it is gone. (Later in the week we will see that the estimators differ in exactly this respect — one holds $X$ fixed, the other removes the arrow from $X$ into $D$.)
+- **Chain.** $D$ causes $M$, and $M$ causes $Y$. That makes $M$ a **mediator** — part of $D$'s effect runs through it. $D \rightarrow M \rightarrow Y$ is a causal path, and it is **part** of the effect we want. Conditioning on $M$ blocks that part, and what is left is only the effect of $D$ that does not run through $M$. That is a different estimand, and usually not the one we meant to ask about. It helps to name the pieces. The **total effect** of $D$ is everything $D$ does to $Y$, along every causal path. The **direct effect** is the part that does not run through $M$ ($D \rightarrow Y$). The **indirect effect** is the part that does ($D \rightarrow M \rightarrow Y$). Leaving $M$ out of the model estimates the total effect; putting $M$ in estimates the direct effect. Neither one, by itself, estimates the indirect effect.
+- **Collider.** $D$ and $Y$ both cause $C$; the two arrows "collide" at $C$. A path through a collider is **closed on its own**: the path $D \rightarrow C \leftarrow Y$ does not create any association between $D$ and $Y$ as long as we leave $C$ alone. Conditioning on $C$ **opens** the path. Among units with the same value of $C$, knowing $D$ tells us something about $Y$, because something had to produce that value of $C$. Conditioning on a collider is a second source of **selection bias**. It does not open a backdoor path, since $D \rightarrow C \leftarrow Y$ does not start with an arrow into $D$. But it does create an association between $D$ and $Y$ that is no part of $D$'s effect. Treated and untreated units with the same value of $C$ are no longer comparable: they differ in their potential outcomes, which is what selection bias means. Selecting a sample on $C$ does the same thing as putting $C$ in the model, which is why this is often called **endogenous selection bias** [@elwertwinship2014]. Keep it in mind for the running example, where the sample is selected on turnout.
+
+::: {.callout-important title="Three rules for choosing what to condition on"}
+1. **Condition on confounders.** They sit on backdoor paths, and conditioning on them closes those paths.
+2. **Leave mediators alone if you want the total effect.** They sit on causal paths, and conditioning on them blocks part of the effect.
+3. **Never condition on a collider, or on anything a collider causes.** A path through a collider is closed until you condition on it; conditioning opens it and creates selection bias. Conditioning on something the collider causes opens the path partway.
+
+Mediators and many colliders are post-treatment variables, which gives a simpler rule that covers most cases: **do not condition on anything the treatment affects.**
+:::
+
+## What conditioning does
+
+Let's simulate a circumstance where we can know both potential outcomes for every unit, so we know the true ATE and can see where our estimates are good or bad. I simulate each of the three structures with binary $D$ and $Y$ generated from logits, then estimate the effect of $D$ two ways — ignoring the third variable, and conditioning on it by putting it in the outcome model. Each estimate is a familiar quantity, the average marginal effect of $D$ from a logit — an estimate of $\; \tau_{\text{ATE}} = E[\,Y_i(1) - Y_i(0)\,]$.  
+
+```{r conditioning-sim}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+n <- 20000
+
+# average effect of D from a logit, with its 95% interval
+ame_D <- function(dat, f) {
+  ac <- avg_comparisons(glm(f, data = dat, family = binomial(link = "logit")),
+                        variables = "D")
+  tibble(estimate = ac$estimate, lo = ac$conf.low, hi = ac$conf.high)
+}
+
+# fork: X -> D, X -> Y, D -> Y
+X  <- rnorm(n)
+Df <- rbinom(n, 1, plogis(-0.5 + 1.5 * X))
+Yf <- rbinom(n, 1, plogis(-0.5 + 0.8 * Df + 1.2 * X))
+fork <- tibble(D = Df, Y = Yf, Z = X)
+truth_fork <- mean(plogis(-0.5 + 0.8 + 1.2 * X) - plogis(-0.5 + 1.2 * X))
+
+# chain: D -> M -> Y, D -> Y. D is randomized. One uniform draw per unit fixes
+# the mediator's value under each treatment, M(1) and M(0).
+Dc <- rbinom(n, 1, 0.5)
+um <- runif(n)
+M1 <- as.integer(um < plogis(-1 + 2))
+M0 <- as.integer(um < plogis(-1))
+M  <- if_else(Dc == 1, M1, M0)
+Yc <- rbinom(n, 1, plogis(-1 + 0.5 * Dc + 1.5 * M))
+chain <- tibble(D = Dc, Y = Yc, Z = M)
+truth_chain <- mean(plogis(-1 + 0.5 + 1.5 * M1) - plogis(-1 + 1.5 * M0))    # total effect
+truth_direct <- mean(plogis(-1 + 0.5 + 1.5 * M) - plogis(-1 + 1.5 * M))      # direct effect, M held at its value
+
+# collider: D -> Y, and D and Y both -> C. D is randomized.
+Dk <- rbinom(n, 1, 0.5)
+Yk <- rbinom(n, 1, plogis(-0.5 + 0.8 * Dk))
+Ck <- rbinom(n, 1, plogis(-2 + 1.5 * Dk + 1.5 * Yk))
+coll <- tibble(D = Dk, Y = Yk, Z = Ck)
+truth_coll <- plogis(-0.5 + 0.8) - plogis(-0.5)
+
+cond <- bind_rows(
+  ame_D(fork,  Y ~ D)     %>% mutate(panel = panels[1], how = "ignore the third variable"),
+  ame_D(fork,  Y ~ D + Z) %>% mutate(panel = panels[1], how = "condition on it"),
+  ame_D(chain, Y ~ D)     %>% mutate(panel = panels[2], how = "ignore the third variable"),
+  ame_D(chain, Y ~ D + Z) %>% mutate(panel = panels[2], how = "condition on it"),
+  ame_D(coll,  Y ~ D)     %>% mutate(panel = panels[3], how = "ignore the third variable"),
+  ame_D(coll,  Y ~ D + Z) %>% mutate(panel = panels[3], how = "condition on it")) %>%
+  mutate(panel = factor(panel, levels = panels),
+         how = factor(how, levels = c("condition on it", "ignore the third variable")))
+
+truths <- tibble(panel = factor(panels[c(1, 2, 2, 3)], levels = panels),
+                 truth = c(truth_fork, truth_chain, truth_direct, truth_coll),
+                 label = c("true ATE", "true total\neffect", "true direct\neffect", "true ATE"))
+
+est_of <- function(p, h) cond$estimate[cond$panel == p & cond$how == h]
+```
+
+```{r}
+#| include: false
+
+alt_conditioning <- sprintf("Three panels of point estimates with 95 percent intervals and dotted lines at the true effects. Fork: ignoring the confounder gives %.3f against a true %.3f; conditioning on it gives %.3f, on the truth. Chain: ignoring the mediator gives %.3f against a true total effect of %.3f; conditioning on it gives %.3f, on the true direct effect of %.3f. Collider: ignoring the collider gives %.3f against a true %.3f; conditioning on it gives %.3f, well below.", est_of(panels[1], 'ignore the third variable'), truth_fork, est_of(panels[1], 'condition on it'), est_of(panels[2], 'ignore the third variable'), truth_chain, est_of(panels[2], 'condition on it'), truth_direct, est_of(panels[3], 'ignore the third variable'), truth_coll, est_of(panels[3], 'condition on it'))
+```
+
+```{r conditioning-fig}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-conditioning
+#| fig-cap: "Simulated effect of D on Pr(Y = 1), ignoring or conditioning on the third variable. Dotted lines are the true effects; the chain panel shows both the total and the direct effect. Bars are 95% intervals."
+#| fig-alt: !expr alt_conditioning
+#| fig-width: 9
+#| fig-height: 3.2
+
+ggplot(cond, aes(estimate, how)) +
+  geom_vline(data = truths, aes(xintercept = truth), linetype = "22", color = bu_grey) +
+  geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0.15, color = bu_green) +
+  geom_point(aes(shape = how), size = 3, color = bu_green) +
+  geom_text(aes(label = sprintf("%.3f", estimate)), vjust = -1.1, size = 3.4, color = bu_black) +
+  geom_text(data = truths, aes(x = truth, y = 2.45, label = label),
+            hjust = -0.08, vjust = 0, size = 3.2, color = bu_black, lineheight = 0.9) +
+  scale_shape_manual(values = c(16, 17), guide = "none") +
+  scale_y_discrete(expand = expansion(add = c(0.6, 1.1))) +
+  facet_wrap(~ panel) +
+  labs(x = "estimated effect of D on Pr(Y = 1)", y = NULL) +
+  theme_bu() +
+  theme(strip.text = element_text(size = 11, face = "bold"),
+        panel.grid.minor = element_blank())
+```
+
+Each panel of @fig-conditioning illustrates one of the rules itemized above.
+
+- **Fork.** Ignoring the confounder, the estimate is `r sprintf("%.3f", est_of(panels[1], "ignore the third variable"))` against a true ATE of `r sprintf("%.3f", truth_fork)`. That is more than double, because the backdoor path through $X$ is open. Conditioning on $X$ closes it, and the estimate, `r sprintf("%.3f", est_of(panels[1], "condition on it"))`, is close to the truth.
+- **Chain.** Ignoring the mediator gets the total effect right: `r sprintf("%.3f", est_of(panels[2], "ignore the third variable"))` against `r sprintf("%.3f", truth_chain)`. Conditioning on $M$ drops it to `r sprintf("%.3f", est_of(panels[2], "condition on it"))`, which lands on the true *direct* effect, `r sprintf("%.3f", truth_direct)`: the part of the effect running through $M$ has been blocked. Note that the model is only answering part of the question, perhaps not the part we are interested in. Subtracting the direct effect from the total effect gives the indirect effect - about `r sprintf("%.3f", truth_chain - truth_direct)` of the total effect runs through $M$, and this is the indirect effect of $D$ through $M$ on $Y$. That subtraction works cleanly here only because of how I built the simulation: the direct effect of $D$ is the same whether $M$ is 0 or 1. In a logit that usually is not true, because compression makes $D$'s effect depend on the value of $M$, and then total minus direct is not the indirect effect. Separating the two properly is its own topic, mediation analysis.
+- **Collider.** Treatment is randomized here, so ignoring $C$ gives the right answer: `r sprintf("%.3f", est_of(panels[3], "ignore the third variable"))` against `r sprintf("%.3f", truth_coll)`. However, conditioning on $C$ drags it to `r sprintf("%.3f", est_of(panels[3], "condition on it"))`. Even a randomized experiment can be ruined by conditioning on the wrong variable after the fact.
+
+The fork is the case every regression course warns you about — the omitted variable. The chain and the collider are the cases it usually does not, and in both of them *adding* a variable to the model is what does the damage.
+
+## The same three structures in regression terms
+
+The regression algebra you already know shows why. I use the linear model here because the algebra is exact; the logit works the same way, only not as neatly, which is why the simulation above needed the average marginal effect to show it.
+
+**Omitted variable bias, read with arrows.** Suppose $Y$ depends on $D$ and on a third variable $Z$:
+
+$$
+Y_i = \beta_0 + \beta_1 D_i + \beta_2 Z_i + \varepsilon_i ,
+$$
+
+and write the regression of $Z$ on $D$, the auxiliary regression, as
+
+$$
+Z_i = \delta_0 + \delta_1 D_i + u_i .
+$$
+
+The auxiliary regression only describes how $Z$ and $D$ move together. It is not a causal claim, so it holds whichever way the arrow between them points. Now regress $Y$ on $D$ alone, leaving $Z$ out. Substituting the auxiliary regression for $Z$ shows what that regression estimates:
+
+$$
+\begin{aligned}
+Y_i &= \beta_0 + \beta_1 D_i + \beta_2(\delta_0 + \delta_1 D_i + u_i) + \varepsilon_i \\[6pt]
+    &= (\beta_0 + \beta_2\delta_0) + (\beta_1 + \beta_2\delta_1)\, D_i + (\beta_2 u_i + \varepsilon_i).
+\end{aligned}
+$$
+
+The coefficient on $D$ is not $\beta_1$ but $\beta_1 + \beta_2\delta_1$. That is $D$'s own effect plus $Z$'s effect on $Y$ times the coefficient from the auxiliary regression. This is the omitted-variable-bias formula from the linear-models course, and we usually call $\beta_2\delta_1$ the bias. (The constant absorbs $\beta_2\delta_0$, which is why the intercept never enters the bias in the slope.) Now read it with the DAG.
+
+- If $Z$ is a **confounder** ($Z \rightarrow D$, the fork), then $\delta_1$ is a non-causal association: $D$ and $Z$ move together because $Z$ moves $D$. So $\beta_2\delta_1$ really is bias. Put $Z$ in the model.
+- If $Z$ is a **mediator** ($D \rightarrow Z$, the chain), then $\delta_1$ is the causal effect of $D$ on $Z$, and $\beta_2\delta_1$ is the effect of $D$ on $Y$ that runs through $Z$, which is the indirect effect. It is not bias at all. Leaving $Z$ out gives $\beta_1 + \beta_2\delta_1$, direct plus indirect, which is the total effect. Putting $Z$ in gives $\beta_1$, the direct effect alone.
+
+The formula is the same in both cases. What makes $\beta_2\delta_1$ bias in one and part of the effect in the other is the direction of the arrow between $D$ and $Z$, and the regression cannot see which way that arrow points. Only the DAG can. That is why "include everything that predicts $Y$" is the wrong rule: it applies the omitted-variable-bias formula without asking which way the arrow points.
+
+**The collider is an endogenous regressor.** Now let $C$ be caused by both $D$ and $Y$:
+
+$$
+\begin{aligned}
+Y_i &= \beta_0 + \beta_1 D_i + \varepsilon_i \\[6pt]
+C_i &= \gamma_0 + \gamma_1 D_i + \gamma_2 Y_i + v_i \\[6pt]
+    &= (\gamma_0 + \gamma_2\beta_0) + (\gamma_1 + \gamma_2\beta_1)\, D_i + (\gamma_2 \varepsilon_i + v_i)
+\end{aligned}
+$$
+
+The last line substitutes $Y$'s equation into $C$'s, and it shows the problem: $C$ contains $\varepsilon_i$, the error from $Y$'s equation. Put $C$ on the right-hand side of a regression for $Y$ and you have a regressor correlated with the disturbance. $C$ is **endogenous**, in exactly the sense you know from the linear-models course. It is not simultaneity, though. $C$ never appears in $Y$'s equation, so nothing feeds back; $C$ simply sits downstream of $Y$.
+
+What does that do to $D$'s coefficient? In a regression of $Y$ on $D$ and $C$, the coefficient on $D$ is a **partial** effect — the effect of $D$ holding $C$ fixed — and the Frisch–Waugh–Lovell theorem (what @angristpischke2009 call *regression anatomy*) tells us how to compute it. Let $D$, $\varepsilon$, and $v$ be independent, and write $C$'s equation compactly as
+
+$$
+C_i = \kappa_0 + \kappa D_i + w_i, \qquad \kappa = \gamma_1 + \gamma_2\beta_1, \qquad w_i = \gamma_2\varepsilon_i + v_i ,
+$$
+
+where $w_i$ is the part of $C$ that $D$ does not explain. By Frisch–Waugh–Lovell, $C$'s coefficient in the regression of $Y$ on $D$ and $C$ is the slope from regressing $Y$ on $w$ alone. Only the $\varepsilon$ in $Y$ is correlated with $w$, so that slope is
+
+$$
+\lambda = \frac{\text{Cov}(Y_i, w_i)}{\text{Var}(w_i)} = \frac{\gamma_2\,\sigma_\varepsilon^2}{\gamma_2^2\sigma_\varepsilon^2 + \sigma_v^2} ,
+$$
+
+which measures how much of $\varepsilon$ travels with $C$. The regression's fitted values are then $D$'s own effect plus $\lambda$ times the unexplained part of $C$; writing $w_i$ in terms of $C_i$ and collecting terms gives $D$'s coefficient:
+
+$$
+\begin{aligned}
+\hat Y_i &= \beta_0 + \beta_1 D_i + \lambda w_i \\[6pt]
+         &= \beta_0 + \beta_1 D_i + \lambda\,(C_i - \kappa_0 - \kappa D_i) \\[6pt]
+         &= (\beta_0 - \lambda\kappa_0) + (\beta_1 - \lambda\kappa)\, D_i + \lambda C_i ,
+\end{aligned}
+$$
+
+so
+
+$$
+\text{coefficient on } D = \beta_1 - \lambda\,(\gamma_1 + \gamma_2\beta_1).
+$$
+
+Holding $C$ fixed is what brings $\varepsilon$ into the comparison. Read the pieces:
+
+- If $Y$ does not cause $C$ ($\gamma_2 = 0$), then $\lambda = 0$ and there is no bias. $C$ is only a consequence of $D$; putting it in the model costs precision, not bias.
+- If $D$ and $Y$ both raise $C$ ($\gamma_1 > 0$, $\gamma_2 > 0$), the bias is negative. Holding $C$ fixed, a unit with more $D$ needed less $Y$ to reach the same value of $C$. That is what dragged the collider panel of @fig-conditioning down from `r sprintf("%.3f", est_of(panels[3], "ignore the third variable"))` to `r sprintf("%.3f", est_of(panels[3], "condition on it"))`.
+- Even if $D$ has no effect on $C$ at all ($\gamma_1 = 0$), the bias is $-\lambda\gamma_2\beta_1$. Conditioning on anything the outcome causes pulls $D$'s coefficient toward zero. That is selection on the outcome.
+
+Econometricians call post-treatment variables like these — a mediator, when you want the total effect, and a collider always — **bad controls** [@angristpischke2009, ch. 3]: variables that are themselves outcomes of the treatment, or of the outcome, and so do damage on the right-hand side. The DAG tells you which variables are bad controls; the algebra tells you how much damage each one does.
+
+## The running example as a DAG
+
+@fig-dag-ces is my DAG for the running example. Shaded boxes are variables we condition on; the dashed box is a variable we did not measure.
+
+```{r dag-ces}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-dag-ces
+#| fig-cap: "A DAG for the effect of a college degree on the vote. Shaded: conditioned on. Dashed: unmeasured."
+#| fig-alt: "A causal graph. College degree (treatment) at left points to Biden vote (outcome) at right, and also to party ID, which points to the vote. A shaded box of measured confounders — age, sex, race, religion — at the top points to college, to party ID, and to the vote. A dashed box below, family income and parental education, marked unmeasured, points with dashed arrows to college, to the vote, and to turnout. College also points to turnout, a shaded box at the bottom labeled 'sample: voters only'."
+#| fig-width: 8
+#| fig-height: 6.2
+
+ces_nodes <- tribble(
+  ~name, ~x,  ~y,    ~label,                                              ~w,   ~h,   ~status,
+  "D",   0,   0,     "college degree\n(treatment)",                        1.05, 0.42, "plain",
+  "Y",   6.4, 0,     "Biden vote\n(outcome)",                              0.95, 0.42, "plain",
+  "X",   3.2, 2.75,  "age, sex, race, religion\n(measured confounders)",   1.65, 0.42, "conditioned",
+  "P",   3.2, 1.1,   "party ID\n(mediator)",                               0.85, 0.42, "plain",
+  "U",   3.2, -1.45, "family income,\nparental education\n(unmeasured)",   1.15, 0.55, "unmeasured",
+  "T",   1.0, -3.1,  "turnout\n(sample: voters only)",                     1.25, 0.42, "conditioned")
+
+ces_edges <- tribble(
+  ~from, ~to, ~dashed,
+  "X", "D", FALSE,   "X", "Y", FALSE,   "X", "P", FALSE,
+  "D", "P", FALSE,   "P", "Y", FALSE,   "D", "Y", FALSE,
+  "D", "T", FALSE,
+  "U", "D", TRUE,    "U", "Y", TRUE,    "U", "T", TRUE)     # unmeasured: dashed
+
+ggplot() +
+  geom_dag_edges(trim_edges(ces_edges, ces_nodes)) +
+  geom_rect(data = ces_nodes, aes(xmin = x - w, xmax = x + w, ymin = y - h, ymax = y + h,
+                                  fill = status, linetype = status == "unmeasured"),
+            color = bu_black, linewidth = 0.5) +
+  geom_text(data = ces_nodes, aes(x, y, label = label), size = 3.5,
+            color = bu_black, lineheight = 0.9) +
+  scale_fill_manual(values = c(plain = "white", conditioned = bu_palegreen,
+                               unmeasured = "white"), guide = "none") +
+  scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "22"), guide = "none") +
+  coord_equal(clip = "off") +
+  theme_void()
+```
+
+```{r turnout}
+#| include: false
+
+# share of each group reporting a two-party presidential vote, before the sample restriction
+turnout <- ces_raw %>%
+  mutate(college = educ %in% c("4-year", "Post-grad"),
+         voted2p = votechoice %in% c("Joe Biden (Democrat)", "Donald J. Trump (Republican)")) %>%
+  group_by(college) %>%
+  summarise(voted = mean(voted2p))
+turnout_c  <- round(100 * turnout$voted[turnout$college])
+turnout_nc <- round(100 * turnout$voted[!turnout$college])
+```
+
+Let's walk through the paths from college to the vote one at a time.
+
+1. **College → vote** and **college → party ID → vote** are causal paths. College may change the vote directly, and it may change partisanship, which changes the vote. The total effect of a degree is both together.
+2. **College ← age, sex, race, religion → vote** is a backdoor path. Conditioning on those four covariates closes it. This is why they are in the model.
+3. **College ← family income, parental education → vote** is also a backdoor path, and we cannot close it, because the CES does not measure those variables. If this path is real, ignorability fails and our estimate is confounded. No estimator we build this week can fix that; the most we can do is argue about how strong the path is.
+4. **College → turnout ← family income → vote** runs through a collider, turnout. Left alone it would be closed. But we did not leave it alone: the sample is two-party *voters*, so we conditioned on turnout by selecting on it. And college does affect turnout — in the full CES, `r turnout_c`% of graduates report a two-party vote against `r turnout_nc`% of non-graduates. Restricting the sample to voters opens a path from college to the vote through family income. That is a second reason to worry about the unmeasured box, and one that came from how we built the sample rather than from anything in the model.
+
+Party ID deserves one more look. It is a mediator, so conditioning on it would block part of the effect we want. It is also a collider: college points into it, and so do race and religion. Anything else that shapes party ID — parents' partisanship, say — would open a new path if we conditioned on it. So I leave party ID out of the model. Ignorability does not ask for *more* covariates; it asks for the *right* ones — the pre-treatment confounders, not the post-treatment consequences.
+
+## The adjustment set changes the answer
+
+@fig-ladder shows why this matters. It estimates the average effect of college three ways, differing only in what the outcome logit conditions on: nothing, the four confounders, and the four confounders plus party ID.
+
+```{r ladder}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+adj_sets <- list(
+  "nothing (the raw difference)"                   = voteDem ~ college,
+  "age, sex, race, religion"                       = voteDem ~ college + age + sex + race + religion,
+  "age, sex, race, religion\n+ party ID (mediator)" = voteDem ~ college + age + sex + race + religion + pid7)
+
+# average effect of college under each adjustment set
+ladder <- imap_dfr(adj_sets, function(f, set) {
+  ac <- avg_comparisons(glm(f, data = ces, family = binomial(link = "logit")),
+                        variables = "college")
+  tibble(set = set, estimate = ac$estimate, lo = ac$conf.low, hi = ac$conf.high)
+}) %>%
+  mutate(set = fct_rev(fct_inorder(set)))
+```
+
+```{r}
+#| include: false
+
+alt_ladder <- sprintf("Three point estimates with 95 percent intervals. Adjusting for nothing gives %.3f. Adjusting for age, sex, race, and religion gives %.3f. Adding party ID drops the estimate to %.3f.", ladder$estimate[1], ladder$estimate[2], ladder$estimate[3])
+```
+
+```{r ladder-fig}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-ladder
+#| fig-cap: "The average effect of a college degree on Pr(Biden vote) under three adjustment sets, with 95% intervals."
+#| fig-alt: !expr alt_ladder
+#| fig-width: 8
+#| fig-height: 3
+
+ggplot(ladder, aes(estimate, set)) +
+  geom_vline(xintercept = 0, color = bu_grey) +
+  geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0.15, color = bu_green) +
+  geom_point(size = 3, color = bu_green) +
+  geom_text(aes(label = sprintf("%.3f", estimate)), vjust = -1.1, size = 3.6, color = bu_black) +
+  labs(x = "average effect of a college degree on Pr(Biden vote)", y = "conditioning on") +
+  theme_bu() +
+  theme(panel.grid.minor = element_blank())
+```
+
+Conditioning on the confounders moves the estimate from `r sprintf("%.3f", ladder$estimate[1])` to `r sprintf("%.3f", ladder$estimate[2])`; the backdoor through the demographics was inflating the raw difference, as the fork in @fig-conditioning did. Adding party ID drops it to `r sprintf("%.3f", ladder$estimate[3])`, about a quarter of the confounder-adjusted estimate. This illustrates the chain panel of @fig-conditioning using real data. If college shapes the vote mostly by shaping partisanship, then a model that holds partisanship fixed will find almost no effect of college, and it will be answering a different question — what does college do *among people with the same party ID*? That's not the question we set out to answer. This is where causal thinking parts company with "control for everything."
+
+Consider the two shifts in omitted-variable-bias terms, because they look alike and are not. The first shift, from `r sprintf("%.3f", ladder$estimate[1])` to `r sprintf("%.3f", ladder$estimate[2])`, removes **selection bias**. The demographics are confounders: they sit on the backdoor path from college to the vote, so when they were left out of the model, their $\beta_2\delta_1$ term was part of the college coefficient, and that term is bias. Adding them takes the bias out. The second shift, from `r sprintf("%.3f", ladder$estimate[2])` to `r sprintf("%.3f", ladder$estimate[3])`, removes **no selection bias at all**. Party ID is a mediator, so its $\beta_2\delta_1$ term is not bias — it is the part of college's effect that runs through partisanship. Adding party ID takes that part of the effect out, and what remains is only the direct effect. The difference, about `r sprintf("%.3f", ladder$estimate[2] - ladder$estimate[3])`, is a rough measure of the indirect effect — rough, because in a logit total minus direct is not exactly the indirect effect. The regression did the same thing both times: it removed a $\beta_2\delta_1$ term from the college coefficient. Only the DAG tells us that the first term was selection bias and the second was part of the effect we wanted — that the first adjustment was a correction and the second a mistake.
+
+So the DAG has helped us settle on what $X$ looks like: age, sex, race, and religion — the pre-treatment confounders, and nothing the treatment itself affects. Every estimator from here on conditions on this same $X$. They differ only in *how* they use $X$. The DAG also leaves two warnings standing that no choice of estimator will fix: the backdoor through family income and parental education is still open, and the sample is still restricted to the non-random set of voters. 
+
+# From the DAG to the estimators
+
+We now have a problem and an adjustment set. The problem is selection-bias: college graduates would have voted differently from non-graduates even without their degrees. The adjustment set is $X$. The DAG helps us figure out where the selection bias comes from, and that tells us how to remove it.
+
+## Two arrows, two fixes
+
+Look again at the fork in @fig-structures. In the running example, $X$ is the four demographics. Selection bias travels along the backdoor path $D \leftarrow X \rightarrow Y$, and that path is built from two arrows:
+
+- **$X \rightarrow D$.** The confounders affect who gets treated. Graduates are younger, less religious, and different by race from non-graduates — @fig-balance below measures exactly how different.
+- **$X \rightarrow Y$.** The confounders affect the outcome. Age, race, and religion shape the vote whether or not someone went to college.
+
+Selection bias needs *both* arrows. If $X$ did not affect who went to college, graduates and non-graduates would have the same $X$, and the raw comparison would be fair. If $X$ did not affect the vote, the groups could differ on $X$ all they liked and it would not matter. The omitted-variable-bias formula says the same thing in regression terms: the bias from leaving $X$ out is $\beta_2\delta_1$, the product of $X$'s effect on $Y$ ($\beta_2$) and $X$'s relationship with $D$ ($\delta_1$). A product is zero if either piece is zero.
+
+So there are two ways to remove the selection bias, one for each arrow:
+
+1. **Deal with the $X \rightarrow Y$ arrow.** Model how the outcome depends on $D$ and $X$, then compare each unit with itself: predict its outcome with and without treatment at its own $X$. Because $X$ is the same in both predictions, what $X$ does to $Y$ cancels, and what is left is due to $D$. This is route one, **g-computation**, and it needs the **outcome model**.
+2. **Cut the $X \rightarrow D$ arrow.** Reweight the data so that, in the weighted sample, treatment is unrelated to $X$. That is exactly what random assignment would have done. With $\delta_1 = 0$, it no longer matters how strongly $X$ affects $Y$, and a simple weighted comparison of means is fair. This is route two, the **propensity score** and **inverse-probability weighting**, and it needs the **treatment model**.
+
+Both routes lead to the same place: an estimate of the ATE with the selection-bias term removed. Both rest on the same assumption — that $X$, the adjustment set from the DAG, contains every confounder. Neither can do anything about a backdoor path through a variable we did not measure, because neither route can model an arrow it cannot see. What the routes differ in is which arrow they work on, and so which model they need to get right. A third estimator, the **doubly-robust** estimator, works on both arrows at once.
+
+## Two logits: the treatment model and the outcome model
+
+Both routes need a model, and both models are logits you already know how to fit; they differ only in what sits on the left-hand side.
+
+The **outcome model** is a model of the outcome given the treatment and the confounders — the probability of a Biden vote. It describes the $X \rightarrow Y$ arrow (and the $D \rightarrow Y$ effect we are after), and route one uses it:
+
+$$
+\Pr(Y_i = 1 \mid D_i, X_i) = \Lambda(\beta_0 + \beta_1 D_i + X_i \gamma).
+$$
+
+The **treatment model** is a model of who gets treated — the probability of a college degree given the confounders. It describes the $X \rightarrow D$ arrow, and route two uses it:
+
+$$
+\Pr(D_i = 1 \mid X_i) = \Lambda(X_i \alpha).
+$$
+
+Same link, same `glm()` call, same confounders $X$. The outcome model is the kind of model you have fit all term. The treatment model is new only in that the treatment is now the dependent variable.
+
+In the running example, neither arrow is obviously easier. Who goes to college is not set by a formula, and how people vote is not simple either. So we will do both, see whether they agree, and then combine them. Which route to use, and when, is easier to judge once we have seen both, so we come back to that question after route two.
+
+# Route one: g-computation
+
+Route one works on the $X \rightarrow Y$ arrow, through the **outcome** model, in this case, the model predicting vote choice. In the causal-inference literature this is the **parametric g-formula**, or g-computation [@hernanrobins2020]; this will be familiar because it's the average marginal effect.^[The name comes from @robins1986, who called it the "g-computation algorithm formula"; the "g" stands for *generalized*. Robins built it for treatments that vary over time (an exposure that starts, stops, and continues across years, with confounders that are themselves affected by earlier treatment), and it generalizes **standardization**, the older epidemiological practice of averaging outcomes over a reference covariate distribution, as in an age-standardized death rate. With a single binary treatment at one point in time, the g-formula reduces to plain standardization: predict each unit's outcome under treatment and under control, then average over the observed covariates. Epidemiologists call this g-computation or standardization, economists call it regression adjustment, and in this course it is equivalent to the average marginal effect.]
+
+How does modeling the outcome remove the selection bias? Go back to the switching equation at the top. For a treated unit we see $Y_i(1)$ and the control outcome $Y_i(0)$ is missing; for a control unit it is the reverse. G-computation fills in the blank. We estimate the outcome model, then generate predictions to generate each unit's *missing* potential outcome: for a treated unit, predict what its outcome *would have been* at $D=0$; for a control unit, what it *would have been* at $D=1$. With both potential outcomes now in hand for every unit — one observed, one imputed by the model — the individual effect $Y_i(1) - Y_i(0)$ is just a subtraction, and the ATE is the average of those subtractions. This reiterates a point I made at the start: a causal effect is a missing-data problem, and g-computation is a model-based way to fill in those missing data.
+
+Now connect it to the DAG. Each unit's two predictions share the same $X_i$ (the same age, sex, race, and religion) and differ only in $D$. So whatever $X$ does to the vote is identical in the two predictions and cancels when we subtract. G-computation never compares a young graduate with an older non-graduate; it compares each respondent with themselves. That is how route one deals with the $X \rightarrow Y$ arrow: it models what $X$ does to the outcome and holds it fixed, so differences in $X$ between graduates and non-graduates cannot show up as an effect of college.
+
+Start from the outcome model — the logit of the vote on the treatment and the confounders:
+
+$$
+\Pr(Y_i = 1 \mid D_i, X_i) = \Lambda(\beta_0 + \beta_1 D_i + X_i \gamma).
+$$
+
+Now do exactly what we did for average marginal effects. For **every** unit in the data, predict the outcome twice: once setting $D_i = 1$, once setting $D_i = 0$, holding that unit's own covariates fixed. Average the difference:
+
+$$
+\begin{aligned}
+\hat\tau_{\text{ATE}} = \frac{1}{n}\sum_{i=1}^{n} \Big[ & \Lambda(\hat\beta_0 + \hat\beta_1 \cdot 1 + X_i \hat\gamma) \\
+& - \Lambda(\hat\beta_0 + \hat\beta_1 \cdot 0 + X_i \hat\gamma) \Big].
+\end{aligned}
+$$
+
+This should look familiar because it is the **average marginal effect of $D$**: predict at $D=1$, predict at $D=0$, difference, and average over the sample. That is exactly the average contrast you built by hand in the quantities-of-interest notes.^[Averaging each unit's difference gives the same number as differencing the two average predictions, because the mean of a difference is the difference of the means.]  **Under conditional ignorability**, this average marginal effect is an estimate of the ATE. The identifying assumption allows us to make the causal claim. Here's the computation by hand, then using the `marginaleffects` library: 
+
+
+```{r gcomputation}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# outcome model: the two-party vote regressed on treatment + confounders.
+out_model <- glm(voteDem ~ college + age + sex + race + religion,
+                 data = ces, family = binomial(link = "logit"))
+
+# g-computation BY HAND: predict every unit's outcome at college = 1 and at
+# college = 0 (its own covariates held fixed), then average the difference.
+p1 <- predict(out_model, mutate(ces, college = 1), type = "response")
+p0 <- predict(out_model, mutate(ces, college = 0), type = "response")
+gcomp_ate <- mean(p1 - p0)
+gcomp_ate
+
+# the same number, packaged: avg_comparisons does exactly this average contrast.
+avg_comparisons(out_model, variables = "college")
+```
+
+Both produce the same estimate, `r round(gcomp_ate, 3)`, below the raw difference of `r sprintf("%.3f", raw_diff)`. Holding $X$ fixed removed selection bias, but the gap between the two numbers is not quite that bias. The raw difference is the ATT plus selection bias, not the ATE plus selection bias, so measuring the selection bias exactly takes an estimate of the ATT, which we compute below.  
+
+## Evaluating the counterfactuals
+
+Think back to the eight respondents in @tbl-po. G-computation replaces the question marks with the outcome model predictions: for each respondent it predicts the probability of a Biden vote with a degree, $\hat m_1(X_i)$, and without one, $\hat m_0(X_i)$, holding that respondent's own age, sex, race, and religion fixed. These are just the average predictions for this group of eight at two counterfactuals (went to college, didn't).
+
+```{r po-filled}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-po-filled
+#| tbl-cap: "The same eight respondents. The outcome model predicts each one's probability of a Biden vote with and without a degree."
+
+po_rows %>%
+  mutate(m1 = predict(out_model, mutate(po_rows, college = 1), type = "response"),
+         m0 = predict(out_model, mutate(po_rows, college = 0), type = "response")) %>%
+  transmute(age, race,
+            `college (D)` = college,
+            `voted Biden (Y)` = voteDem,
+            `Y(1)` = if_else(college == 1, as.character(voteDem), "?"),
+            `Y(0)` = if_else(college == 0, as.character(voteDem), "?"),
+            `m1(X)` = round(m1, 2),
+            `m0(X)` = round(m0, 2),
+            `m1(X) - m0(X)` = round(m1 - m0, 3)) %>%
+  knitr::kable(align = "c")
+```
+
+Column $m1(X)$ is the predicted probability of a Biden vote for someone with this respondent's age, sex, race, and religion, *if they had a college degree*; $m0(X)$ is the same prediction with no degree. The last column is therefore the predicted effect of a degree for someone with that respondent's covariates. It is a CATE at $X_i$, not the respondent's own effect $\tau_i$, which we still cannot see: two respondents with the same covariates get the same prediction. Note two more things. First, the model imputes a *probability*, not a vote, and it does so for both columns, even the one we observed. The doubly-robust estimator below uses the observed outcome as well, to correct the prediction. Second, the predicted effects differ across rows even though the model has a single coefficient on college. That is the logit's compression at work.
+
+## ATE and ATT: which cases we average over
+
+The ATE is the average of those row-level differences over *everyone*. The ATT is the average just over the *treated* — college graduates only. Let's compute that by hand and using `marginaleffects`:
+
+```{r att}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+ces <- ces %>% mutate(m1 = p1, m0 = p0, unit_effect = p1 - p0)
+
+# ATT by hand: average the unit-level contrasts over graduates only
+att <- with(ces, mean(unit_effect[college == 1]))
+att
+
+# the same, packaged: average comparison over the treated cases
+avg_comparisons(out_model, variables = "college", newdata = subset(ces, college == 1))
+```
+
+```{r}
+#| include: false
+
+alt_contrasts <- sprintf("Histogram of %s unit-level predicted contrasts, ranging from %.3f to %.3f. Most of the mass is piled between 0.15 and 0.17, with a long thin tail stretching down toward zero. A solid vertical line marks the ATE at %.3f and a dashed line marks the ATT at %.3f, nearly on top of each other.", format(nrow(ces), big.mark = ","), min(ces$unit_effect), max(ces$unit_effect), gcomp_ate, att)
+```
+
+```{r contrasts-fig}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-contrasts
+#| fig-cap: "Unit-level predicted effects of a college degree, one per respondent. The ATE averages all of them; the ATT averages the graduates only."
+#| fig-alt: !expr alt_contrasts
+#| fig-width: 8
+#| fig-height: 3.6
+
+ggplot(ces, aes(unit_effect)) +
+  geom_histogram(binwidth = 0.005, boundary = 0, fill = bu_green, color = "white") +
+  geom_vline(xintercept = gcomp_ate, color = bu_black, linewidth = 0.8) +
+  geom_vline(xintercept = att, color = bu_black, linewidth = 0.8, linetype = "22") +
+  annotate("text", x = gcomp_ate, y = Inf, label = sprintf("ATE = %.3f", gcomp_ate),
+           hjust = -0.1, vjust = 1.5, size = 3.6, color = bu_black) +
+  annotate("text", x = att, y = Inf, label = sprintf("ATT = %.3f", att),
+           hjust = 1.1, vjust = 1.5, size = 3.6, color = bu_black) +
+  labs(x = "predicted effect of a degree, m1(X) - m0(X)", y = "respondents") +
+  theme_bu() +
+  theme(panel.grid.minor = element_blank())
+```
+
+@fig-contrasts is the causal version of the case-level distributions in the quantities-of-interest notes, where each average effect turned out to be the mean of $n$ individual predictions. Here each bar counts respondents by their individual predicted effect, and the ATE is the mean of all $n$ of them. The ATE (`r sprintf("%.3f", gcomp_ate)`) and the ATT (`r sprintf("%.3f", att)`) are nearly identical, because the graduates' covariate profiles are not so different from everyone else's that their predicted effects differ much. They need not agree — in an application where treatment goes mostly to the units that benefit most, the ATT can be far from the ATE.
+
+With an estimate of the ATT we can also put a number on the selection-bias term from the start of the week. The raw difference was `r sprintf("%.3f", raw_diff)`; the ATT is `r sprintf("%.3f", att)`; so selection bias is about `r sprintf("%.3f", raw_diff - att)`. Graduates would have been roughly `r round(100 * (raw_diff - att), 1)` points more likely to vote for Biden than non-graduates even without their degrees, because of who they are on the confounders. Our confidence in that estimate depends on our ignorability assumption: it accounts for the selection we measured, not the selection on family income we could not.
+
+## CATEs, and compression again
+
+The spread in @fig-contrasts has a source you already know. The outcome model has one coefficient on college and no product terms, yet the predicted effect of a degree ranges from near zero to about 0.17. That is **compression**, from the [interactions notes](interactions26.html): in a logit, the same shift on the linear-predictor scale moves the probability a lot near 0.5 and hardly at all near 0 or 1. Respondents whose predicted vote is already near-certain have little room to move.
+
+@fig-curves makes this concrete with CATEs. For each of the four largest racial groups in the sample, and across ages, it computes the average predicted probability of a Biden vote with and without a degree — the average-effects recipe again, run within each group. The vertical gap between the two curves at any age is the CATE for that group at that age.
+
+```{r curves}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+races <- c("White", "Black", "Hispanic", "Asian")
+
+# average predicted Pr(Biden) with race, age, and college set for every case
+curves <- expand_grid(race_set = races, age_set = seq(20, 85, by = 5), college_set = 0:1) %>%
+  mutate(p = pmap_dbl(list(race_set, age_set, college_set), function(r, a, d)
+    mean(predict(out_model, mutate(ces, race = r, age = a, college = d), type = "response")))) %>%
+  mutate(college_set = factor(college_set, labels = c("no college", "college")),
+         race_set = factor(race_set, levels = races))
+
+# CATE by race: average unit-level contrast within each group
+cate_race <- ces %>%
+  filter(race %in% races) %>%
+  group_by(race) %>%
+  summarise(cate = mean(unit_effect), p0 = mean(m0))
+cate_of <- function(r) cate_race$cate[cate_race$race == r]
+```
+
+```{r}
+#| include: false
+
+alt_curves <- sprintf("Four panels, White, Black, Hispanic, and Asian respondents, each with two declining lines across age: college (dashed) above no college (solid). The gap is wide for White, Hispanic, and Asian respondents, where predicted probabilities sit between about 0.4 and 0.8, and narrow for Black respondents, where both lines sit above 0.9. The CATEs are %.3f for White, %.3f for Black, %.3f for Hispanic, and %.3f for Asian respondents.", cate_of('White'), cate_of('Black'), cate_of('Hispanic'), cate_of('Asian'))
+```
+
+```{r curves-fig}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-curves
+#| fig-cap: "Average predicted Pr(Biden vote) with and without a college degree, across age, for the four largest racial groups. The vertical gap is the CATE."
+#| fig-alt: !expr alt_curves
+#| fig-width: 9
+#| fig-height: 3.6
+
+ggplot(curves, aes(age_set, p, color = college_set, linetype = college_set)) +
+  geom_line(linewidth = 0.9) +
+  facet_wrap(~ race_set, nrow = 1) +
+  scale_color_manual(values = bu_two) +
+  scale_linetype_manual(values = bu_two_lty) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = "age", y = "average predicted Pr(Biden vote)",
+       color = NULL, linetype = NULL) +
+  theme_bu() +
+  theme(legend.position = "top", panel.grid.minor = element_blank())
+```
+
+The effect of a degree is `r sprintf("%.3f", cate_of("White"))` for white respondents and `r sprintf("%.3f", cate_of("Black"))` for Black respondents — about a quarter as large. Black respondents in the CES voted for Biden at rates above 90% with or without a degree, so there is almost no room for college to move them. This is the same picture as the group curves in the interactions notes, where a marginal effect was the distance between two predicted-probability curves and that distance shrank near the floor.
+
+Be careful how you read this. The heterogeneity in @fig-curves comes from the shape of the logit, not from anything the data told us about how college works differently by race — the model had no college × race term, so the only way the effect *could* differ was through compression. If you want the data to decide whether the effect differs by group, put the product term in the outcome model; the g-computation approach does not change.
+
+# Route two: the propensity score 
+
+So we've looked at one way to deal with selection bias given by non-random treatment using the outcome equation. Let's turn to a second approach using the treatment equation (where the treatment variable, "college", is the $y$ variable).
+
+The propensity score is
+
+$$
+e(X_i) = \Pr(D_i = 1 \mid X_i),
+$$
+
+the probability of treatment given covariates. This is just a logit predicting "college" as a function of the measured confounders. The estimated propensity score, $\hat e(X_i)$, is just each respondent's in-sample predicted probability from that logit. The $e$ is just the standard name for this function. It is not the expected value of $X$, though since $D$ is 0 or 1, $e(X)$ does equal $E[D \mid X]$.
+
+Predicting the treatment examines the $X \rightarrow D$ arrow from the DAG above. The propensity score measures that arrow, and weighting each observation by the inverse of its score is how we eliminate that path. Removing the $X \rightarrow D$ arrow closes the backdoor path $D \leftarrow X \rightarrow Y$, which removes the selection bias that runs through $X$.
+
+```{r propensity}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# treatment model: probability of a college degree given the confounders
+ps_model <- glm(college ~ age + sex + race + religion,
+                data = ces, family = binomial(link = "logit"))
+
+ces <- ces %>%
+  mutate(pscore = predict(ps_model, type = "response"))   # e(X_i)
+```
+
+## Why weighting removes selection bias
+
+Selection bias exists because $X$ predicts $D$: graduates are younger and less religious than non-graduates, and those same traits shape the vote. Random assignment would have broken that link, giving the treated and control groups the same mix of covariates. Weighting rebuilds that situation from observational data. The goal is a treated group and a control group that each look like the *whole* sample on $X$.
+
+Here is how the weights do it. Take one covariate profile, and suppose 10 respondents share it, 2 with a degree and 8 without, so $\hat e(X) = 0.2$. The graduates are under-represented among people like them, so each gets weight $1/0.2 = 5$; together they count as 10. The non-graduates are over-represented, so each gets weight $1/(1 - 0.2) = 1.25$; together they also count as 10. Do that for every profile and both weighted groups contain every profile in the same proportion as the full sample.
+
+Now look at what that does to the link between $X$ and $D$. Before weighting, 2 of the 10 people with this profile had a degree, so their covariates said a lot about whether they went to college. After weighting, graduates and non-graduates each count as 10, so within this profile the weighted share with a degree is one half. Weighting does the same thing to every profile, so every profile ends up with the same weighted share of graduates. Knowing a respondent's covariates no longer tells you anything about whether they have a degree: in the weighted data, $X$ no longer predicts $D$. A logit of college on the confounders, fit to the weighted data, would return the same predicted probability for everyone. That is the $X \rightarrow D$ arrow cut, and @fig-balance below checks it.
+
+@tbl-weights shows the same logic in the CES. For graduates and non-graduates separately, it lists the respondents with the lowest, middle, and highest propensity scores, and the weight each one gets.
+
+```{r ipw-weights}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-weights
+#| tbl-cap: "Inverse-probability weights for six respondents: within graduates and within non-graduates, the lowest, middle, and highest propensity scores."
+
+# inverse-probability weight: 1/e(X) for graduates, 1/(1 - e(X)) for non-graduates
+ces <- ces %>%
+  mutate(ipw = if_else(college == 1, 1 / pscore, 1 / (1 - pscore)))
+
+# lowest, middle, and highest propensity score within each group
+ces %>%
+  group_by(college) %>%
+  arrange(pscore, .by_group = TRUE) %>%
+  slice(c(1, ceiling(n() / 2), n())) %>%
+  ungroup() %>%
+  transmute(age, sex, race, religion,
+            `college (D)` = college,
+            `propensity score` = round(pscore, 3),
+            weight = round(ipw, 2)) %>%
+  knitr::kable(align = "c")
+```
+
+Among graduates, the largest weight goes to the respondent who looked *least* likely to have a degree: few people with that profile went to college, so each one who did has to stand in for many. Among non-graduates, the largest weight goes to the respondent who looked *most* likely to have a degree, for the same reason. Respondents whose treatment is what their covariates predict get weights close to 1.
+
+Each weight is the inverse of the probability of the treatment the unit actually received: $1/\hat e(X_i)$ for a treated unit, $1/(1 - \hat e(X_i))$ for a control. The IPW estimate of the ATE compares the two weighted groups:
+
+$$
+\hat\tau_{\text{ATE}}
+= \underbrace{\frac{1}{n}\sum_{i=1}^{n} \frac{D_i \, Y_i}{\hat e(X_i)}}_{\text{weighted graduates}}
+\; - \; \underbrace{\frac{1}{n}\sum_{i=1}^{n} \frac{(1 - D_i)\, Y_i}{1 - \hat e(X_i)}}_{\text{weighted non-graduates}}
+$$
+
+The $D_i$ in the first sum keeps only the graduates, and the $(1 - D_i)$ in the second keeps only the non-graduates. The first term estimates the Biden vote if *everyone* had a degree, $E[Y_i(1)]$; the second estimates it if *no one* did, $E[Y_i(0)]$. This connects back to the missing-data framing: we observe $Y_i(1)$ only for graduates, and the weights make those graduates represent the full sample. The same idea comes from survey sampling, where weighting respondents by the inverse of their probability of being sampled corrects for unequal sampling rates (the Horvitz–Thompson estimator). Here the "sampling" is into treatment.
+
+```{r ipw}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# weighted graduates minus weighted non-graduates
+ipw_ate <- with(ces, mean(college * voteDem * ipw) -
+                     mean((1 - college) * voteDem * ipw))
+ipw_ate
+```
+
+That comes to about `r round(ipw_ate, 3)`, essentially the g-computation estimate from route one. Two routes, working on different arrows with different models, reach the same ATE under the same assumption.
+
+## Why one number is enough
+
+We could try to balance each covariate separately, but $X$ can have many variables. @rosenbaumrubin1983 showed we do not have to: if conditioning on $X$ makes treatment as-good-as-random, then conditioning on the single number $e(X)$ does too. Units with the same propensity score have the same distribution of $X$, whether they were treated or not. That is why the score is called a **balancing score**, and why weighting on one number balances every covariate that went into it.
+
+## What we can and cannot check
+
+There are two things we can evaluate here. **Overlap** (positivity) asks whether graduates and non-graduates occupy the same range of scores. It matters for the weights: a unit with a score near 0 or 1 gets an enormous weight, and the estimate would lurch in response to it. **Balance** asks whether the weights actually equalized the covariates. The two figures below evaluate overlap and balance.
+
+One thing cannot be checked. The score is built only from the covariates we measured, so it is silent about family income and parental education. A propensity model can balance the observed covariates perfectly and still leave the effect confounded by something unobserved. The score does not test ignorability; it helps us act on an ignorability assumption we have decided, on substantive grounds, to defend. This is why the family is called **selection on observables**: everything rests on what we observed.
+
+```{r}
+#| include: false
+
+alt_overlap <- sprintf("Two overlapping density curves of the estimated probability of a college degree, one for graduates (solid) and one for non-graduates (dashed). Both span roughly %.2f to %.2f; the graduates' curve sits somewhat to the right. Neither piles up near 0 or 1.", min(ces$pscore), max(ces$pscore))
+```
+
+```{r overlap}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-overlap
+#| fig-cap: "Overlap of estimated propensity scores, graduates and non-graduates."
+#| fig-alt: !expr alt_overlap
+
+ces %>%
+  mutate(group = if_else(college == 1, "college", "no college")) %>%
+  ggplot(aes(pscore, fill = group, color = group, linetype = group)) +
+  geom_density(alpha = 0.4, linewidth = 0.8) +
+  scale_fill_manual(values = bu_two) +
+  scale_color_manual(values = bu_two) +
+  scale_linetype_manual(values = bu_two_lty) +
+  labs(x = "estimated Pr(college | X)", y = "density",
+       fill = NULL, color = NULL, linetype = NULL) +
+  theme_bu()
+```
+
+The two distributions overlap across the whole range — no covariate profile is a near-certain college graduate or a near-certain non-graduate — so the IPW denominators stay away from zero and the weights stay well-behaved. This illustrates that positivity is plausible.
+
+## Checking balance
+
+Overlap is one check. The other is **balance**: after weighting, do graduates and non-graduates look alike on the confounders? That is the whole point of the weights, and unlike ignorability we can check it directly. The usual measure is the **standardized difference** for each covariate — the difference in means between treated and control, divided by the pooled standard deviation so that age (in years) and a religion dummy (a proportion) sit on the same scale. A common rule of thumb treats anything under 0.1 in absolute value as balanced.
+
+```{r balance}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# the confounders as columns of the design matrix: age plus a dummy for each category
+Xmat <- model.matrix(~ age + sex + race + religion, data = ces)[, -1]
+colnames(Xmat) <- str_remove(colnames(Xmat), "^(sex|race|religion)")
+
+# standardized difference in means, treated minus control, with optional weights;
+# the denominator is the unweighted pooled SD, so before and after share a scale
+std_diff <- function(x, d, w) {
+  sd_pool <- sqrt((var(x[d == 1]) + var(x[d == 0])) / 2)
+  (weighted.mean(x[d == 1], w[d == 1]) - weighted.mean(x[d == 0], w[d == 0])) / sd_pool
+}
+
+balance <- map_dfr(colnames(Xmat), function(v) tibble(
+  covariate          = v,
+  `before weighting` = std_diff(Xmat[, v], ces$college, rep(1, nrow(ces))),
+  `after weighting`  = std_diff(Xmat[, v], ces$college, ces$ipw))) %>%
+  pivot_longer(-covariate, names_to = "sample", values_to = "std_diff") %>%
+  mutate(covariate = fct_reorder(covariate, abs(std_diff), .fun = max),
+         sample = factor(sample, levels = c("before weighting", "after weighting")))
+
+max_before <- max(abs(balance$std_diff[balance$sample == "before weighting"]))
+max_after  <- max(abs(balance$std_diff[balance$sample == "after weighting"]))
+```
+
+```{r}
+#| include: false
+
+alt_balance <- sprintf("Dot plot of standardized differences for 19 covariate categories. Before weighting (open grey circles) the differences range up to %.2f in absolute value: graduates are younger, more often Jewish, atheist, or male, and less often Black, Protestant, or 'nothing in particular'. After weighting (filled green dots) every difference sits at zero, the largest %.3f.", max_before, max_after)
+```
+
+```{r balance-fig}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-balance
+#| fig-cap: "Standardized differences between graduates and non-graduates on each confounder, before and after inverse-probability weighting. The shaded band is ±0.1."
+#| fig-alt: !expr alt_balance
+#| fig-width: 7.5
+#| fig-height: 6
+
+ggplot(balance, aes(std_diff, covariate)) +
+  annotate("rect", xmin = -0.1, xmax = 0.1, ymin = -Inf, ymax = Inf,
+           fill = bu_greyfill, alpha = 0.52) +
+  geom_vline(xintercept = 0, color = bu_grey) +
+  geom_point(aes(shape = sample, color = sample), size = 2.6) +
+  scale_color_manual(values = c(bu_grey, bu_green)) +
+  scale_shape_manual(values = c(1, 16)) +
+  labs(x = "standardized difference, college minus no college", y = NULL,
+       color = NULL, shape = NULL) +
+  theme_bu() +
+  theme(legend.position = "top", panel.grid.minor = element_blank())
+```
+
+The open circles in @fig-balance are the confounding we worried about in the running example, now measured. Before weighting, graduates are younger, more often male, Jewish, or atheist, and less often Black, Protestant, or "nothing in particular"; the largest gap is `r round(max_before, 2)` standard deviations, for age. After weighting, every gap closes — the largest is `r sprintf("%.3f", max_after)`. The weights did their job: in the weighted sample, graduates and non-graduates have the same distribution of the confounders we measured, which is what a randomized experiment would have given us on those variables.
+
+Read @fig-balance with the DAG in mind. The open circles are the $X \rightarrow D$ arrow at work — age, sex, race, and religion predicting who has a degree. The filled dots show that arrow cut: in the weighted sample, $X$ no longer predicts $D$. In omitted-variable-bias terms, weighting set $\delta_1$ to zero, so $\beta_2\delta_1$ is zero no matter how strongly $X$ affects the vote. The balance plot shows that weighting by propensity scores did what we had hoped.
+
+Once again though, notice what the figure does not show. Family income and parental education are not on it, because we do not have them. Balance on the measured covariates says nothing about balance on the unmeasured ones, which is why a good balance plot is necessary but never sufficient in evaluating how effectively we've dealt with selection bias.
+
+Matching on the propensity score itself is the other standard use of these scores; packages like `MatchIt` automate it. Like other propensity score approaches, matching derives from the same models (e.g. logit) we're accustomed to; matching also falls into the "selection on observables" approach.
+
+# Two models, one estimand
+
+Routes one and two landed on essentially the same number, but they got there differently. Route one worked on the $X \rightarrow Y$ arrow and needed the outcome model to be right. Route two worked on the $X \rightarrow D$ arrow and needed the treatment model to be right. Neither needed the other's model.
+
+And notice something about *this* result: the two routes agreed. Two estimators built on two different models, landing on essentially the same number, is a reassurance — a rough specification check. Had they diverged sharply, that would be a red flag that one of the two models is misspecified, and worth chasing down before believing either.
+
+## Which to use, and when
+
+Because each route needs only its own model, the two fail in different places. A misspecified outcome model can wreck route one while route two is untouched, and a misspecified treatment model can wreck route two while route one is fine. That answers "which one?" directly: **work on the arrow you understand.**
+
+- **If you understand how units came to be treated** — an admissions rule, a program assigned by a formula, a policy rolled out by known criteria — the $X \rightarrow D$ arrow is the one you can model well. Build the treatment model and weight: route two.
+- **If you understand how the outcome is produced** better than how treatment was assigned, model the outcome and g-compute: route one. Route one also has practical advantages. As the ATE, ATT, and CATE subsections showed, it hands you any estimand you like just by choosing which units to average the predictions over, and it extends cleanly to treatments that are not a simple 0/1.
+- **The two fail differently when overlap is poor.** Route two fails visibly: as @tbl-weights showed, a unit whose treatment is unusual for its profile gets a large weight, and a unit with a propensity score near 0 or 1 gets an enormous one, so the estimate lurches. Route one fails quietly: the outcome model extrapolates into covariate regions with no comparison units and returns a confident-looking prediction anyway. Either way, check overlap.
+- **If you are not sure about either model, use both.** The doubly-robust estimator, next, combines them and needs only one of the two to be right.
+
+## Using both: the doubly-robust estimator
+
+**You do not actually have to choose.** There is an estimator that uses *both* models, and so works on both arrows at once — the **doubly-robust**, or **augmented inverse-probability-weighting** (AIPW), estimator [@bangrobins2005]. The idea is to start from the g-computation prediction and add an inverse-probability-weighted correction built from the model's residuals:
+
+$$
+\begin{aligned}
+\hat\tau_{\text{DR}} = \frac{1}{n}\sum_{i=1}^{n} \Bigg\{ & \left[ \hat m_1(X_i) + \frac{D_i\,\big(Y_i - \hat m_1(X_i)\big)}{\hat e(X_i)} \right] \\
+& - \left[ \hat m_0(X_i) + \frac{(1 - D_i)\,\big(Y_i - \hat m_0(X_i)\big)}{1 - \hat e(X_i)} \right] \Bigg\},
+\end{aligned}
+$$
+
+where $\hat m_1$ and $\hat m_0$ are the outcome-model predictions at $D = 1$ and $D = 0$ (the `p1` and `p0` from route one) and $\hat e$ is the propensity score (from route two). The property this buys is the one in the name: the estimator is **consistent if *either* the outcome model or the treatment model is correct** — you do not need both to be right. Read the formula with that in mind. If the outcome model is right, the residuals $Y_i - \hat m(X_i)$ average to zero, the correction terms vanish, and you are left with plain g-computation. If instead the outcome model is wrong but the *treatment* model is right, the inverse-probability weighting on those residuals is exactly what fixes up the biased predictions. Two chances to be right instead of one. We already have every piece, so we can build it by hand:
+
+```{r aipw}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Doubly-robust (AIPW) ATE: the g-computation predictions (p1, p0) PLUS an
+# inverse-probability correction built from the outcome-model residuals and the
+# propensity score. Consistent if EITHER the outcome model OR the treatment
+# model is right -- not necessarily both.
+aipw_ate <- with(ces,
+  mean( (p1 + college       * (voteDem - p1) / pscore) -
+        (p0 + (1 - college) * (voteDem - p0) / (1 - pscore)) ))
+aipw_ate
+```
+
+That turns out to be about `r round(aipw_ate, 3)`, right alongside the other two — no surprise here, where both models are reasonable and already agree. The doubly-robust estimator is most useful when you are *unsure* about one of them: it is the default once you have built both a treatment model and an outcome model and would rather not stake the whole analysis on a single one being right.  
+
+## All the estimates together
+
+@fig-estimates puts the raw difference and the three estimators side by side. None of the three adjusted estimators comes with a simple analytic standard error once the propensity score is estimated, so I bootstrap all four the same way: resample respondents with replacement, refit both logits, recompute every estimate, and repeat 200 times. The intervals are the 2.5th and 97.5th percentiles of the 200 draws.
+
+```{r bootstrap}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# all four estimates from one data set: refit both logits, then compute each
+estimators <- function(dat) {
+  ps <- glm(college ~ age + sex + race + religion, data = dat, family = binomial(link = "logit"))
+  om <- glm(voteDem ~ college + age + sex + race + religion, data = dat, family = binomial(link = "logit"))
+  e  <- predict(ps, type = "response")
+  m1 <- predict(om, mutate(dat, college = 1), type = "response")
+  m0 <- predict(om, mutate(dat, college = 0), type = "response")
+  D  <- dat$college
+  Y  <- dat$voteDem
+  c(`raw difference`    = mean(Y[D == 1]) - mean(Y[D == 0]),
+    `g-computation (route one)` = mean(m1 - m0),
+    `IPW (route two)`   = mean(D * Y / e - (1 - D) * Y / (1 - e)),
+    `doubly robust (AIPW)`      = mean((m1 + D * (Y - m1) / e) - (m0 + (1 - D) * (Y - m0) / (1 - e))))
+}
+
+point <- estimators(ces)
+
+# 200 bootstrap resamples of respondents
+boot_draws <- map_dfr(1:200, ~ estimators(slice_sample(ces, prop = 1, replace = TRUE)))
+
+est_all <- tibble(estimator = names(point),
+                  estimate  = point,
+                  lo = map_dbl(boot_draws, quantile, 0.025),
+                  hi = map_dbl(boot_draws, quantile, 0.975)) %>%
+  mutate(estimator = fct_rev(fct_inorder(estimator)))
+```
+
+```{r}
+#| include: false
+
+alt_estimates <- sprintf("Four point estimates with 95 percent bootstrap intervals. The raw difference is %.3f. G-computation gives %.3f, IPW %.3f, and the doubly-robust estimator %.3f; their intervals overlap almost completely, and all three sit below the raw difference.", point[1], point[2], point[3], point[4])
+```
+
+```{r estimates-fig}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-estimates
+#| fig-cap: "The raw difference and three estimates of the ATE of a college degree on Pr(Biden vote), with 95% bootstrap intervals (200 resamples)."
+#| fig-alt: !expr alt_estimates
+#| fig-width: 8
+#| fig-height: 3.2
+
+ggplot(est_all, aes(estimate, estimator)) +
+  geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0.15, color = bu_green) +
+  geom_point(size = 3, color = bu_green) +
+  geom_text(aes(label = sprintf("%.3f", estimate)), vjust = -1.1, size = 3.6, color = bu_black) +
+  labs(x = "effect of a college degree on Pr(Biden vote)", y = NULL) +
+  theme_bu() +
+  theme(panel.grid.minor = element_blank())
+```
+
+The three adjusted estimates land within a few thousandths of each other, and all three sit below the raw difference by about the size of the selection bias we computed above. Two different models, and a third that combines them, tell the same story. What none of them can tell us is whether family income and parental education would move all three together — the estimators agree because they share an assumption, and agreement is not evidence for the assumption.
+
+
+# Where this sits: the landscape of causal identification
+
+We have now built three estimators — g-computation, IPW, and the doubly-robust combination — and all three belong to the family we named at the start, selection on observables. They rest on the same assumption, conditional ignorability: the bet that the covariates we measured close every backdoor between treatment and outcome. This section sets that family beside the other one, design-based methods. We are not teaching those here, but you should be able to recognize them and know when you would need them, especially since you already know the architecture of some of them. Choosing between the two families is really choosing *what you are willing to assume*.
+
+The one axis that organizes everything: **what defends the estimate against *unobserved* confounding?**
+
+**Selection on observables** - nothing. These methods *assume* the confounding away, via ignorability, and then differ only in the mechanics of adjusting for the measured $X$:
+
+- **Regression adjustment.** Put $X$ in the outcome model alongside $D$ and read off the average marginal effect of $D$. This is g-computation with a single model and no weighting — the plainest version of the idea, and the one you have been doing since the binary-models weeks.
+- **Matching.** Pair each treated unit with control units that have a similar covariate profile (or a similar propensity score), discard the un-matchable, and difference the outcomes. Same ignorability assumption; the adjustment is done by *building comparable groups* rather than by modeling a functional form. This is the tool you will actually see most often in applied political science.
+- **Propensity-score weighting (IPW).** Reweight units by the inverse of their propensity score so treated and control match on $X$, then compare — route two.
+- **G-computation.** Model the outcome and average the predicted contrast — route one.
+- **Doubly-robust (AIPW).** Combine the treatment and outcome models; right if either is.
+
+All five are cousins. They condition on observables and hope that is enough. When it is not — when you cannot believe you measured the confounders — identification has to come from somewhere other than the covariates. That is the second family.
+
+**Design-based methods** get their leverage from a *feature of how treatment was assigned*, and that feature can defend against unobserved confounding. You have seen the architecture of the first one already:
+
+- **Instrumental variables (IV / 2SLS).** Find an instrument $Z$ that shifts the treatment $D$ but affects the outcome $Y$ *only* through $D$. That condition is the exclusion restriction. The instrument's as-good-as-random variation is transmitted to $D$, so the part of $D$ driven by $Z$ is unconfounded, even by unobservables. In DAG terms, the graph is $Z \rightarrow D \rightarrow Y$ with an unmeasured $U$ pointing into both $D$ and $Y$; the exclusion restriction is the claim that there is no arrow from $Z$ to $Y$, and no backdoor path into $Z$. The price is a narrower estimand: 2SLS recovers a **local** average treatment effect, the effect for the units whose treatment the instrument actually moved (the compliers), not the whole-population ATE.
+- **Regression discontinuity (RD).** Treatment is assigned by a threshold on a running variable — a vote share above 50%, a test score above a cutoff. Units just below and just above the threshold are, on everything except treatment, essentially identical, so comparing them identifies an effect *local to the cutoff*. The design does the work; no ignorability-on-covariates is required.
+- **Difference-in-differences (DiD).** With panel data, compare the before-to-after change in treated units to the same change in untreated units. Any confounder that is fixed over time differences out, so unobserved *time-invariant* confounding is handled by the design. The identifying assumption moves to **parallel trends**: absent treatment, the two groups would have moved in parallel.
+
+Here is the same landscape as a table:
+
+| Family | Methods | Identifying assumption | Handles *unobserved* confounding? | Typical estimand |
+|---|---|---|---|---|
+| **Selection on observables** (this week) | regression adjustment, matching, IPW, g-computation, doubly-robust | conditional ignorability — measured $X$ closes every backdoor | **No** — assumed away | ATE, ATT, CATE |
+| **Design-based** (a second course) | IV / 2SLS, RD, difference-in-differences | a design feature: an instrument, a threshold, parallel trends | **Yes** — that is the point | often local (LATE, effect at the cutoff, effect on treated periods) |
+
+So, **when would we use the tools from this week?** When selection on observables is credible — when we have good substantive reason to believe the confounders are measured and in the model. That is a strong condition, and often it is not met; family income and parental education really are missing from our CES data, and @fig-dag-ces shows the paths they leave open. But sometimes it is met; for two political-science examples, see @gilligansergenti2008 and @blattman2009. When you cannot defend ignorability, the honest move is not a fancier weighting scheme — it is to go find a design: an instrument, a discontinuity, a policy change with a clean before-and-after. The methods in this week and the methods in that second course are not really competitors; they are answers to a different question about the data you have: *did I measure the confounders, or do I need a design to handle the ones I did not?*
+
+# Selection and censoring as causal missingness
+
+Return to the switching equation. A causal effect was a missing-data problem — the untreated outcome of a treated unit is missing by construction. **Selection** and **censoring** are the same problem wearing different clothes:
+
+- **Sample selection** (Heckman): we observe $Y_i$ only for units that cleared some selection hurdle, and the hurdle is related to $Y$. The unobserved outcomes are missing *not* at random.
+- **Censoring** (durations, Week 11): we observe that an event had not happened by the end of observation, but not when it eventually would — the survival time is missing, informatively.
+
+Our running example is itself a selected sample. We only see a vote for respondents who turned out, turnout is affected by the treatment, and in @fig-dag-ces that made turnout a collider we conditioned on by building the sample. The Biden-vote outcome of a graduate who stayed home is missing, and so is the one of a non-graduate who stayed home — and whether they are missing depends on college and, plausibly, on family income. That is the same missing-data problem as the switching equation, one step earlier.
+
+The collider algebra from the DAG section applies here too. Restricting the sample to voters is conditioning on turnout by selection rather than by putting it in the model. Among the selected, the average of the outcome equation's error, $E[\varepsilon_i \mid D_i, \text{selected}]$, depends on $D_i$ whenever something that drives selection also drives the outcome. That is the same leak of the outcome's error into the conditioning variable that produced the $\lambda$ term above. Heckman's correction adds a term to the outcome equation, the inverse Mills ratio, that models exactly that conditional mean. Put in DAG terms, a Heckman selection model is a repair for having conditioned on a collider.
+
+We are not building a Heckman selection model as a standalone topic this term. The point here is the *conceptual* one: whenever the data we would need to identify an effect are systematically absent, we are back in the potential-outcomes frame, reasoning about what is missing and whether we can defend an assumption that lets us fill it in. That reasoning recurs — in the count models (effects on rates) and the duration models (effects on hazards, and censoring head-on).
+
+
+# Take-away points
+
+**The problem**
+
+1. A causal effect is defined by potential outcomes, and it is fundamentally a missing-data problem: we never see both $Y_i(1)$ and $Y_i(0)$. We cannot estimate individual effects, but we can target averages — the ATE, ATT, and CATE.
+2. The raw difference between treated and untreated equals the ATT plus selection bias. In the running example, a raw difference of about 0.16 is an effect of about 0.13 plus selection bias of about 0.03.
+
+**The assumption**
+
+3. Identification needs assumptions the data cannot supply: conditional ignorability and positivity.
+4. A DAG makes the ignorability assumption visible and tells us what to condition on. Condition on confounders to close backdoor paths; leave mediators alone if you want the total effect; never condition on a collider. Do not condition on anything the treatment affects — and remember that selecting the sample is a way of conditioning.
+5. The adjustment set changes the answer: about 0.16 with no adjustment, 0.13 adjusting for the confounders, 0.04 adding party ID, a mediator. In omitted-variable-bias terms, the first of these removes bias and the second removes part of the total effect. The regression cannot tell the two apart — only the direction of the arrows can.
+
+**Two ways to remove the bias**
+
+6. Selection bias travels along the backdoor path $D \leftarrow X \rightarrow Y$, which needs both arrows. Remove either one and the bias is gone: the omitted-variable bias $\beta_2\delta_1$ is zero if either $\beta_2$ or $\delta_1$ is.
+7. Route one, g-computation, deals with the $X \rightarrow Y$ arrow using the outcome model. It is the average marginal effect from the quantities-of-interest week, reinterpreted as an ATE under ignorability. Average its unit-level contrasts over everyone for the ATE, over the treated for the ATT, over a group for a CATE. In a logit those contrasts vary through compression alone; if you want the data to decide whether the effect differs by group, add the product term.
+8. Route two, the propensity score, cuts the $X \rightarrow D$ arrow using the treatment model — a logit pointed at the treatment. Weighting on it balances the measured covariates, and the balance plot checks that the arrow is cut. It cannot certify ignorability, because it says nothing about what we did not measure.
+9. Work on the arrow you understand. If you are unsure about both, the doubly-robust (AIPW) estimator uses both models and is consistent if *either* is right.
+
+**The limits**
+
+10. These are all **selection-on-observables** methods: they assume unobserved confounding away. When you cannot defend that assumption, you need a design — IV, RD, difference-in-differences — that gets identification from the assignment mechanism instead.
+11. Selection and censoring are causal missingness — the same frame, returning later in the term.
+
+
+
+# References {.unnumbered}
