@@ -25,7 +25,7 @@ entries = json.loads(index.read_text())
 kept = [e for e in entries if e.get("href", "").split("#")[0] in allow]
 
 dropped = sorted({e.get("href", "").split("#")[0] for e in entries} - allow)
-index.write_text(json.dumps(kept, indent=2) + "\n")
+index.write_text(json.dumps(kept, indent=2, ensure_ascii=False) + "\n")
 
 print(f"search index: kept {len(kept)}/{len(entries)} entries across {len(allow)} published pages")
 if dropped:

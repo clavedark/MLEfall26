@@ -129,6 +129,11 @@ docs/*
 # deliberately on 2026-09-16 once Dave had worked through it. Only the rendered
 # page; `ex52026.qmd` stays ignored above, and the key stays ignored entirely.
 !docs/ex52026.html
+# released EXERCISE: only the rendered page. `ex6B2026.qmd` stays ignored above, and the key
+# stays ignored entirely. Exercise #6 is the ANES version (ex6B2026); the Mass Mobilization
+# draft (ex62026) was staged for release on 2026-09-29, replaced before it went out, and
+# stays unpublished.
+!docs/ex6B2026.html
 # released ANSWER KEYS, each after its exercise was submitted. Only the rendered
 # page -- the `*answers.qmd` sources stay ignored above. Release a key only once
 # the exercise it answers is in.
@@ -172,6 +177,7 @@ zorntweet.png
 # Deck companion scripts, kept local for now. predictionOLS26.R and
 # binarymodels26.R are the published ones.
 binaryextensions126.R
+causallens26.R
 discretehazards26.R
 likelihood26.R
 prediction26.R
@@ -193,6 +199,10 @@ buildtemplate26answers.R
 ex42026answers.R
 # Same reason: the continuous-run script extracted from ex52026answers.qmd.
 ex52026answers.R
+# Same reason: the continuous-run script extracted from ex62026answers.qmd.
+ex62026answers.R
+# Same reason: the continuous-run script extracted from ex6B2026answers.qmd.
+ex6B2026answers.R
 # The builder for data/leaderyears.csv. It documents a coding error planted in
 # the file students receive for exercise #4; publishing it hands them the answer.
 make-leaderyears.R

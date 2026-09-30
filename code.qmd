@@ -11,6 +11,7 @@ Posted as they're assigned. Turn in both your source (`.qmd`/`.R`) and the rende
 - [Exercise #3 — Build Your Own Estimator](buildtemplate26.qmd) — the in-class build template, completed as homework. 
 - [Exercise #4 — Leaders and the Probability of Leaving Office](ex42026.qmd)
 - [Exercise #5 — Build the Spell Data, Then Model the Hazard](ex52026.qmd) · [answer key](ex52026answers.qmd)
+- [Exercise #6 — Racial Resentment and Beliefs about Barack Obama](ex6B2026.qmd)
 - [Mechanism Paper Assignment](mechanismpaper26.qmd) — three short papers across the semester; due dates are in the assignment.
 
 ## Code
@@ -24,6 +25,8 @@ Standalone R scripts, for slides that have one, and a starting template for your
 
 ## Data
 
+- [ANES 2016 Pilot Study (`anes_pilot_2016.csv`)](https://electionstudies.org/data-center/anes-2016-pilot-study/) — an online survey of 1,200 U.S. adults, fielded January 22–28, 2016, one row per respondent, including whether the respondent thinks Barack Obama is a Muslim, the four racial resentment items, party identification, and demographics. Used in exercise #6. Not posted here: download the CSV and the *Codebook and User's Guide* from the ANES page.
+  *Source: American National Election Studies. 2016. ANES 2016 Pilot Study. Stanford University and the University of Michigan. [ANES 2016 Pilot Study page](https://electionstudies.org/data-center/anes-2016-pilot-study/).*
 - [CES 2020 (`ces.csv`)](https://github.com/clavedark/MLEfall26/blob/main/data/ces.csv) — individual-level responses from the 2020 *Cooperative Election Study*, reached through the "American Voter Bot" project; used in exercises #1 and #2. GitHub won't preview a file this size — click **Download raw file**. Variable descriptions are in the [codebook](cescodebook26.qmd).
   *Source: Cooperative Election Study, Harvard University. [CES project site](https://cces.gov.harvard.edu).*
 - [Democratic peace (`dp.dta`)](https://github.com/clavedark/MLEfall26/blob/main/data/dp.dta) — dyad-year data, 1951–1985, 20,990 rows: militarized dispute onset (`dispute`) with a shared border, the capability ratio, the lower of the two Polity scores (`deml`), an alliance indicator, and joint IGO memberships. Used in the binary models, likelihood, and maximization slides. Stata format — read it with `haven::read_dta()`. Click **Download raw file**.
