@@ -17,7 +17,7 @@ filters:
 <!--
 Companion to causallens26 (Fall 2026), built for the Sep 30 class. Same steps, new data: GSS
 1991-2022, treatment = parents divorced or separated by age 16, outcome = ever had sex with someone
-other than one's spouse while married (EVSTRAY). Data from make-gss-infidelity.R.
+other than one's spouse while married (EVSTRAY). Data built by the build-extract chunk.
 -->
 
 ```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
@@ -65,12 +65,39 @@ The question: **does growing up with divorced parents make a person more likely 
 
 ## Data
 
-The data are the General Social Survey [@gss2024], which asked ever-married respondents in 17 waves between 1991 and 2022, "Have you ever had sex with someone other than your husband or wife while you were married?" The item is `EVSTRAY`. @treasgiesen2000 used the same question, from a different national survey, to study who strays. The extract is not posted here. To run the code, run [`make-gss-infidelity.R`](https://github.com/clavedark/MLEfall26/blob/main/make-gss-infidelity.R) first: it downloads the GSS cumulative file from NORC and writes the extract to `data/gss-infidelity.csv`.
+The data are the General Social Survey [@gss2024], which asked ever-married respondents in 17 waves between 1991 and 2022, "Have you ever had sex with someone other than your husband or wife while you were married?" The item is `EVSTRAY`. @treasgiesen2000 used the same question, from a different national survey, to study who strays. The extract is not posted here; the first code chunk below builds it the first time you run the code. It downloads the GSS cumulative file from NORC (a zipped Stata-format file, about 45 MB, which R reads with `haven`; Stata itself is not needed) and writes the variables this page uses to `data/gss-infidelity.csv`.
 
 - **Outcome** $Y$: ever strayed while married (1 = yes, 0 = no). Asked only of people who have ever married.
 - **Treatment** $D$: parents divorced or separated by the time the respondent was 16. The GSS asks whether the respondent was living with both their own mother and father around age 16 and, if not, why not. $D = 1$ if the answer was "parents divorced or separated"; $D = 0$ if the respondent lived with both parents.
 
 Respondents who were not living with both parents for some *other* reason — mostly the death of a parent — are dropped. Losing a parent to death and losing one to divorce are different treatments, and mixing them would make $D$ a bundle of two things with different effects.
+
+```{r build-extract}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# build data/gss-infidelity.csv if it is not already there: download the GSS
+# cumulative file (zipped Stata format), unzip it to a temporary folder, read the
+# needed columns with haven, and keep the waves that asked EVSTRAY
+if (!file.exists(here::here("data", "gss-infidelity.csv"))) {
+  dir.create(here::here("data"), showWarnings = FALSE)
+  options(timeout = 600)                                  # the zip is about 45 MB
+  zip <- tempfile(fileext = ".zip")
+  download.file("https://gss.norc.org/content/dam/gss/get-the-data/documents/stata/GSS_stata.zip",
+                zip, mode = "wb")
+  unzip(zip, files = "GSS_stata/gss7224_r3a.dta", exdir = tempdir())
+  haven::read_dta(file.path(tempdir(), "GSS_stata", "gss7224_r3a.dta"),
+                  col_select = c(year, id, wtssps, evstray, family16, famdif16, cohort, age, sex,
+                                 race, reg16, res16, relig16, fund16, maeduc, paeduc, incom16,
+                                 degree, educ, attend, marital, divorce, agewed, childs,
+                                 numwomen, nummen, partnrs5)) %>%
+    haven::zap_missing() %>%                              # GSS missing codes to NA
+    haven::zap_labels() %>%
+    filter(evstray %in% 1:3) %>%                          # 1 yes, 2 no, 3 never married
+    write_csv(here::here("data", "gss-infidelity.csv"))
+}
+```
 
 ```{r data}
 #| echo: true

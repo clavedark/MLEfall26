@@ -131,9 +131,9 @@ build("causallens26.qmd", "causallens26.R", "A Causal Lens on the Binomial Model
              "# times and takes a minute or two."])
 build("causalinfidelity26.qmd", "causalinfidelity26.R", "A Second Causal Example: Parental Divorce and Infidelity",
       howto=["# HOW TO RUN: open MLEfall26.Rproj FIRST, then this script, so here::here()",
-             "# resolves. Needs data/gss-infidelity.csv -- build it with make-gss-infidelity.R.",
-             "# The bootstrap block refits both logits 200 times, and the selection model takes",
-             "# about a minute."])
+             "# resolves. Block [02] downloads the GSS file from NORC and builds data/gss-infidelity.csv",
+             "# the first time it runs (about 45 MB). The bootstrap block refits both logits 200",
+             "# times, and the selection model takes about a minute."])
 build("buildtemplate26answers.qmd", "buildtemplate26answers.R", "Exercise #3 -- Build Your Own Estimator -- ANSWER KEY",
       howto=["# HOW TO RUN: open MLEfall26.Rproj FIRST, then this script. The ITT data are",
              "# read over the web, so no local data/ folder is needed -- but block [01]",
