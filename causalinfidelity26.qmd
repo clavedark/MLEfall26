@@ -1,0 +1,854 @@
+---
+title: "A Second Causal Example: Parental Divorce and Infidelity"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: true
+filters:
+  - parse-latex
+---
+
+<!--
+Companion to causallens26 (Fall 2026), built for the Sep 30 class. Same steps, new data: GSS
+1991-2022, treatment = parents divorced or separated by age 16, outcome = ever had sex with someone
+other than one's spouse while married (EVSTRAY). Data from make-gss-infidelity.R.
+-->
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+#| cache.extra: !expr tools::md5sum("_common.R")
+#| # knitr keys the cache on the CHUNK's code, not on files the chunk sources.
+#| # Without this line a palette edit in _common.R leaves every cached figure
+#| # drawing the OLD colors and says nothing; a newly added constant fails with
+#| # "object not found" from a stale setup environment. Hashing the file in makes
+#| # a _common.R edit invalidate the caches that depend on it.
+options(htmltools.dir.version = FALSE)
+
+# R starts in the C locale here, which cannot encode non-ASCII characters. Any
+# Greek letter, minus sign, or +/- typed into a ggplot title, subtitle, axis
+# label, or annotation gets drawn as the literal text <U+03B1>. Setting a UTF-8
+# ctype fixes it for the whole document.
+Sys.setlocale("LC_CTYPE", "en_US.UTF-8")
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+library(marginaleffects)
+library(sampleSelection)
+
+# Binghamton palette + plotting helpers (bucolors, bu_green, scale_color_bu, ...)
+source(here::here("_common.R"))
+
+set.seed(20260930)
+```
+
+<style>
+table, th, td {
+    font-size: 18px;
+}
+tr:nth-child(odd) {
+  background-color: #f2f2f2;
+}
+</style>
+
+# The question
+
+The [causal-lens notes](causallens26.html) built the selection-on-observables toolkit on one running example, college and the vote. This page runs the same steps on a completely different question, so you can see which parts of the work are the same every time and which parts depend on the substance.
+
+The question: **does growing up with divorced parents make a person more likely to be unfaithful in their own marriage?** Family researchers call this kind of question *intergenerational transmission* — whether what happens in the parents' marriage shows up in the child's. It is a good selection-on-observables problem for three reasons. The treatment happens in childhood, long before the outcome, so there is no question about which came first. The confounders that matter most are things fixed early in life, which a survey can ask about. And the problems that remain — an unmeasured confounder, a selected sample, a self-reported outcome — are exactly the ones the DAG is built to expose.
+
+## Data
+
+The data are the General Social Survey [@gss2024], which asked ever-married respondents in 17 waves between 1991 and 2022, "Have you ever had sex with someone other than your husband or wife while you were married?" The item is `EVSTRAY`. @treasgiesen2000 used the same question, from a different national survey, to study who strays. The extract is not posted here. To run the code, run [`make-gss-infidelity.R`](https://github.com/clavedark/MLEfall26/blob/main/make-gss-infidelity.R) first: it downloads the GSS cumulative file from NORC and writes the extract to `data/gss-infidelity.csv`.
+
+- **Outcome** $Y$: ever strayed while married (1 = yes, 0 = no). Asked only of people who have ever married.
+- **Treatment** $D$: parents divorced or separated by the time the respondent was 16. The GSS asks whether the respondent was living with both their own mother and father around age 16 and, if not, why not. $D = 1$ if the answer was "parents divorced or separated"; $D = 0$ if the respondent lived with both parents.
+
+Respondents who were not living with both parents for some *other* reason — mostly the death of a parent — are dropped. Losing a parent to death and losing one to divorce are different treatments, and mixing them would make $D$ a bundle of two things with different effects.
+
+```{r data}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+gss_raw <- read_csv(here::here("data", "gss-infidelity.csv"), show_col_types = FALSE)
+
+gss <- gss_raw %>%
+  mutate(divorced16 = case_when(family16 == 1 ~ 0L,    # lived with both own parents at 16
+                                famdif16 == 2 ~ 1L,    # did not: parents divorced or separated
+                                TRUE ~ NA_integer_),   # did not, for another reason: dropped
+         married = as.integer(evstray %in% 1:2),      # ever married (evstray 3 = never married)
+         strayed = case_when(evstray == 1 ~ 1L, evstray == 2 ~ 0L)) %>%
+  filter(!is.na(divorced16))
+
+# everyone with every confounder observed, married or not (the never-married are
+# used only in the section on selection into marriage)
+everyone <- gss %>%
+  transmute(
+    married, strayed, divorced16,
+    cohort10 = (cohort - 1950) / 10,                              # birth year, decades from 1950
+    age,
+    age10    = (age - 45) / 10,                                   # age, decades from 45
+    sex      = factor(sex, 1:2, c("male", "female")),
+    race     = factor(race, 1:3, c("white", "Black", "other")),
+    region16 = factor(reg16, 0:4, c("abroad", "Northeast", "Midwest", "South", "West")),
+    place16  = factor(res16, 1:6, c("open country", "farm", "small town", "medium city",
+                                    "suburb", "large city")),
+    relig16  = factor(case_when(relig16 == 1 ~ "Protestant", relig16 == 2 ~ "Catholic",
+                                relig16 == 3 ~ "Jewish",     relig16 == 4 ~ "none",
+                                !is.na(relig16) ~ "other")),
+    mom_ed   = cut(maeduc, c(-1, 11, 12, 15, 30), c("< 12", "12", "13-15", "16+")) %>%
+                 fct_na_value_to_level("unknown"),                 # "don't know" kept as a level
+    year     = factor(year),
+    degree, attend) %>%
+  drop_na(divorced16, cohort10, age, sex, race, region16, place16, relig16)
+
+# analysis sample: the ever married
+strays <- everyone %>% filter(married == 1)
+
+raw_diff <- with(strays, mean(strayed[divorced16 == 1]) - mean(strayed[divorced16 == 0]))
+```
+
+The analysis sample is `r format(nrow(strays), big.mark = ",")` ever-married respondents. Of these, `r round(100 * mean(strays$divorced16))`% had parents who divorced or separated by the time they were 16, and `r round(100 * mean(strays$strayed))`% report having strayed. Among children of divorce, `r round(100 * mean(strays$strayed[strays$divorced16 == 1]), 1)`% report straying; among respondents raised by both parents, `r round(100 * mean(strays$strayed[strays$divorced16 == 0]), 1)`%. The raw difference is
+
+$$
+\bar{Y}_{\text{divorced}} - \bar{Y}_{\text{intact}} = `r sprintf("%.3f", mean(strays$strayed[strays$divorced16 == 1]))` - `r sprintf("%.3f", mean(strays$strayed[strays$divorced16 == 0]))` = `r sprintf("%.3f", raw_diff)`.
+$$
+
+Is that the effect of parental divorce? As before, the raw difference is the ATT plus selection bias:
+
+$$
+\begin{aligned}
+E[Y_i \mid D_i = 1] - E[Y_i \mid D_i = 0]
+&= \underbrace{E[Y_i(1) - Y_i(0) \mid D_i = 1]}_{\text{ATT}} \\[6pt]
+&\qquad + \underbrace{E[Y_i(0) \mid D_i = 1] - E[Y_i(0) \mid D_i = 0]}_{\text{selection bias}}.
+\end{aligned}
+$$
+
+Here the selection-bias term asks: would children of divorce have strayed at a different rate than everyone else *even if their parents had stayed together*? The CES example had a positive selection-bias term — graduates would have voted more Democratic anyway. This example is less tidy: one confounder pushes the selection bias negative, others push it positive, and the net turns out to be close to zero. That is worth seeing, because a raw difference that survives adjustment is not the same thing as a raw difference that was never confounded.
+
+Here is what each term compares, in this example:
+
+| | which people | which treatment state |
+|---|---|---|
+| raw difference, $E[Y_i \mid D_i = 1] - E[Y_i \mid D_i = 0]$ | different: children of divorce vs those raised by both parents | different: parents divorced vs not |
+| ATT, $E[Y_i(1) - Y_i(0) \mid D_i = 1]$ | **the same**: children of divorce only | different: parents divorced vs not |
+| selection bias, $E[Y_i(0) \mid D_i = 1] - E[Y_i(0) \mid D_i = 0]$ | different: children of divorce vs those raised by both parents | **the same**: both with parents together |
+
+: What each term in the decomposition compares. {#tbl-decomp}
+
+The ATT holds the people fixed and changes the treatment state; selection bias holds the treatment state fixed and changes the people. The raw difference changes both at once.
+
+# An "ever" outcome accumulates with age
+
+"Have you *ever* strayed?" is a question about a whole marital history up to the day of the interview. A 30-year-old has had a few years of marriage in which to stray; a 55-year-old has had decades. So the share answering yes should rise with age, simply because older respondents have had more time at risk. Now look at who the children of divorce are. The share of children whose parents divorced rose sharply across birth cohorts, so children of divorce are concentrated in the *younger* cohorts — the respondents who have had the *least* time to stray.
+
+```{r age-profile}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+age_profile <- strays %>%
+  mutate(agegrp = cut(age, c(17, 30, 40, 50, 60, 70, 90),
+                      labels = c("18-30", "31-40", "41-50", "51-60", "61-70", "71+"))) %>%
+  filter(!is.na(agegrp)) %>%
+  group_by(agegrp) %>%
+  summarise(`share who have strayed (Y)` = mean(strayed),
+            `share whose parents divorced (D)` = mean(divorced16)) %>%
+  pivot_longer(-agegrp, names_to = "panel", values_to = "share")
+
+share_at <- function(p, a) age_profile$share[age_profile$panel == p & age_profile$agegrp == a]
+```
+
+```{r}
+#| include: false
+
+alt_age <- sprintf("Two panels of bars by age group. Left, the share who have strayed: %.2f at ages 18-30, rising to %.2f at 51-60, then falling to %.2f at 71 and over. Right, the share whose parents divorced: %.2f at ages 18-30, falling steadily to %.2f at 71 and over.", share_at("share who have strayed (Y)", "18-30"), share_at("share who have strayed (Y)", "51-60"), share_at("share who have strayed (Y)", "71+"), share_at("share whose parents divorced (D)", "18-30"), share_at("share whose parents divorced (D)", "71+"))
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-age
+#| fig-cap: "By age at interview: the share of ever-married respondents who report having strayed, and the share whose parents divorced by age 16."
+#| fig-alt: !expr alt_age
+#| fig-width: 9
+#| fig-height: 3.4
+
+ggplot(age_profile, aes(agegrp, share)) +
+  geom_col(fill = bu_green, width = 0.7) +
+  geom_text(aes(label = sprintf("%.2f", share)), vjust = -0.5, size = 3.4, color = bu_black) +
+  facet_wrap(~ panel) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(x = "age at interview", y = "share") +
+  theme_bu() +
+  theme(strip.text = element_text(size = 11, face = "bold"),
+        panel.grid.minor = element_blank(), panel.grid.major.x = element_blank())
+```
+
+@fig-age shows both halves of the problem. On the left, the share who have strayed climbs from `r sprintf("%.2f", share_at("share who have strayed (Y)", "18-30"))` among the youngest respondents to `r sprintf("%.2f", share_at("share who have strayed (Y)", "51-60"))` in their fifties. (It falls again among the oldest respondents. That is most likely a cohort difference — they married in a different era — though we cannot separate it from other causes in these data.) On the right, the share whose parents divorced falls from `r sprintf("%.2f", share_at("share whose parents divorced (D)", "18-30"))` among the youngest to `r sprintf("%.2f", share_at("share whose parents divorced (D)", "71+"))` among the oldest.
+
+Put the two panels together and birth cohort is a confounder. Being born later makes it more likely that your parents divorced ($X \rightarrow D$), and being born later means fewer years of marriage in which to stray ($X \rightarrow Y$). Both arrows are there, so the backdoor path is open. But notice which way it pushes. Cohort raises $D$ and *lowers* $Y$, so it makes children of divorce look *less* unfaithful than they would otherwise. Through cohort alone, the selection bias is negative, the raw difference *understates* the effect, and adjusting for cohort should move the estimate **up**. That is the opposite of the CES example, where adjusting pulled the estimate down. Adjustment does not always shrink an effect; which way it moves depends on the signs of the two arrows. And cohort is only one confounder. Others can push the other way, which is what we will find.
+
+# The DAG
+
+@fig-dag is my DAG for the example. As before, shaded boxes are variables we condition on and the dashed box is unmeasured.
+
+```{r dag-helpers}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Plain-ggplot DAG drawing. Each node is a box: centre (x, y), half-width w,
+# half-height h. Arrows run centre to centre, trimmed back to the box edges.
+trim_edges <- function(edges, nodes) {
+  edges %>%
+    left_join(nodes %>% select(name, x, y, w, h), by = c("from" = "name")) %>%
+    left_join(nodes %>% select(name, xend = x, yend = y, wend = w, hend = h), by = c("to" = "name")) %>%
+    mutate(dx = xend - x, dy = yend - y,
+           t0 = pmin(w / abs(dx), h / abs(dy)),           # fraction of the edge inside the "from" box
+           t1 = pmin(wend / abs(dx), hend / abs(dy)),     # fraction inside the "to" box
+           gap = 0.06 / sqrt(dx^2 + dy^2),                # small gap between arrow and box
+           xs = x + (t0 + gap) * dx,    ys = y + (t0 + gap) * dy,
+           xe = xend - (t1 + gap) * dx, ye = yend - (t1 + gap) * dy)
+}
+
+# arrows: the line, then a short solid segment at the tip carrying the arrowhead,
+# so dashed edges still get solid heads
+geom_dag_edges <- function(e) {
+  list(
+    geom_segment(data = e, aes(x = xs, y = ys, xend = xe, yend = ye, linetype = dashed),
+                 color = bu_green, linewidth = 0.7),
+    geom_segment(data = e, aes(x = xe - 0.02 * dx, y = ye - 0.02 * dy, xend = xe, yend = ye),
+                 color = bu_green, linewidth = 0.7,
+                 arrow = arrow(length = unit(0.13, "inches"), type = "closed")))
+}
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-dag
+#| fig-cap: "A DAG for the effect of parental divorce on one's own infidelity. Shaded: conditioned on. Dashed: unmeasured."
+#| fig-alt: "A causal graph. Parents divorced by 16 (treatment) at left points to ever strayed (outcome) at right, and also to a box of mediators, own education and religious attendance, which points to the outcome. A shaded box of measured confounders at the top (birth cohort, sex, race, region and place at 16, religion raised in, mother's education) points to the treatment, the mediators, and the outcome. A dashed box below, parents' conflict and infidelity and traits shared with parents, marked unmeasured, points with dashed arrows to the treatment, the outcome, and ever married. The treatment also points to ever married, a shaded box at the bottom labeled 'sample: married only'. The outcome points down to own divorce."
+#| fig-width: 8
+#| fig-height: 6.4
+
+dag_nodes <- tribble(
+  ~name, ~x,  ~y,    ~label,                                                          ~w,   ~h,   ~status,
+  "D",   0,   0,     "parents divorced\nby age 16\n(treatment)",                      1.05, 0.55, "plain",
+  "Y",   6.4, 0,     "ever strayed\n(outcome)",                                       0.95, 0.42, "plain",
+  "X",   3.2, 2.9,   "birth cohort, sex, race, region and\nplace at 16, religion raised in,\nmother's education (measured confounders)", 2.05, 0.55, "conditioned",
+  "M",   3.2, 1.2,   "own education,\nreligious attendance\n(mediators)",           1.05, 0.55, "plain",
+  "U",   3.2, -1.55, "parents' conflict and infidelity,\ntraits shared with parents\n(unmeasured)", 1.6, 0.55, "unmeasured",
+  "S",   1.0, -3.3,  "ever married\n(sample: married only)",                         1.2,  0.42, "conditioned",
+  "R",   6.4, -2.0,  "own divorce",                                                   0.8,  0.32, "plain")
+
+dag_edges <- tribble(
+  ~from, ~to, ~dashed,
+  "X", "D", FALSE,   "X", "Y", FALSE,   "X", "M", FALSE,
+  "D", "M", FALSE,   "M", "Y", FALSE,   "D", "Y", FALSE,
+  "D", "S", FALSE,   "Y", "R", FALSE,
+  "U", "D", TRUE,    "U", "Y", TRUE,    "U", "S", TRUE)     # unmeasured: dashed
+
+ggplot() +
+  geom_dag_edges(trim_edges(dag_edges, dag_nodes)) +
+  geom_rect(data = dag_nodes, aes(xmin = x - w, xmax = x + w, ymin = y - h, ymax = y + h,
+                                  fill = status, linetype = status == "unmeasured"),
+            color = bu_black, linewidth = 0.5) +
+  geom_text(data = dag_nodes, aes(x, y, label = label), size = 3.3,
+            color = bu_black, lineheight = 0.9) +
+  scale_fill_manual(values = c(plain = "white", conditioned = bu_palegreen,
+                               unmeasured = "white"), guide = "none") +
+  scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "22"), guide = "none") +
+  coord_equal(clip = "off") +
+  theme_void()
+```
+
+```{r selection}
+#| include: false
+
+# share ever married by treatment, among everyone in the EVSTRAY waves
+married_by_d <- gss %>% group_by(divorced16) %>% summarise(married = mean(married))
+married_c <- round(100 * married_by_d$married[married_by_d$divorced16 == 1])
+married_nc <- round(100 * married_by_d$married[married_by_d$divorced16 == 0])
+
+# share who have themselves divorced, by whether they strayed
+own_div <- gss %>% filter(married == 1, divorce %in% 1:2) %>%
+  group_by(strayed) %>% summarise(div = mean(divorce == 1))
+own_div_y <- round(100 * own_div$div[own_div$strayed == 1])
+own_div_n <- round(100 * own_div$div[own_div$strayed == 0])
+
+# father's and mother's education reported "don't know" or missing, by treatment
+ed_missing <- gss %>% filter(married == 1) %>% group_by(divorced16) %>%
+  summarise(pa = mean(is.na(paeduc)), ma = mean(is.na(maeduc)))
+pa_miss_d <- round(100 * ed_missing$pa[ed_missing$divorced16 == 1])
+pa_miss_c <- round(100 * ed_missing$pa[ed_missing$divorced16 == 0])
+```
+
+Take the paths from parental divorce to straying one at a time.
+
+1. **Divorce → straying**, and **divorce → own education, religious attendance → straying**, are causal paths. Children of divorce finish less schooling and attend religious services less often as adults, and both of those may affect straying. The total effect of parental divorce includes both routes, so education and attendance stay *out* of the model.
+2. **Divorce ← birth cohort (and the rest of $X$) → straying** is a backdoor path, and @fig-age showed it is a real one. The other measured confounders are all fixed at birth or in childhood: sex, race, the region and kind of place the respondent grew up in, the religion they were raised in, and their mother's education. Religion raised in matters in both directions: religious families divorce less, and religious upbringing shapes attitudes toward fidelity. Conditioning on all of these closes the backdoor paths that run through them.
+3. **Divorce ← parents' conflict and infidelity, traits shared with parents → straying** is a backdoor path we cannot close. Parents whose own marriage involved infidelity are more likely to divorce, and a child may learn from what happened at home whether or not the marriage ended. Traits children share with their parents, through genes or upbringing, could raise both the parents' chance of divorce and the child's chance of straying. The GSS measures none of this. If these paths are real, ignorability fails.
+4. **Divorce → ever married ← unmeasured → straying** runs through a collider, and we condition on it by construction, because the GSS asks the question only of people who have married. And parental divorce does affect marriage: in the EVSTRAY waves, `r married_c`% of children of divorce have ever married, against `r married_nc`% of those raised by both parents. Part of that gap is age, since children of divorce are younger, but not all of it. This is the same structure as turnout in the CES: the sample is selected on a variable the treatment affects.
+
+Three more variables are worth naming because they look like controls and are not.
+
+- **Own divorce.** In these data, `r own_div_y`% of respondents who have strayed have themselves been divorced, against `r own_div_n`% of those who have not. Straying causes divorce, so own divorce is a *descendant of the outcome*. Conditioning on it would bias the estimate, for the same reason conditioning on a collider does. (Parental divorce probably affects own divorce directly too; I left that arrow out of @fig-dag to keep the picture legible. It does not change the conclusion.)
+- **Family income at 16.** The GSS asks how the respondent's family income compared with other families' when they were 16. It sounds like a childhood background variable, but for a respondent whose parents divorced at 10, income at 16 was measured *after* the treatment, and divorce lowers household income. It is a mediator, so it stays out.
+- **Father's education.** A respondent who grew up apart from their father often does not know how much schooling he had. Father's education is missing for `r pa_miss_d`% of children of divorce and `r pa_miss_c`% of everyone else. Whether the variable is *observed* is caused by the treatment, so conditioning on it (or dropping the cases where it is missing) conditions on a consequence of the treatment. I use mother's education instead, with "don't know" kept as its own category rather than dropped. Mother's education is missing far less often, but its missingness still differs by treatment, which is a mild version of the same problem; below I check whether it matters.
+
+The adjustment set $X$ is the measured confounders in the top box of @fig-dag, plus the survey year. Survey year is not a confounder. Birth cohort is, because it fixes when a respondent's childhood happened, and that shaped the chance their parents divorced; the interview came decades later and cannot have. But together with birth cohort, survey year pins down age, which is the respondent's time at risk, and it absorbs changes in how the question was asked (the GSS moved to web interviews in 2021). A variable that affects only the outcome, and is not affected by the treatment, is safe to condition on, and it usually buys precision. Birth cohort enters as a quadratic, because with survey year held fixed it carries the respondent's age, and the share who have ever strayed rises with age and then falls among the oldest respondents (@fig-age) — a shape a straight line cannot follow.
+
+# The adjustment set changes the answer
+
+@fig-ladder estimates the average effect of parental divorce four ways, differing only in what the outcome logit conditions on.
+
+```{r ladder}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# the outcome logit under four adjustment sets; the mediator model drops the
+# few cases missing degree or attendance
+ladder_models <- list(
+  "nothing (the raw difference)" =
+    glm(strayed ~ divorced16,
+        data = strays, family = binomial(link = "logit")),
+  "birth cohort only" =
+    glm(strayed ~ divorced16 + cohort10 + I(cohort10^2),
+        data = strays, family = binomial(link = "logit")),
+  "all confounders" =
+    glm(strayed ~ divorced16 + cohort10 + I(cohort10^2) + sex + race + region16 + place16 +
+          relig16 + mom_ed + year,
+        data = strays, family = binomial(link = "logit")),
+  "all confounders\n+ education, attendance (mediators)" =
+    glm(strayed ~ divorced16 + cohort10 + I(cohort10^2) + sex + race + region16 + place16 +
+          relig16 + mom_ed + year + factor(degree) + attend,
+        data = strays, family = binomial(link = "logit")))
+
+# average effect of parental divorce under each adjustment set
+ladder <- imap_dfr(ladder_models, function(m, set) {
+  ac <- avg_comparisons(m, variables = "divorced16")
+  tibble(set = set, estimate = ac$estimate, lo = ac$conf.low, hi = ac$conf.high)
+}) %>%
+  mutate(set = fct_rev(fct_inorder(set)))
+
+# the confounders without mother's education, to check that choice
+no_momed <- avg_comparisons(
+  glm(strayed ~ divorced16 + cohort10 + I(cohort10^2) + sex + race + region16 + place16 +
+        relig16 + year,
+      data = strays, family = binomial(link = "logit")),
+  variables = "divorced16")$estimate
+
+# AIC of the confounder model minus the mediator model, on the same respondents
+same <- strays %>% drop_na(degree, attend)
+aic_gain <- AIC(update(ladder_models[["all confounders"]], data = same)) - AIC(ladder_models[[4]])
+```
+
+```{r}
+#| include: false
+
+alt_ladder <- sprintf("Four point estimates with 95 percent intervals. Adjusting for nothing gives %.3f. Adjusting for birth cohort alone raises it to %.3f. Adjusting for all the confounders gives %.3f. Adding the mediators, education and religious attendance, lowers it to %.3f.", ladder$estimate[1], ladder$estimate[2], ladder$estimate[3], ladder$estimate[4])
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-ladder
+#| fig-cap: "The average effect of parental divorce on Pr(ever strayed) under four adjustment sets, with 95% intervals."
+#| fig-alt: !expr alt_ladder
+#| fig-width: 8
+#| fig-height: 3.4
+#| warning: false
+
+ggplot(ladder, aes(estimate, set)) +
+  geom_vline(xintercept = 0, color = bu_grey) +
+  geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0.15, color = bu_green) +
+  geom_point(size = 3, color = bu_green) +
+  geom_text(aes(label = sprintf("%.3f", estimate)), vjust = -1.1, size = 3.6, color = bu_black) +
+  labs(x = "average effect of parental divorce on Pr(ever strayed)", y = "conditioning on") +
+  theme_bu() +
+  theme(panel.grid.minor = element_blank())
+```
+
+Adjusting for birth cohort alone moves the estimate *up*, from `r sprintf("%.3f", ladder$estimate[1])` to `r sprintf("%.3f", ladder$estimate[2])`, which is what @fig-age predicted: the cohort backdoor was hiding part of the effect. The full confounder set gives `r sprintf("%.3f", ladder$estimate[3])`. The other confounders pull it back down, which says that, taken together, their backdoor paths run the other way: on the rest of $X$, children of divorce come from backgrounds that would have made them somewhat *more* likely to stray anyway. The two pushes nearly cancel, and the fully adjusted estimate ends up close to the raw difference. That does not mean the raw difference was fine all along. It means two biases of opposite sign happened to offset in this sample, and we would not have known that without the DAG and the adjustment. Dropping mother's education changes the estimate only to `r sprintf("%.3f", no_momed)`, so the treatment-related missingness in that variable is not doing much work.
+
+Adding the mediators education and religious attendance lowers the estimate to `r sprintf("%.3f", ladder$estimate[4])`. As with party ID in the CES, that drop is not a correction. Those variables are on the causal path, so conditioning on them removes part of the effect we want. What is left is the effect of parental divorce that does not run through schooling and religious practice — a different question.
+
+## Which of these is right?
+
+Four estimates, and only one of them answers our question. How do we choose? Not by fit, not by
+which interval is narrowest, and not by which number looks most like what we expected. Fit points
+the wrong way here: on the same respondents, adding the mediators lowers the AIC by
+`r round(aic_gain)`, because education and attendance predict straying, and it moves us further from
+the effect we want. The data cannot tell
+us which variables to condition on. The DAG does, and we committed to it before looking at any of
+these estimates.
+
+Each row here evaluates some part of the DAG in @fig-dag. The first row is the raw association, the starting point. The
+second isolates one backdoor path, through cohort, to show which way it pushes. The fourth answers a
+different question, the effect that does not run through schooling and religious practice. Only the
+third conditions on the confounders and nothing the treatment might cause, so **only the third is our
+estimate of the total effect.** A reader who wants a different number has to argue for a different
+DAG — the argument happens over the arrows, not over the estimates. The data do have a role, but a different one: once the DAG has chosen the variables, fit can help choose how to model them, which is why birth cohort enters as a quadratic, since modeling a confounder's effect well is part of closing its backdoor path.
+
+So the adjustment set is the confounders plus survey year, and the question is now which estimator uses it.
+
+# Route one: g-computation
+
+The outcome model is a logit of straying on parental divorce and the confounders. G-computation predicts every respondent twice, once as a child of divorce and once not, holding their own cohort, sex, race, upbringing, and survey year fixed, and averages the difference.
+
+```{r gcomp}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# outcome model: straying regressed on treatment + confounders
+out_model <- glm(strayed ~ divorced16 + cohort10 + I(cohort10^2) + sex + race + region16 +
+                   place16 + relig16 + mom_ed + year,
+                 data = strays, family = binomial(link = "logit"))
+
+# predict every respondent at divorced16 = 1 and at divorced16 = 0, own covariates fixed
+p1 <- predict(out_model, mutate(strays, divorced16 = 1), type = "response")
+p0 <- predict(out_model, mutate(strays, divorced16 = 0), type = "response")
+gcomp_ate <- mean(p1 - p0)
+
+# ATT: the same contrasts averaged over children of divorce only
+gcomp_att <- mean((p1 - p0)[strays$divorced16 == 1])
+
+c(ATE = gcomp_ate, ATT = gcomp_att)
+
+# the same ATE computed automatically by marginaleffects, with a delta-method 95% interval
+avg_comparisons(out_model, variables = "divorced16")
+```
+
+The ATE is `r sprintf("%.3f", gcomp_ate)` and the ATT is `r sprintf("%.3f", gcomp_att)`. Growing up with divorced parents raises the probability of ever straying by about `r round(100 * gcomp_ate, 1)` percentage points, against a baseline of about `r round(100 * mean(p0))`% — roughly a `r round(100 * gcomp_ate / mean(p0))`% increase.
+
+The selection-bias term is now computable: the raw difference minus the ATT is `r sprintf("%.3f", raw_diff)` $-$ `r sprintf("%.3f", gcomp_att)` $=$ `r sprintf("%.3f", raw_diff - gcomp_att)`. That is the *net* selection bias, and it is close to zero, because the negative push through cohort and the positive push through the rest of $X$ offset. Had their parents stayed together, children of divorce would have strayed at almost the same rate as everyone else — not because they are like everyone else, but because the ways they differ happen to cancel.
+
+# Route two: the propensity score
+
+Route two cuts the $X \rightarrow D$ arrow instead of modeling the outcome. The computation has the same three steps as in the causal-lens notes.
+
+1. **The treatment model.** A logit of parental divorce on the same confounders. Each respondent's predicted probability is their propensity score, $\hat e(X_i) = \Pr(D_i = 1 \mid X_i)$: how likely someone with their cohort, sex, race, upbringing, and survey year was to have parents who divorced.
+2. **The weights.** Each respondent is weighted by the inverse of the probability of the treatment they actually received: $1/\hat e(X_i)$ for a child of divorce, $1/(1 - \hat e(X_i))$ for someone raised by both parents. A child of divorce from a profile where divorce was rare gets a large weight, because few people like them were treated and each one has to stand in for many. After weighting, both groups look like the whole sample on $X$, which is what random assignment would have produced.
+3. **The weighted comparison.** The IPW estimate of the ATE is the weighted average outcome of the children of divorce minus the weighted average outcome of everyone else:
+
+$$
+\hat\tau_{\text{ATE}}
+= \underbrace{\frac{1}{n}\sum_{i=1}^{n} \frac{D_i \, Y_i}{\hat e(X_i)}}_{\text{everyone as a child of divorce}}
+\; - \; \underbrace{\frac{1}{n}\sum_{i=1}^{n} \frac{(1 - D_i)\, Y_i}{1 - \hat e(X_i)}}_{\text{everyone raised by both parents}}
+$$
+
+The first sum keeps only the children of divorce and reweights them to represent the whole sample, so it estimates $E[Y_i(1)]$, the share who would stray if everyone's parents had divorced. The second does the same for the respondents raised by both parents and estimates $E[Y_i(0)]$.
+
+```{r propensity}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# treatment model: probability that the respondent's parents divorced by 16
+ps_model <- glm(divorced16 ~ cohort10 + I(cohort10^2) + sex + race + region16 + place16 +
+                  relig16 + mom_ed + year,
+                data = strays, family = binomial(link = "logit"))
+
+strays <- strays %>%
+  mutate(pscore = predict(ps_model, type = "response"),                        # e(X_i)
+         ipw = if_else(divorced16 == 1, 1 / pscore, 1 / (1 - pscore)))          # 1/e or 1/(1-e)
+
+# weighted children of divorce minus weighted everyone else
+ipw_ate <- with(strays, mean(divorced16 * strayed * ipw) -
+                        mean((1 - divorced16) * strayed * ipw))
+ipw_ate
+```
+
+IPW gives `r sprintf("%.3f", ipw_ate)`, alongside g-computation's `r sprintf("%.3f", gcomp_ate)`.
+
+## Overlap
+
+```{r}
+#| include: false
+
+alt_overlap <- sprintf("Two density curves of the estimated probability that a respondent's parents divorced. Respondents raised by both parents (solid) pile up at low scores; children of divorce (dashed) sit to the right with a longer tail. Scores range from %.3f to %.3f, and neither group reaches near 1. The largest weight is %.1f.", min(strays$pscore), max(strays$pscore), max(strays$ipw))
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-overlap
+#| fig-cap: "Overlap of estimated propensity scores, children of divorce and respondents raised by both parents."
+#| fig-alt: !expr alt_overlap
+
+strays %>%
+  mutate(group = if_else(divorced16 == 1, "parents divorced", "raised by both parents")) %>%
+  ggplot(aes(pscore, fill = group, color = group, linetype = group)) +
+  geom_density(alpha = 0.4, linewidth = 0.8) +
+  scale_fill_manual(values = bu_two) +
+  scale_color_manual(values = bu_two) +
+  scale_linetype_manual(values = bu_two_lty) +
+  labs(x = "estimated Pr(parents divorced | X)", y = "density",
+       fill = NULL, color = NULL, linetype = NULL) +
+  theme_bu() +
+  theme(legend.position = "top")
+```
+
+The scores run from `r sprintf("%.3f", min(strays$pscore))` to `r sprintf("%.3f", max(strays$pscore))`. No covariate profile makes parental divorce close to certain, so the control-group weights $1/(1 - \hat e)$ stay modest; the largest is `r sprintf("%.1f", max(strays$ipw[strays$divorced16 == 0]))`. The weights to watch are the treated ones at *low* scores. A child of divorce from a profile where divorce was rare stands in for many people, and the largest weight in the sample is `r sprintf("%.1f", max(strays$ipw))`: one respondent counts as more than a hundred. That is the warning sign the causal-lens notes described. Only `r sum(strays$ipw > 20)` respondents have weights above 20, though.
+
+## Do a few large weights drive the estimate?
+
+A standard check is to **cap** the weights — set every weight above its 99th percentile equal to the 99th percentile — and re-estimate. Capping changes only the largest 1% of weights and leaves the rest alone. If the estimate barely moves, it was not resting on those few respondents.
+
+There is one wrinkle. The formula above divides each sum by $n$, which works because the weights in each group add up to about $n$. Capping makes the treated group's weights add up to less, which would pull the estimate toward zero by construction. So the check uses the **weighted-means** version of the same comparison, which divides each group's weighted total by that group's total weight instead of by $n$:
+
+$$
+\hat\tau_{\text{ATE}}
+= \frac{\sum_i D_i\, w_i\, Y_i}{\sum_i D_i\, w_i}
+\; - \; \frac{\sum_i (1 - D_i)\, w_i\, Y_i}{\sum_i (1 - D_i)\, w_i}.
+$$
+
+With the weights as estimated, the two versions give nearly the same answer. The weighted-means version stays valid when the weights are capped.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# weighted-means version of the IPW comparison: each group's weighted average of strayed
+ipw_means <- function(w) with(strays, weighted.mean(strayed[divorced16 == 1], w[divorced16 == 1]) -
+                                      weighted.mean(strayed[divorced16 == 0], w[divorced16 == 0]))
+
+# the 99th percentile of the weights, and the estimate with and without the cap
+w_cap <- quantile(strays$ipw, 0.99)
+ipw_uncapped <- ipw_means(strays$ipw)
+ipw_capped   <- ipw_means(pmin(strays$ipw, w_cap))
+c(uncapped = ipw_uncapped, capped = ipw_capped)
+```
+
+The 99th percentile is `r sprintf("%.1f", w_cap)`, so capping changes the `r sum(strays$ipw > w_cap)` weights above it. Uncapped, the weighted-means estimate is `r sprintf("%.4f", ipw_uncapped)`; capped, `r sprintf("%.4f", ipw_capped)`. The estimate moves by `r sprintf("%.4f", abs(ipw_uncapped - ipw_capped))` when the largest 1% of weights are reined in, and it agrees with g-computation, which does not use weights at all. Positivity is thin in a corner of the covariate space but plausible overall.
+
+## Balance
+
+```{r balance}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# the confounders as columns of the design matrix: a dummy for each category
+Xmat <- model.matrix(~ cohort10 + sex + race + region16 + place16 + relig16 + mom_ed, data = strays)[, -1]
+colnames(Xmat) <- colnames(Xmat) %>%
+  str_replace("^cohort10$", "birth cohort") %>%
+  str_replace("^(sex|race|region16|place16|relig16|mom_ed)", "\\1: ") %>%
+  str_replace("region16", "region at 16") %>%
+  str_replace("place16", "place at 16") %>%
+  str_replace("relig16", "raised") %>%
+  str_replace("mom_ed", "mother's education")
+
+# standardized difference in means, treated minus control, with optional weights;
+# the denominator is the unweighted pooled SD, so before and after share a scale
+std_diff <- function(x, d, w) {
+  sd_pool <- sqrt((var(x[d == 1]) + var(x[d == 0])) / 2)
+  (weighted.mean(x[d == 1], w[d == 1]) - weighted.mean(x[d == 0], w[d == 0])) / sd_pool
+}
+
+balance <- map_dfr(colnames(Xmat), function(v) tibble(
+  covariate          = v,
+  `before weighting` = std_diff(Xmat[, v], strays$divorced16, rep(1, nrow(strays))),
+  `after weighting`  = std_diff(Xmat[, v], strays$divorced16, strays$ipw))) %>%
+  pivot_longer(-covariate, names_to = "sample", values_to = "std_diff") %>%
+  mutate(covariate = fct_reorder(covariate, abs(std_diff), .fun = max),
+         sample = factor(sample, levels = c("before weighting", "after weighting")))
+
+bal_before <- balance %>% filter(sample == "before weighting") %>% arrange(desc(abs(std_diff))) %>%
+  mutate(covariate = as.character(covariate))
+max_after  <- max(abs(balance$std_diff[balance$sample == "after weighting"]))
+```
+
+```{r}
+#| include: false
+
+alt_balance <- sprintf("Dot plot of standardized differences for %d covariate categories. Before weighting (open grey circles) the largest gaps are %s (%.2f), %s (%.2f), and %s (%.2f). After weighting (filled green dots) every difference sits at or near zero, the largest %.3f.", nrow(bal_before), bal_before$covariate[1], bal_before$std_diff[1], bal_before$covariate[2], bal_before$std_diff[2], bal_before$covariate[3], bal_before$std_diff[3], max_after)
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-balance
+#| fig-cap: "Standardized differences between children of divorce and respondents raised by both parents on each confounder, before and after inverse-probability weighting. The shaded band is ±0.1."
+#| fig-alt: !expr alt_balance
+#| fig-width: 7.5
+#| fig-height: 7
+
+ggplot(balance, aes(std_diff, covariate)) +
+  annotate("rect", xmin = -0.1, xmax = 0.1, ymin = -Inf, ymax = Inf,
+           fill = bu_greyfill, alpha = 0.52) +
+  geom_vline(xintercept = 0, color = bu_grey) +
+  geom_point(aes(shape = sample, color = sample), size = 2.6) +
+  scale_color_manual(values = c(bu_grey, bu_green)) +
+  scale_shape_manual(values = c(1, 16)) +
+  labs(x = "standardized difference, parents divorced minus raised by both", y = NULL,
+       color = NULL, shape = NULL) +
+  theme_bu() +
+  theme(legend.position = "top", panel.grid.minor = element_blank())
+```
+
+Before weighting, the largest gap in @fig-balance is `r bal_before$covariate[1]`, at `r sprintf("%.2f", bal_before$std_diff[1])` standard deviations, followed by `r bal_before$covariate[2]` and `r bal_before$covariate[3]`. After weighting, the largest gap is `r sprintf("%.3f", max_after)`. In the weighted sample, the measured confounders no longer predict parental divorce: the $X \rightarrow D$ arrow is cut. Parents' conflict and infidelity are not on the plot, because we do not have them.
+
+# All the estimates together
+
+The doubly-robust estimator combines the two models, as in the causal-lens notes. @fig-estimates shows it with the raw difference and the two routes, each with a 95% interval from 200 bootstrap resamples of respondents.
+
+```{r bootstrap}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# all four estimates from one data set: refit both logits, then compute each
+estimators <- function(dat) {
+  ps <- glm(divorced16 ~ cohort10 + I(cohort10^2) + sex + race + region16 + place16 +
+              relig16 + mom_ed + year,
+            data = dat, family = binomial(link = "logit"))
+  om <- glm(strayed ~ divorced16 + cohort10 + I(cohort10^2) + sex + race + region16 +
+              place16 + relig16 + mom_ed + year,
+            data = dat, family = binomial(link = "logit"))
+  e  <- predict(ps, type = "response")
+  m1 <- predict(om, mutate(dat, divorced16 = 1), type = "response")
+  m0 <- predict(om, mutate(dat, divorced16 = 0), type = "response")
+  D  <- dat$divorced16
+  Y  <- dat$strayed
+  c(`raw difference`            = mean(Y[D == 1]) - mean(Y[D == 0]),
+    `g-computation (route one)` = mean(m1 - m0),
+    `IPW (route two)`           = mean(D * Y / e - (1 - D) * Y / (1 - e)),
+    `doubly robust (AIPW)`      = mean((m1 + D * (Y - m1) / e) - (m0 + (1 - D) * (Y - m0) / (1 - e))))
+}
+
+point <- estimators(strays)
+
+# 200 bootstrap resamples of respondents
+boot_draws <- map_dfr(1:200, ~ estimators(slice_sample(strays, prop = 1, replace = TRUE)))
+
+est_all <- tibble(estimator = names(point),
+                  estimate  = point,
+                  lo = map_dbl(boot_draws, quantile, 0.025),
+                  hi = map_dbl(boot_draws, quantile, 0.975)) %>%
+  mutate(estimator = fct_rev(fct_inorder(estimator)))
+```
+
+```{r}
+#| include: false
+
+alt_estimates <- sprintf("Four point estimates with 95 percent bootstrap intervals. The raw difference is %.3f. G-computation gives %.3f, IPW %.3f, and the doubly-robust estimator %.3f; the three adjusted estimates sit above the raw difference and their intervals overlap almost completely.", point[1], point[2], point[3], point[4])
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-estimates
+#| fig-cap: "The raw difference and three estimates of the ATE of parental divorce on Pr(ever strayed), with 95% bootstrap intervals (200 resamples)."
+#| fig-alt: !expr alt_estimates
+#| fig-width: 8
+#| fig-height: 3.2
+
+ggplot(est_all, aes(estimate, estimator)) +
+  geom_vline(xintercept = 0, color = bu_grey) +
+  geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0.15, color = bu_green) +
+  geom_point(size = 3, color = bu_green) +
+  geom_text(aes(label = sprintf("%.3f", estimate)), vjust = -1.1, size = 3.6, color = bu_black) +
+  labs(x = "effect of parental divorce on Pr(ever strayed)", y = NULL) +
+  theme_bu() +
+  theme(panel.grid.minor = element_blank())
+```
+
+The three adjusted estimates agree to within a few thousandths and sit just above the raw difference. The two models, and the estimator that combines them, tell the same story.
+
+## Which estimator is right?
+
+The raw difference is not a candidate; it is the benchmark that shows what adjustment did. Among the
+other three, the question has a different answer from the one in @fig-ladder. There, the rows
+estimated different things. Here, all three estimate the same thing — the ATE under the same
+adjustment set — and under ignorability all three are consistent if their models are right. What
+differs is which model each one needs to be right: g-computation needs the outcome model, IPW the
+treatment model, and the doubly-robust estimator either one.
+
+So choose by which model you trust, and choose before you see the estimates. If you understand how
+the outcome is produced, report g-computation; if you understand who gets treated, IPW; if you are
+confident in neither, the doubly-robust estimator, which is why it is the usual default. Report the
+others alongside it as a check. The intervals carry information too: g-computation's is
+`r sprintf("%.3f", est_all$hi[est_all$estimator == "g-computation (route one)"] - est_all$lo[est_all$estimator == "g-computation (route one)"])`
+wide, IPW's `r sprintf("%.3f", est_all$hi[est_all$estimator == "IPW (route two)"] - est_all$lo[est_all$estimator == "IPW (route two)"])`,
+because weighting spends precision to avoid modeling the outcome.
+
+When the estimates agree, as here, the choice matters little. When they disagree, the disagreement
+is the finding: at least one model is wrong, and the move is to find out which — large weights point
+to the treatment model and to poor overlap, extrapolation points to the outcome model — not to report
+the estimate you like best. And whichever you choose, none of them is right if ignorability fails.
+Choosing among estimators is a choice about models; it cannot rescue the identifying assumption.
+
+# Selection into marriage
+
+@fig-dag puts a shaded box around "ever married," because the GSS asks the infidelity question only of people who have married. But the GSS does not throw the never-married away. They answered every other question — cohort, sex, race, upbringing, mother's education — and the survey records them as "never married." So we can model who marries. That lets us do two things: measure the $D \rightarrow S$ arrow in @fig-dag, and fit a model that allows whatever unmeasured traits drive marrying to be correlated with whatever unmeasured traits drive straying. This goes beyond the selection-on-observables toolkit, and we will come back to selection models later in the term. The point here is what they can and cannot add to a causal claim.
+
+## Who marries
+
+The marriage equation is a probit of ever having married on parental divorce and the same confounders, fit to everyone in the data, married or not. One change: I use an age polynomial in place of the survey-year dummies. Marriage is also an "ever" outcome — a 22-year-old has had little time to marry — so age is the natural time-at-risk variable here, and with birth cohort in the model, age carries the same information as survey year. It also keeps the parameter count down for the model we build next.
+
+```{r marriage-eq}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# marriage equation: probit of ever married, everyone in the data
+mar_model <- glm(married ~ divorced16 + cohort10 + I(cohort10^2) + age10 + I(age10^2) +
+                   sex + race + region16 + place16 + relig16 + mom_ed,
+                 data = everyone, family = binomial(link = "probit"))
+
+married_raw <- with(everyone, mean(married[divorced16 == 1]) - mean(married[divorced16 == 0]))
+mar_ame <- avg_comparisons(mar_model, variables = "divorced16")
+mar_ame
+```
+
+Among the `r format(nrow(everyone), big.mark = ",")` respondents, `r round(100 * mean(everyone$married[everyone$divorced16 == 1]))`% of children of divorce have ever married, against `r round(100 * mean(everyone$married[everyone$divorced16 == 0]))`% of those raised by both parents — a raw gap of `r round(100 * abs(married_raw))` points. Holding the confounders and age fixed, the average effect of parental divorce on the probability of marrying is `r sprintf("%.3f", mar_ame$estimate)` (95% interval `r sprintf("%.3f", mar_ame$conf.low)` to `r sprintf("%.3f", mar_ame$conf.high)`). Nearly all of the raw gap is age: children of divorce are younger, and younger people have had less time to marry. It is the same "ever" problem we met in @fig-age, now in the selection equation.
+
+That number matters for the causal claim. Selecting the sample on marriage biases the effect of $D$ through the path $D \rightarrow S \leftarrow U \rightarrow Y$, and like the backdoor path, that path needs every one of its arrows. Parental divorce has to affect marrying, something unmeasured has to affect marrying, and that same something has to affect straying. The marriage equation says the first arrow is weak once we hold age fixed. That is already a reason to expect the selection bias to be small, whatever $U$ is.
+
+## A model of both equations
+
+The standard way to model selection with a binary outcome is a **bivariate probit with sample selection** [@vandevenvanpraag1981; see also @mengschmidt1985], the binary-outcome version of Heckman's selection model. Write each outcome as a latent variable crossing zero:
+
+$$
+\begin{aligned}
+S_i^* &= Z_i\gamma + u_i, & S_i &= 1 \text{ if } S_i^* > 0 \\[6pt]
+Y_i^* &= \delta D_i + X_i\beta + \varepsilon_i, & Y_i &= 1 \text{ if } Y_i^* > 0, \text{ observed only if } S_i = 1 \\[6pt]
+\begin{pmatrix} u_i \\ \varepsilon_i \end{pmatrix} &\sim N\!\left( \begin{pmatrix} 0 \\ 0 \end{pmatrix}, \begin{pmatrix} 1 & \rho \\ \rho & 1 \end{pmatrix} \right).
+\end{aligned}
+$$
+
+The first line is the marriage equation, a probit. The second is the straying equation, also a probit, whose outcome we see only for the married. $Z_i$ and $X_i$ both hold the treatment and the confounders. The new piece is $\rho$, the correlation between the two error terms: the unmeasured part of marrying and the unmeasured part of straying.
+
+**$\rho$ is the answer to a substantive question.** If $\rho > 0$, the unmeasured traits that make people marry also make them stray, so the married are *more* prone to stray than the never-married would have been had they married. If $\rho < 0$, the people who select into marriage are *less* prone than the never-married would have been. Notice that this is a counterfactual about the never-married: they cannot stray from a marriage they are not in, so "prone to stray" means how they would behave if they married.
+
+The likelihood has three kinds of respondent. The never-married contribute the probability of not marrying; the married contribute the *joint* probability of marrying and their observed straying outcome, which is a bivariate normal CDF, $\Phi_2$:
+
+$$
+\begin{aligned}
+\Pr(S_i = 0) &= \Phi(-Z_i\gamma) \\[6pt]
+\Pr(S_i = 1, Y_i = 1) &= \Phi_2(Z_i\gamma,\; \delta D_i + X_i\beta,\; \rho) \\[6pt]
+\Pr(S_i = 1, Y_i = 0) &= \Phi_2(Z_i\gamma,\; -(\delta D_i + X_i\beta),\; -\rho)
+\end{aligned}
+$$
+
+and the log-likelihood is the sum of the logs of whichever piece applies to each respondent. Here's the thing to see. If $\rho = 0$, the joint probability factors, $\Phi_2(a, b, 0) = \Phi(a)\Phi(b)$, and the log-likelihood splits into two separate pieces: a probit for marrying, fit to everyone, and a probit for straying, fit to the married. The second piece is what we did in every model above (with a logit rather than a probit). So **the analysis above is the $\rho = 0$ special case** of this model, and estimating $\rho$ asks whether that restriction holds.
+
+One caution before estimating. $Z_i$ and $X_i$ contain the same variables. Nothing affects marrying without also being allowed to affect straying; there is no **exclusion restriction**. Without one, $\rho$ is identified only by the assumption that the errors are bivariate normal — by the functional form, not by anything in the data's design. Keep that in mind when reading the estimate of $\rho$.
+
+## Estimating it
+
+This model is standard, and the `sampleSelection` package fits it [@toomethenningsen2008]. `selection()` takes the
+selection equation first and the outcome equation second, and it fits the binary-outcome version
+when both outcomes are logical (`TRUE`/`FALSE`). The never-married need *some* value for straying,
+but the likelihood never uses it — their contribution is the probability of not marrying — so they
+get `FALSE` as a placeholder.
+
+```{r heckprobit}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# logical outcomes, so selection() fits the binary-outcome model; the never-married get a
+# placeholder FALSE for straying, which the likelihood does not use
+everyone_sel <- everyone %>%
+  mutate(married_l = married == 1,
+         strayed_l = replace_na(strayed, 0L) == 1)
+
+heck <- selection(
+  married_l ~ divorced16 + cohort10 + I(cohort10^2) + age10 + I(age10^2) + sex + race +
+    region16 + place16 + relig16 + mom_ed,
+  strayed_l ~ divorced16 + cohort10 + I(cohort10^2) + age10 + I(age10^2) + sex + race +
+    region16 + place16 + relig16 + mom_ed,
+  data = everyone_sel, method = "ml")
+
+rho_hat <- coef(heck)[["rho"]]
+rho_se  <- summary(heck)$estimate["rho", "Std. Error"]
+rho_ci  <- rho_hat + c(-1.96, 1.96) * rho_se
+
+# rho = 0 benchmark: the straying probit on the married alone, same regressors
+stray_probit <- glm(strayed ~ divorced16 + cohort10 + I(cohort10^2) + age10 + I(age10^2) +
+                      sex + race + region16 + place16 + relig16 + mom_ed,
+                    data = strays, family = binomial(link = "probit"))
+
+c(rho = rho_hat, lo = rho_ci[1], hi = rho_ci[2])
+```
+
+## What the model says
+
+```{r heck-qi}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# the straying index with every respondent set to divorced16 = 1, then 0
+b1 <- predict(heck, part = "outcome", type = "unconditional",
+              newdata = mutate(everyone_sel, divorced16 = 1))
+b0 <- predict(heck, part = "outcome", type = "unconditional",
+              newdata = mutate(everyone_sel, divorced16 = 0))
+
+# effect of parental divorce on the propensity to stray, averaged over the married
+ame_heck   <- mean((pnorm(b1) - pnorm(b0))[everyone_sel$married_l])
+ame_probit <- avg_comparisons(stray_probit, variables = "divorced16")$estimate
+
+c(selection_model = ame_heck, rho_zero_probit = ame_probit)
+```
+
+The estimate of $\rho$ is `r sprintf("%.2f", rho_hat)`, with a 95% interval from `r sprintf("%.2f", rho_ci[1])` to `r sprintf("%.2f", rho_ci[2])`. Read as an answer to the substantive question, the point estimate says the people who select into marriage are slightly *less* prone to stray than the never-married would be had they married. But the interval runs well into both negative and positive values. The data cannot tell us which way selection into marriage runs, and with no exclusion restriction, what precision the interval has comes from the normality assumption.
+
+What they can tell us is that it does not matter much for the effect of parental divorce. The selection model puts the effect at `r sprintf("%.3f", ame_heck)`, against `r sprintf("%.3f", ame_probit)` from the probit on the married alone — the $\rho = 0$ special case with the same regressors.
+
+## How much could selection matter?
+
+Not much, and the reason is the marriage equation rather than the estimate of $\rho$. Selection bias through a collider needs every arrow on the path $D \rightarrow S \leftarrow U \rightarrow Y$. However strongly the unmeasured traits drive both marrying and straying — however large $\rho$ really is — the bias stays small when the treatment barely changes who marries, and once age is held fixed, parental divorce moves the probability of marrying by about `r round(100 * abs(mar_ame$estimate), 1)` points. That argument does not lean on the normality assumption, which is why it is the one to make. The selection model's job here is to confirm it: allowing $\rho$ to be whatever the data and the normal distribution say, the effect moves by `r sprintf("%.3f", abs(ame_heck - ame_probit))`.
+
+## Does modeling selection help with ignorability?
+
+It is tempting to think it does: we modeled the unmeasured part of marrying, so haven't we dealt with some of the unmeasured confounding? Partly, and only one part. Go back to @fig-dag. The unmeasured box $U$ opens two different paths from parental divorce to straying:
+
+- the **backdoor** path $D \leftarrow U \rightarrow Y$, which is confounding of the treatment; and
+- the **collider** path $D \rightarrow S \leftarrow U \rightarrow Y$, which we opened by selecting the sample on marriage.
+
+The selection model deals with the second path only. It models the correlation between the unmeasured causes of $S$ and $Y$, and it corrects for having conditioned on $S$. It does nothing about the first path. Worse, it *assumes the first path away*: the model requires both error terms to be unrelated to $D$ once we condition on the confounders. That is ignorability again, now asserted for two equations instead of one. If parents' infidelity drives both their divorce and their child's straying, it sits inside $\varepsilon_i$ and is correlated with $D_i$, and the selection model is misspecified in exactly the way the logit was.
+
+There is one indirect sense in which $\rho$ is informative. If the traits we worry about — impulsivity, say, or attitudes toward commitment learned at home — shaped both who marries and who strays, they would show up as a nonzero $\rho$. A $\rho$ near zero is weak evidence against an unmeasured factor that moves *both* marrying and straying. It is no evidence at all about a factor that moves parental divorce and straying but not marrying, and the parents' own infidelity may well be one of those. And here $\rho$ rests on the functional form, so even the weak evidence is weak.
+
+So modeling selection makes the causal claim robust to one threat — selection into the sample — without testing the assumption that carries it. For the other threat, the analogous move is a sensitivity analysis: instead of claiming ignorability holds, ask how strong an unmeasured confounder would have to be to erase the effect. Sensitivity analyses of that kind exist for unmeasured confounding [@vanderweeleding2017], and design-based methods get around the problem by finding variation in the treatment that $U$ cannot explain.
+
+# What the estimators cannot fix
+
+Agreement among the three estimators is evidence that the two models are reasonable. It is not evidence for ignorability, because all three share that assumption. Four problems remain, and each one is visible in @fig-dag or in how the data were collected. The selection model dealt with one of them, as far as it can be dealt with here.
+
+1. **Unmeasured confounding.** Parents' conflict and infidelity, and traits children share with their parents, sit on an open backdoor path. If parents who strayed are more likely to divorce and their children are more likely to stray whether or not the marriage ends, then part of our estimate is the effect of the parents' infidelity, not of their divorce. This is the path a design-based study would need to close — for example, by comparing siblings who were different ages when their parents divorced.
+2. **Selection into marriage.** The question is asked only of people who have married. The selection model above suggests this does little damage here, because parental divorce barely changes who marries once age is held fixed. That argument holds whatever $\rho$ is; the selection model's own estimate of $\rho$ leans on the bivariate-normal assumption.
+3. **A self-reported outcome.** Infidelity is hard to admit to a survey, and it is likely under-reported. If children of divorce are more (or less) willing to admit an affair, part of the estimate is an effect on *reporting* rather than on behavior. Models that separate the two exist: a split-population logit estimates one equation for whether a respondent strayed and a second for whether a respondent who strayed says so.
+4. **"Ever" is a crude outcome.** We adjusted for cohort and year because an "ever" outcome accumulates over time at risk. The more natural way to handle time at risk is to model it directly: count models with an exposure term for *how many* times something happened over a known period, and duration models for *how long* until it happens. We will return to these data in both weeks.
+
+# Take-away points
+
+1. The steps did not change: define the estimand, draw the DAG, choose the adjustment set, estimate with the outcome model, the treatment model, or both, and check overlap and balance.
+2. What changed is the substance, and the substance decides everything that matters. Here a confounder (birth cohort) raised the treatment and lowered the outcome, so adjusting for cohort alone moved the estimate **up**, from `r sprintf("%.3f", raw_diff)` to `r sprintf("%.3f", ladder$estimate[2])`. The rest of the confounders pushed the other way, and the adjusted estimate, `r sprintf("%.3f", gcomp_ate)`, ended up near the raw difference. Offsetting biases can make a confounded comparison look clean.
+3. Variables that look like background controls can be post-treatment: family income at 16, and whether the respondent knows their father's education. Variables that look like obvious controls can be descendants of the outcome: own divorce.
+4. The sample is selected on marriage — the same collider structure as turnout in the CES. Because the never-married are in the data, we could model selection. Parental divorce barely affects marrying once age is held fixed, $\rho$ is indistinguishable from zero, and allowing for selection moves the effect from `r sprintf("%.3f", ame_probit)` to `r sprintf("%.3f", ame_heck)`.
+5. Modeling selection guards against one threat, selection into the sample. It does not test ignorability; it assumes it, for two equations instead of one.
+6. Three estimators agreeing is a check on the models, not on the assumption. The unmeasured backdoor through the parents' own marriage is still open. It is fair to report the effect in causal terms, provided the assumptions are reported with it: the estimate is causal *if* the measured confounders close every backdoor, and it is robust to the choice of estimator and to selection into marriage.
+
+# References {.unnumbered}

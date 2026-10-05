@@ -194,6 +194,20 @@ $$
 
 The first term is the ATT, the effect on the people who went to college. The second term is **selection bias**: how differently graduates and non-graduates would have voted *if neither had gone to college*. If graduates would have been more Democratic anyway — because they are younger and less religious, say — the selection-bias term is positive and the raw difference overstates the effect of college on voting Democratic. 
 
+It helps to see what each piece compares. Remember that the number in parentheses is the treatment state, and the conditioning bar says whose outcomes we average over.
+
+| | which people | which treatment state |
+|---|---|---|
+| raw difference, $E[Y_i \mid D_i = 1] - E[Y_i \mid D_i = 0]$ | different: graduates vs non-graduates | different: with vs without a degree |
+| ATT, $E[Y_i(1) - Y_i(0) \mid D_i = 1]$ | **the same**: graduates only | different: with vs without a degree |
+| selection bias, $E[Y_i(0) \mid D_i = 1] - E[Y_i(0) \mid D_i = 0]$ | different: graduates vs non-graduates | **the same**: both without a degree |
+
+: What each term in the decomposition compares. {#tbl-decomp}
+
+@tbl-decomp shows why the raw difference cannot be read as the effect. It changes the people and the treatment state at once, so it cannot tell us which change produced the gap. The ATT holds the people fixed and changes the treatment state; that is the effect. Selection bias holds the treatment state fixed and changes the people; that is how differently the two groups would have voted with no degree at all. The term we added and subtracted, $E[Y_i(0) \mid D_i = 1]$, is what connects the two: the graduates, in the treatment state they are not in.
+
+One more point about the ATT, because it is easy to misread. It averages over the treated only, so the untreated do not appear in its *definition*. But they are essential to *estimating* it. The graduates' missing $Y_i(0)$ has to come from somewhere, and the only people we ever see without a degree are the non-graduates. Under an assumption we make precise below (ignorability), graduates' outcome without a degree looks like that of non-graduates with the same covariates, and that is what the estimators later this week use.
+
 The raw difference equals the ATT only when the selection-bias term is zero, which is what random assignment guarantees and observational data do not. Everything that follows is a way of getting rid of that second term, selection bias. We'll generate an estimate of the ATT and then attempt to measure the selection bias. 
 
 ::: {.callout-tip title="You already know most of this under other names"}

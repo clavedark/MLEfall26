@@ -70,6 +70,8 @@ readings/*
 !interactions26.qmd
 # released deck: a causal lens on the binomial
 !causallens26.qmd
+# released deck: a second causal example, parental divorce and infidelity (GSS)
+!causalinfidelity26.qmd
 # released: codebook for the CES data used in exercise #1
 !cescodebook26.qmd
 # released IN-CLASS TEMPLATE, and the only exercise-family file published as
@@ -111,6 +113,7 @@ docs/*
 !docs/interactions26.html
 # released deck: a causal lens on the binomial
 !docs/causallens26.html
+!docs/causalinfidelity26.html
 # released: codebook for the CES data used in exercise #1
 !docs/cescodebook26.html
 # released EXERCISE: only the rendered page. `ex12026.qmd` stays ignored above --
@@ -177,6 +180,7 @@ zorntweet.png
 # Deck companion scripts, kept local for now. predictionOLS26.R and
 # binarymodels26.R are the published ones.
 binaryextensions126.R
+causalinfidelity26.R
 causallens26.R
 discretehazards26.R
 likelihood26.R
