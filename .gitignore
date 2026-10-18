@@ -31,6 +31,17 @@ data/*
 # Archigos 4.1 for exercise #4. Archigos is openly distributed by its authors;
 # this is a derived reshape of it, credited on the Data page.
 !data/leaderyears.csv
+# Published (2026-10-18), linked from the Data page. Hendrix & Salehyan (2012)
+# replication data, publicly posted on JPR's replication page; used in countA26.
+!data/H_S_JPR_491.dta
+# Published (2026-10-18), linked from the Data page. DC traffic camera files built by
+# make-dccameras.R from Open Data DC (CC BY 4.0) and the ACS (public domain); used
+# in dccameras26. The raw-pull cache, data/dccameras-raw/, stays local.
+!data/dccameras.csv
+!data/dctracts.csv
+!data/dctracts.gpkg
+!data/dcwater.gpkg
+!data/dccameras-monthly.csv
 
 # Reading PDFs — copyrighted, kept local. Citations are in refs606.bib.
 readings/*
@@ -72,6 +83,13 @@ readings/*
 !causallens26.qmd
 # released deck: a second causal example, parental divorce and infidelity (GSS)
 !causalinfidelity26.qmd
+# released deck: count models I (Poisson, offsets, overdispersion, NB, counts and hazards)
+!countA26.qmd
+# comic used in the count deck
+!skewyou.jpeg
+# released extended example: DC traffic cameras (placement, yield, hurdle). Its
+# data are built by make-dccameras.R, which stays local.
+!dccameras26.qmd
 # released: codebook for the CES data used in exercise #1
 !cescodebook26.qmd
 # released IN-CLASS TEMPLATE, and the only exercise-family file published as
@@ -114,6 +132,10 @@ docs/*
 # released deck: a causal lens on the binomial
 !docs/causallens26.html
 !docs/causalinfidelity26.html
+# released deck: count models I
+!docs/countA26.html
+# released extended example: DC traffic cameras
+!docs/dccameras26.html
 # released: codebook for the CES data used in exercise #1
 !docs/cescodebook26.html
 # released EXERCISE: only the rendered page. `ex12026.qmd` stays ignored above --
@@ -165,6 +187,11 @@ docs/site_libs/htmlwidgets*/
 docs/site_libs/jquery*/
 docs/site_libs/plotly-*/
 docs/site_libs/typedarray*/
+# ...and the leaflet stack pulled in by the interactive map in dccameras26.
+docs/site_libs/leaflet*/
+docs/site_libs/rstudio_leaflet/
+docs/site_libs/proj4/
+docs/site_libs/Proj4Leaflet/
 !docs/.nojekyll
 
 # Side projects — not part of the course site.
@@ -183,6 +210,7 @@ binaryextensions126.R
 causalinfidelity26.R
 causallens26.R
 discretehazards26.R
+countA26.R
 likelihood26.R
 prediction26.R
 

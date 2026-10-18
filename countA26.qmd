@@ -1,0 +1,1742 @@
+---
+title: "Count Models I"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: true
+filters:
+  - parse-latex
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+#| cache.extra: !expr tools::md5sum("_common.R")
+options(htmltools.dir.version = FALSE)
+
+# cache.extra above: knitr keys the cache on the chunk's own code, not on files
+# it sources, so a palette edit in _common.R would otherwise leave cached figures
+# drawing the old colors.
+
+# R starts in the C locale here, which cannot encode non-ASCII characters. Any
+# Greek letter, minus sign, or +/- typed into a ggplot title, subtitle, axis
+# label, or annotation gets drawn as the literal text <U+03B1>. Setting a UTF-8
+# ctype fixes it for the whole document.
+Sys.setlocale("LC_CTYPE", "en_US.UTF-8")
+
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+library(haven)
+library(patchwork)
+library(modelsummary)
+library(kableExtra)
+library(marginaleffects)
+library(MASS)       # glm.nb
+library(sf)               # spatial data frames, for the maps
+library(rnaturalearth)    # country shapes
+library(countrycode)      # COW codes to ISO codes
+
+source("_common.R")   # Binghamton palette + theme_bu()
+
+# MASS masks dplyr::select
+select <- dplyr::select
+
+set.seed(20261007)
+
+# Running data: Hendrix and Salehyan (2012), violent social conflict
+# events per African country-year, 1990-2008. Rows are kept only if every
+# variable in the full model is present, so all models on these data use the
+# same sample.
+hs_vars <- c("violent_events_no_onset", "violent_events_no_onset_l",
+             "GPCP_precip_mm_deviation_sd", "GPCP_precip_mm_deviation_sd_sq",
+             "GPCP_precip_mm_deviation_sd_l", "GPCP_precip_mm_deviation_sd_l_sq",
+             "polity2", "polity2_sq", "log_pop_pwt", "log_pop_pwt_fd",
+             "log_rgdpch_pwt", "grgdpch_pwt", "incidence", "ttrend")
+
+hs <- read_dta(here::here("data", "H_S_JPR_491.dta")) %>%
+  zap_labels() %>%
+  drop_na(all_of(hs_vars)) %>%
+  rename(events = violent_events_no_onset,
+         events_l = violent_events_no_onset_l,
+         rain = GPCP_precip_mm_deviation_sd,
+         rain_sq = GPCP_precip_mm_deviation_sd_sq,
+         rain_l = GPCP_precip_mm_deviation_sd_l,
+         rain_l_sq = GPCP_precip_mm_deviation_sd_l_sq,
+         lnpop = log_pop_pwt,
+         popgrowth = log_pop_pwt_fd,
+         lngdppc = log_rgdpch_pwt,
+         gdpgrowth = grgdpch_pwt)
+
+# Second: the Week 5 leader-years (Archigos joined to Polity V), used only in
+# the counts-and-hazards section.
+leaders <- read_csv(here::here("data", "leaderyears.csv"), show_col_types = FALSE) %>%
+  mutate(leftoffice = if_else(exitreason == "Still in Office", 0L, leftoffice),
+         yrborn = na_if(yrborn, -999),
+         age    = year - yrborn) %>%
+  arrange(obsid, year) %>%
+  group_by(obsid) %>%
+  mutate(t = row_number()) %>%          # survival time, within the spell
+  ungroup()
+
+polity <- read_csv(here::here("data", "p5v2018.csv"), show_col_types = FALSE) %>%
+  select(ccode, year, polity2)
+
+lt <- leaders %>%
+  left_join(polity, by = c("ccode", "year"), relationship = "many-to-one") %>%
+  filter(!is.na(polity2), !is.na(age)) %>%
+  mutate(democracy = as.integer(polity2 >= 6))
+
+# Third: the Week 5 dispute dyad-years (Oneal and Russett), with survival
+# time -- years since the dyad's last dispute -- built as in Week 5.
+survivaldp <- read_dta(here::here("data", "dp.dta")) %>%
+  zap_labels() %>%
+  mutate(lncaprat = log(caprat)) %>%
+  arrange(dyad, year) %>%
+  group_by(dyad) %>%
+  # a new spell starts the year after a dispute; the first year of a dyad is
+  # treated as though it followed one, since we cannot see before the window
+  mutate(prior = lag(dispute, default = 1),
+         spell = cumsum(prior == 1)) %>%
+  group_by(dyad, spell) %>%
+  mutate(stime = row_number() - 1) %>%
+  ungroup() %>%
+  select(-prior, -spell) %>%
+  mutate(stime2 = stime^2, stime3 = stime^3)
+```
+
+<style>
+table, th, td { font-size: 18px; }
+tr:nth-child(odd) { background-color: #f2f2f2; }
+</style>
+
+# Goals
+
+Up to now, $y$ has been a zero or a one. This week $y$ is a **count** — the number of times something happened: deaths from horse kicks in an army corps in a year, violent protests in a country-year, leaders removed in a decade. We'll examine:
+
+- What makes a variable a count, and what makes it *not* one.
+- Where the Poisson distribution comes from, and what it assumes.
+- How to build, estimate, and interpret the **Poisson regression**, and what quantities it gives us.
+- **Exposure** — counts accumulate over time or space or population, and the **offset** is how we account for it.
+- **Equidispersion** — the Poisson's most restrictive assumption, how to check it, and what it costs to ignore it.
+- The **negative binomial**, which relaxes equidispersion.
+- How counts and hazards are related — the same events can be counted or timed, and the Poisson with an offset reproduces the discrete-time hazards from Week 5.
+
+## The process
+
+The process is the same one we used for binary $y$ variables; this is the approach for *any* limited $y$ variable:
+
+::: {.callout-note title="Building a maximum likelihood model"}
+1.  **Observe** $y$; consider its distribution; write down its PDF (or PMF). For a count, the Poisson.
+2.  **Write the joint probability of the data** under that distribution.
+3.  **Rewrite the joint probability as a likelihood.**
+4.  **Simplify** — take logs.
+5.  **Parameterize** — make the distribution's parameter, the rate $\lambda$, a function of covariates, $x\beta$.
+6.  **Choose a link function** that connects $x\beta$ to $\lambda$ and respects its bounds — here, $\lambda = e^{x\beta}$.
+:::
+
+We actually did steps 1 through 6 for the Poisson already, in [the likelihood notes](likelihood26.html#sec-general) — the Poisson was one of the three examples showing the machine is general. This week we slow down and build it properly, then spend most of our time on interpretation and on what happens when the Poisson's assumptions fail.
+
+The running example is @hendrix2012climate, who count violent social conflict events per African country-year. I'll use these data throughout, building and interpreting the Poisson, thinking about exposure, and then the problem — they badly violate the Poisson's equidispersion assumption, which motivates the negative binomial model. For contrast, von Bortkiewicz's famous horse-kick data show what counts look like when the Poisson fits.
+
+# Count variables
+
+Counts of events are common in the social sciences, though one of the originators of count models, Lambert, was interested in an engineering question with respect to the number of mistakes a silicon chip press makes.
+
+@cameron2013regression list examples of event count variables:
+
+- patents issued
+- bank failures
+- accident insurance claims
+- credit ratings
+- Presidential appointments to the Supreme Court
+
+Event count data have the following characteristics:
+
+- they are nonnegative - since we cannot have negative events, all values are greater than or equal to zero
+- they are discrete
+
+You should note that these two points also characterize the binary variables we've considered.
+
+## Counts are aggregated binary events
+
+Suppose $y$ is whether or not a voter turned out to vote in the 2016 general election in the US. For each voter, $i$, we observe $0|1$. The implied unit of analysis is the voter.
+
+Note that we could aggregate voters into groups by census tract, county, congressional district, state, etc. Our binary, perhaps binomial variable is now a discrete count of voters per unit (county, etc.).
+
+We are now observing aggregated Bernoulli events per some unit, sometimes time, sometimes space, sometimes other - examples include:
+
+- number of cheaters caught per calculus exam.
+- number of unique visitors to a web page per hour.
+- number of Snickers bars produced without nuts per 8-hour shift.
+- number of violent social protests per country, per year.
+- number of flu cases per family.
+- number of failed coup attempts per year.
+
+Refer to the *per unit* as the **exposure**, $d$.
+
+## Exposure
+
+Like the binary variables, these aggregations are discrete and strictly non-negative. The exposure, $d$, produces a rate at which these discrete events happen. Such a variable might look like this:
+
+| Failures |  Hours   |
+|:--------:|:--------:|
+|    0     |    8     |
+|    0     |    8     |
+|    2     |    8     |
+|    1     |    8     |
+|    0     |    8     |
+|    0     |    8     |
+| $\vdots$ | $\vdots$ |
+|    1     |    8     |
+
+: Snickers bar failures per 8-hour shift
+
+Of course, $d$ is constant here, so it will factor out. When $d$ is *not* constant — some shifts are 8 hours, some 12 — we have to account for it. More on this below; it's what the offset is for.
+
+## Things that are not counts
+
+Generally, if $d$ is known and finite, the event variable in question should not be modeled as a count variable. If we know the number of voters, and the number of registered voters, we know the binomial "successes" and the number of trials. Model as a proportion, or as a logit where the unit of analysis is the registered voter, and the $y$ variable indicates vote or not.
+
+## Things that might be counts
+
+If $d$ is unknown or infinite or infinitely divisible (like time, which is a very common $d$), events per $d$ may well be counts. Such a $d$ cannot be the denominator (trials) to produce a proportion, and cannot readily become the unit of analysis. How many "trials" are there in a quarter of a year, during which a president might use force? There's no answer to that question — and that is exactly the setting the Poisson is built for.
+
+Bottom line: not everything is a count or should be modeled using a count regression.
+
+# Toward the Poisson
+
+Where does the Poisson come from? I'm going to derive it for three specific reasons. First, the derivation will explicitly show the model's assumptions — every way the Poisson fails later in these notes (overdispersion, contagion, excess zeros) is one of the assumptions below failing, so this is the map of what can go wrong. Second, it shows that a count is a sum of binary events: the Poisson is what the binomial becomes when there are many opportunities and each is unlikely. That's the bridge between the binary models we've used all semester and count models, and it's why counts and discrete-time hazards turn out to be the same thing at the end of these notes. Third, it's where exposure comes from: the expected count falls out of the derivation as a rate times a length of time, which is what the offset or exposure variable is for.
+
+Suppose events occur at some rate, $\lambda$, per unit of exposure, and we observe a period of length $d$. Now chop that period into $n$ tiny slices, each of length $d/n$. Assume three things:
+
+1.  In each slice, the probability of an event is proportional to the length of the slice: $\lambda d/n$.
+2.  The slices are small enough that two events can't happen in the same slice.
+3.  Whether an event happens in one slice is independent of whether one happens in any other slice.
+
+Under those assumptions, each slice is a Bernoulli trial, and the number of events in the period is the number of successes in $n$ independent trials — so it's binomial, with $n$ trials and success probability $p = \lambda d / n$. To keep the notation light, set $d = 1$ for now, so $p = \lambda/n$. The probability of $j$ events is
+
+$$
+Pr(y = j) = \binom{n}{j}\left(\frac{\lambda}{n}\right)^{j}\left(1-\frac{\lambda}{n}\right)^{n-j}
+$$
+
+The trouble is that the number of slices is arbitrary. Time is infinitely divisible, so let's let the slices get infinitely small, $n \rightarrow \infty$, and see what happens. Write out the binomial coefficient and regroup the pieces:
+
+$$
+\begin{aligned}
+Pr(y = j) &= \frac{n!}{j!\,(n-j)!}\,\frac{\lambda^j}{n^j}\left(1-\frac{\lambda}{n}\right)^{n}\left(1-\frac{\lambda}{n}\right)^{-j} \\[6pt]
+&= \underbrace{\frac{n!}{(n-j)!\,n^j}}_{\text{(a)}} \cdot \frac{\lambda^j}{j!} \cdot \underbrace{\left(1-\frac{\lambda}{n}\right)^{n}}_{\text{(b)}} \cdot \underbrace{\left(1-\frac{\lambda}{n}\right)^{-j}}_{\text{(c)}}
+\end{aligned}
+$$
+
+Now take each marked piece as $n$ grows:
+
+- **(a)** is $\frac{n(n-1)\cdots(n-j+1)}{n \cdot n \cdots n}$ — $j$ terms on top, $j$ terms on the bottom, and each ratio goes to one. So (a) $\rightarrow 1$.
+- **(b)** is the definition of the exponential function: $\left(1-\frac{\lambda}{n}\right)^{n} \rightarrow e^{-\lambda}$.
+- **(c)** has a fixed exponent, $-j$, and the thing inside goes to one. So (c) $\rightarrow 1$.
+
+What's left is
+
+$$
+Pr(y = j) = \frac{e^{-\lambda}\lambda^{j}}{j!}
+$$
+
+That's the Poisson. It's **the binomial in the limit** as the number of trials goes to infinity and the probability of an event in any one trial goes to zero, holding the expected number of events, $np = \lambda$, fixed. That's why von Bortkiewicz called it the *law of small numbers* [@bortkiewicz1898; see @quine1987 for a history]: lots of opportunities, each very unlikely.
+
+Let's see the limit happen, with $\lambda = 2$ events per period. @fig-binomlimit looks at it two ways. The left panel follows one probability, the chance of *no* events, as we cut the period into more and more slices. Under the binomial that probability is $(1 - 2/n)^n$ — piece (b) of the derivation — and it should climb toward the Poisson's $e^{-2}$. The right panel looks at the whole distribution: for each count $j$, the binomial probability minus the Poisson probability, for 3, 10, and 50 slices. If the binomial has become the Poisson, the differences are zero.
+
+```{r binomlimit}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-binomlimit
+#| fig-height: 3.6
+#| fig-cap: "The binomial with n slices and p = 2/n converging to the Poisson with rate 2. Left: the probability of no events, (1 - 2/n)^n, against the number of slices (log scale); dashed line, the Poisson's e^-2. Right: binomial minus Poisson probability at each count, for 3, 10, and 50 slices."
+#| fig-alt: !expr 'sprintf("Two panels. Left: the probability of zero events plotted against the number of slices, from 2 to 200 on a log scale. It is zero with 2 slices, %.3f with 3, and rises to %.3f with 10 and %.3f with 50, and levels off just under a dashed line at the Poisson value, %.3f. Right: the binomial probability minus the Poisson probability for counts 0 through 7, one line each for 3, 10, and 50 slices. With 3 slices the binomial has too little probability at zero (by %.2f) and at one, too much at two and three (by up to %.2f), and nothing at four or more; with 10 slices the differences are all within %.2f; with 50 they are within %.3f, flat along zero.", (1 - 2/3)^3, (1 - 2/10)^10, (1 - 2/50)^50, exp(-2), dpois(0, 2) - dbinom(0, 3, 2/3), max(dbinom(2:3, 3, 2/3) - dpois(2:3, 2)), max(abs(dbinom(0:7, 10, .2) - dpois(0:7, 2))), max(abs(dbinom(0:7, 50, .04) - dpois(0:7, 2))))'
+
+lam <- 2
+
+# left: Pr(no events) under the binomial, (1 - lambda/n)^n, as the slices multiply
+zero <- tibble(n = 2:200) %>%
+  mutate(p0 = (1 - lam / n)^n)
+
+p_zero <- ggplot(zero, aes(x = n, y = p0)) +
+  geom_hline(yintercept = exp(-lam), color = bu_grey, linetype = "dashed") +
+  geom_line(color = bu_green, linewidth = 1) +
+  annotate("text", x = 12, y = exp(-lam) + .008, label = "Poisson:~e^{-2}", parse = TRUE,
+           size = 3.4, color = bu_black) +
+  scale_x_log10(breaks = c(2, 5, 10, 20, 50, 100, 200)) +
+  labs(x = "Number of slices, n (log scale)", y = "Pr(no events)") +
+  theme_bu()
+
+# right: binomial minus Poisson probability at each count, for three slicings
+gap <- expand_grid(n = c(3, 10, 50), j = 0:7) %>%
+  mutate(diff = dbinom(j, size = n, prob = lam / n) - dpois(j, lam),
+         n = factor(paste(n, "slices"), levels = paste(c(3, 10, 50), "slices")))
+
+p_gap <- ggplot(gap, aes(x = j, y = diff, color = n, linetype = n, shape = n)) +
+  geom_hline(yintercept = 0, color = bu_grey) +
+  geom_line(linewidth = .8) +
+  geom_point(size = 2) +
+  scale_color_bu() +
+  scale_linetype_bu() +
+  scale_x_continuous(breaks = 0:7) +
+  labs(x = "Events, j", y = "Binomial minus Poisson", color = NULL, linetype = NULL, shape = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+
+p_zero + p_gap
+```
+
+Start on the left. With three slices, the chance of a period with no events is only `r sprintf("%.3f", (1 - 2/3)^3)`; with ten it's `r sprintf("%.3f", (1 - 2/10)^10)`; with fifty, `r sprintf("%.3f", (1 - 2/50)^50)`, almost exactly the Poisson's $e^{-2}$ = `r sprintf("%.3f", exp(-2))`. That curve *is* piece (b) of the derivation, $(1 - \lambda/n)^n \rightarrow e^{-\lambda}$, drawn out.
+
+Now the right. With three slices the binomial is badly off, and in a particular way: it has too little probability at zero and one, too much at two and three, and *none at all* at four or more — three slices can hold at most three events. That's assumption 2 doing damage. When the slices are coarse, "at most one event per slice" is a real restriction: it rules out a busy period, so the binomial squeezes probability into the middle. As the slices get finer, that restriction stops binding. With ten slices every difference is within `r sprintf("%.2f", max(abs(dbinom(0:7, 10, .2) - dpois(0:7, 2))))`, and with fifty, within `r sprintf("%.3f", max(abs(dbinom(0:7, 50, .04) - dpois(0:7, 2))))` — the line sits on zero. The Poisson is what's left when the slices are so fine that two events essentially never fall in the same one.
+
+The derivation tells us what we're assuming when we use the Poisson. Every assumption of the model is one of those three slicing assumptions:
+
+- **the rate is constant** across the period (assumption 1 — every slice has the same probability);
+- **events don't arrive simultaneously** (assumption 2);
+- **events are independent** of one another (assumption 3).
+
+In a short while, we'll see what happens when these assumptions fail. Today, we'll pay particular attention to the independence assumption.   
+
+## Exposure, again
+
+If the period has length $d$ rather than one, the expected number of events is $\lambda d$ — a rate times an exposure — and the same limit gives
+
+$$
+Pr(y_i=j) = \frac{e^{-\lambda d}\, (\lambda d)^{j}}{j!}
+$$
+
+If $d$ is constant, normalize it to one and it drops out:
+
+$$
+Pr(y_i=j) = \frac{e^{-\lambda}\,  \lambda^{j}}{j!}
+$$
+
+and we can interpret $\lambda$ as $E[Y]$, the expected number of events per period.
+
+## The Poisson PMF
+
+The Poisson is a probability mass function, since $y$ is discrete; the CDF is the sum of the PMF up to the value of interest. The Poisson has a single parameter, $\lambda$, and that parameter is *both* the mean and the variance:
+
+$$
+E[Y] = var[Y] = \lambda
+$$
+
+This is not a coincidence or a convenient approximation — it's a property of the distribution. One parameter has to describe both the location and the spread, so they're tied together. This is called **equidispersion**, and it'll occupy a good part of these notes.
+
+```{r poissonshapes}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-poissonshapes
+#| fig-height: 3.4
+#| fig-cap: "Poisson distributions at four rates."
+#| fig-alt: "Four panels of Poisson probabilities for rates 0.5, 1, 3, and 8, counts 0 to 16. At rate 0.5 most mass is at zero and the distribution is sharply right-skewed; at rate 1, zero and one are equally likely; at rate 3 the peak moves to 2 and 3; at rate 8 the distribution is nearly symmetric around 7 and 8, and visibly wider."
+
+shapes <- expand_grid(lambda = c(.5, 1, 3, 8), j = 0:16) %>%
+  mutate(p = dpois(j, lambda),
+         lambda = factor(paste("lambda ==", lambda),
+                         levels = paste("lambda ==", c(.5, 1, 3, 8))))
+
+ggplot(shapes, aes(x = j, y = p)) +
+  geom_col(fill = bu_green, width = .7) +
+  facet_wrap(~ lambda, nrow = 1, labeller = label_parsed) +
+  labs(x = "Events, j", y = "Pr(y = j)") +
+  theme_bu()
+```
+
+Notice two things in @fig-poissonshapes. When $\lambda$ is small, the distribution is piled up against zero and skewed right; that's the typical event count in political science. As $\lambda$ grows, it becomes more symmetric. And as $\lambda$ grows it also gets *wider* — the variance is going up with the mean, because it *is* the mean.
+
+![](skewyou.jpeg){fig-alt="Four-panel comic. Two right-skewed and left-skewed distribution curves, drawn with faces, say \"Skew you\" to each other. A symmetric bell curve between them says \"C'mon guys! Can't we behave normally?\" In the last panel the two skewed curves glare."}
+
+## The Poisson distribution and the mule kicks
+
+The distribution is credited to Siméon Denis Poisson in his study of jury decisions (wrongful convictions, in part), but was first put to use by Ladislaus von Bortkiewicz in a study showing the number of Prussian soldiers kicked to death by horses followed a Poisson distribution [@bortkiewicz1898]. His data cover 14 army corps from 1875 to 1894; the classic version, the one @fisher1925 used, drops four corps that were organized differently, leaving 10 corps over 20 years, so 200 corps-years.
+
+```{r vonbort}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-vonbort
+#| tbl-cap: "Deaths from horse kicks, Prussian army corps-years, 10 corps, 1875-1894 [@bortkiewicz1898; @fisher1925]."
+
+# von Bortkiewicz's frequencies for 10 corps x 20 years, typed in
+vb <- tibble(deaths = 0:4, corps_years = c(109, 65, 22, 3, 1))
+
+vb_mean <- with(vb, sum(deaths * corps_years) / sum(corps_years))
+vb_var  <- with(vb, sum(corps_years * (deaths - vb_mean)^2) / (sum(corps_years) - 1))
+
+vb %>%
+  mutate(poisson_expected = sum(corps_years) * dpois(deaths, vb_mean)) %>%
+  kbl(digits = 1, col.names = c("Deaths", "Observed corps-years", "Poisson expected")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The mean is `r round(vb_mean, 3)` deaths per corps-year and the variance is `r round(vb_var, 3)` — about as equidispersed as real data ever get. A Poisson with $\lambda$ = `r round(vb_mean, 2)` predicts the observed frequencies almost exactly. Think about why the assumptions hold here: lots of soldiers near lots of horses (many opportunities), each kick very unlikely to be fatal (small probability), and one soldier's death has nothing to do with another's (independence). Political events are rarely this obliging.
+
+# The Poisson regression
+
+## The likelihood
+
+Let's walk through the process we learned at the start of the semester.
+
+**The PMF.** For each observation,
+
+$$
+f(y_i \mid \lambda_i) = \frac{e^{-\lambda_i}\lambda_i^{\,y_i}}{y_i!}
+$$
+
+**The joint probability.** Assuming the observations are independent, the joint probability of the data is the product of the individual probabilities — and rewritten as a function of the parameter given the data, that's the likelihood:
+
+$$
+L(\lambda \mid y) = \prod_{i=1}^{n} \frac{e^{-\lambda_i}\lambda_i^{\,y_i}}{y_i!}
+$$
+
+**Take logs.** The log of a product is the sum of the logs; the log of $e^{-\lambda_i}$ is $-\lambda_i$, the log of $\lambda_i^{y_i}$ is $y_i \ln\lambda_i$, and the factorial comes out as a subtraction:
+
+$$
+\ln L(\lambda \mid y) = \sum_{i=1}^{n}\big[\, -\lambda_i + y_i\ln\lambda_i - \ln(y_i!)\,\big]
+$$
+
+## Parameterizing $\lambda$
+
+So far, $\lambda$ is just a parameter of a distribution. The regression idea is to **parameterize** it — to make the distribution's parameter a function of covariates, so that each observation gets its own expected count, $\lambda_i$, depending on its $x$ values. This is the same move we made with $\pi_i$ in the binary model, and it's the step that turns a distribution into a regression.
+
+We need a link function. $\lambda$ is a rate, so it must be positive; $x_i\beta$ can be any real number. The exponential maps the whole real line onto the positive half of it, so it's the natural link:
+
+$$
+\lambda_i = E[y_i \mid x_i] = e^{x_i \beta}
+$$
+
+The exponential link is the reason the Poisson model is also known as the exponential Poisson regression. Equivalently, $\ln \lambda_i = x_i\beta$ — this is why you'll see it called a *log-linear* model: the *log* of the expected count is linear in $x$.
+
+## The log-likelihood in terms of $\beta$
+
+Substitute $\lambda_i = e^{x_i\beta}$. In the middle term, $\ln\lambda_i = \ln e^{x_i\beta} = x_i\beta$, so
+
+$$
+\ln L(\beta \mid y, X) = \sum_{i=1}^{n}\big[\, y_i\, x_i\beta - e^{x_i\beta} - \ln(y_i!)\,\big]
+$$
+
+Read it aloud: each observation contributes its count times its linear prediction, minus its expected count, minus a term that only involves the data. That last term, $\ln(y_i!)$, has no $\beta$ in it — it shifts the level of the log-likelihood but has no effect on where the maximum is.
+
+## The gradient and Hessian
+
+The **score** (first derivative) with respect to $\beta$:
+
+$$
+\frac{\partial \ln L}{\partial \beta} = \sum_{i=1}^{n}\big(y_i - e^{x_i\beta}\big)\,x_i' = X'(y - \lambda)
+$$
+
+the same form as the logit's $X'(y - \pi)$: $X'$ times the gap between what we observed and what the model expects. Setting it to zero and solving for $\beta$ is impossible — $\beta$ is stuck inside the exponential — so, as with the logit, we maximize numerically.
+
+The **Hessian** (second derivative):
+
+$$
+\frac{\partial^2 \ln L}{\partial \beta\,\partial \beta'} = -\sum_{i=1}^{n} e^{x_i\beta}\,x_i' x_i = -X'WX, \quad W = \text{diag}(\lambda_1, \ldots, \lambda_n)
+$$
+
+Every $\lambda_i$ is positive, so as long as $X$ has full column rank, $X'WX$ is positive definite and the Hessian is **negative definite at every value of** $\beta$, not just at the maximum. The Poisson log-likelihood is globally concave — one hill, no false summits — which is why it converges in a handful of iterations from almost any starting value. The inverse of the negative Hessian at the maximum, $(X'\widehat{W}X)^{-1}$, is the estimated variance-covariance matrix of $\widehat\beta$.
+
+# Example: violent social conflict in Africa
+
+@hendrix2012climate examine how climate disruptions shape social conflict. The unit is the African country-year, 1990--2008, and the $y$ variable counts violent social conflict events — riots, violent protests, communal violence. Rainfall enters as the deviation from the country's normal rainfall, in standard deviations, along with its square, and the same pair lagged a year. The squared terms are the core of the argument: they expect a U-shaped relationship, with both droughts and floods increasing conflict.
+
+```{r hs-hist}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-hs-hist
+#| fig-height: 3.2
+#| fig-cap: "Violent social conflict events per country-year, Africa, 1990-2008, with the frequencies a Poisson at the sample mean would predict (Hendrix and Salehyan 2012)."
+#| fig-alt: !expr 'sprintf("Bar chart of violent events per country-year, 0 to 20 shown. %.0f percent of country-years have zero events, and the tail runs out to %d. Points showing the Poisson-expected frequencies at the sample mean of %.2f predict only %.0f percent zeros, too few country-years with one event, far too many with two through six, and almost none above eight.", 100 * mean(hs$events == 0), max(hs$events), mean(hs$events), 100 * dpois(0, mean(hs$events)))'
+
+hs_freq <- hs %>%
+  count(events) %>%
+  filter(events <= 20) %>%
+  mutate(poisson = nrow(hs) * dpois(events, mean(hs$events)))
+
+ggplot(hs_freq, aes(x = events)) +
+  geom_col(aes(y = n), fill = bu_green, width = .7) +
+  geom_point(aes(y = poisson), color = bu_black, size = 2.5, shape = 21, fill = "white", stroke = 1) +
+  labs(x = "Violent events in the country-year (0 to 20 shown)", y = "Country-years",
+       subtitle = "Bars: observed.  Points: Poisson at the sample mean.") +
+  theme_bu()
+```
+
+`r round(100 * mean(hs$events == 0))`% of country-years have no events at all, and the tail runs out to `r max(hs$events)`. The mean is `r sprintf("%.2f", mean(hs$events))` and the variance is `r round(var(hs$events), 1)`. A Poisson with that mean predicts `r round(100 * dpois(0, mean(hs$events)))`% zeros and almost nothing above eight. That's the unconditional distribution, and the assumption that matters is about the distribution of $y$ *given* $X$ — countries with more people or more prior conflict should have more events, and the model may account for some of that spread. Hold on to it; we'll come back to it.
+
+## Look at the data before modeling it
+
+Before modeling a count (or any data), look at it. The histogram above (@fig-hs-hist) is the first plot to make: it shows how rare the events are, how many zeros there are, and how long the tail is. Visualizing count variables is useful insofar as it helps us understand the rareness of events, the nature of outliers (high numbers of events), and the frequency of zeros.
+
+But a count is always a count *per unit* — events per country-year here — and the units are not all alike. Plots that keep the units show things a histogram can't: where the events concentrate, whether they cluster in particular units, and how much exposure each unit has. That last one is what the offset, later in these notes, is for.
+
+### Maps
+
+Mapping geographically distributed count variables like this one can be very useful. I'm going to present a *choropleth* map of Africa, shading each country by its number of violent events. To do this, we need to join the count data to a geographic shapefile. Since we want to plot events over countries, we need to collapse the country-year data to one row per country, with a variable measuring the events in that country. Then we join geographic data describing the shape of each country (what are called "polygons"). In the end, each row in the data is a country, with its count and its shape, and `ggplot` draws it with `geom_sf()`.
+
+Two things to decide along the way. First, what to map: countries are observed for different numbers of years, so I map the *average* number of events per year rather than the total. Second, how to match the two datasets: the replication data identify countries by Correlates of War code, and the Natural Earth shapes by ISO code, so `countrycode` translates one into the other.
+
+```{r hs-map-data}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# country shapes, one row per country, as an sf data frame
+africa <- ne_countries(scale = "medium", continent = "Africa", returnclass = "sf")
+
+# the full event data, 1990-2008 (1989 has no event counts)
+hs_map <- read_dta(here::here("data", "H_S_JPR_491.dta")) %>%
+  zap_labels() %>%
+  filter(year >= 1990) %>%
+  mutate(iso3c = countrycode(ccode, origin = "cown", destination = "iso3c"),
+         pop_millions = exp(log_pop_pwt) / 1000)    # PWT population is in thousands
+
+# collapse to one row per country
+by_country <- hs_map %>%
+  group_by(iso3c, country) %>%
+  summarize(events_per_year = mean(violent_events_no_onset),
+            per_million = sum(violent_events_no_onset[!is.na(pop_millions)]) /
+                          sum(pop_millions, na.rm = TRUE),
+            .groups = "drop")
+
+# join counts to shapes on the ISO code; countries without data get NA
+africa_events <- africa %>%
+  left_join(by_country, by = c("iso_a3_eh" = "iso3c"))
+
+```
+
+```{r hs-maps-alt, include=FALSE}
+top_raw <- by_country %>% slice_max(events_per_year, n = 3)
+top_pc  <- by_country %>% slice_max(per_million, n = 3)
+alt_maps <- sprintf("Two choropleth maps of Africa shaded from pale to dark green. Left, average violent events per year: the darkest countries are %s. Right, events per million people per year: the darkest countries are %s. The fifteen highest countries are labeled on each map. Countries without data are grey.",
+                    paste(top_raw$country, collapse = ", "), paste(top_pc$country, collapse = ", "))
+```
+
+Now the maps. One small function draws a map for whichever variable we hand it, labeling the fifteen highest countries on that variable; `patchwork` sets the two side by side. Comparing which countries are labeled on each map is a quick way to see what dividing by population does.
+
+```{r hs-maps}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-hs-maps
+#| fig-height: 5
+#| fig-cap: "Violent social conflict events in Africa, 1990-2008: average events per year (left) and events per million people per year (right). Grey: no data."
+#| fig-alt: !expr 'alt_maps'
+#| cache.extra: !expr 'alt_maps'
+
+# one function draws both maps
+event_map <- function(var, title) {
+  top15 <- africa_events %>% slice_max({{ var }}, n = 15)
+  ggplot(africa_events) +
+    geom_sf(aes(fill = {{ var }}), color = "white", linewidth = .2) +
+    geom_sf_text(data = top15, aes(label = name), size = 2.6, color = bu_black,
+                 # label each country at a point inside it; sf warns that this is
+                 # approximate on longitude/latitude, which is fine for placing a label
+                 fun.geometry = function(g) suppressWarnings(sf::st_point_on_surface(sf::st_zm(g)))) +
+    scale_fill_gradient(low = "#E8F5E9", high = bu_green, na.value = "grey85") +
+    labs(title = title, fill = NULL) +
+    theme_void() +
+    theme(legend.position = "bottom")
+}
+
+event_map(events_per_year, "Events per year") +
+  event_map(per_million, "Events per million people per year")
+```
+
+The left map is the raw count: the countries with the most violent events are `r paste(top_raw$country, collapse = ", ")`. The right map divides by population, and the picture changes — the highest rates per person are in `r paste(top_pc$country, collapse = ", ")`. Which map is right depends on the question. If we care about where conflict happens, the left one. If we care about how *prone* a place is to conflict, given how many people are there to produce it, the right one. Be careful with the right-hand map, though: several of the highest rates belong to small countries, where a handful of events over a small population makes for a large and noisy rate. That's one reason to let a model handle exposure rather than mapping raw rates, which we'll do with the offset once the model is built.
+
+### Counts over space and time
+
+```{r hs-heat-alt, include=FALSE}
+by_c <- hs_map %>% group_by(country) %>%
+  summarize(total = sum(violent_events_no_onset), years_with = sum(violent_events_no_onset > 0))
+n_countries <- nrow(by_c)
+n_rare <- sum(by_c$years_with <= 5)
+n_half <- sum(by_c$years_with < 10)
+top_heat <- by_c %>% slice_max(total, n = 3)
+alt_heat <- sprintf("Heatmap with one row per country, ordered by total events, and one column per year from 1990 to 2008. The top rows, %s, are shaded dark in most years. The lower half is mostly white: %d of the %d countries have violent events in fewer than half the years, and the bottom rows have only one or two years with any event.", paste(top_heat$country, collapse = ", "), n_half, n_countries)
+```
+
+A map collapses the years; a time series collapses the countries. A heatmap keeps both — one row per country, one column per year, each cell shaded by the count.
+
+```{r hs-heat}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-hs-heat
+#| fig-height: 8
+#| fig-cap: "Violent social conflict events by country and year, 1990-2008. Countries are ordered by their total events; white cells are years with no events."
+#| fig-alt: !expr 'alt_heat'
+#| cache.extra: !expr 'alt_heat'
+
+heat <- hs_map %>%
+  group_by(country) %>%
+  mutate(total = sum(violent_events_no_onset)) %>%
+  ungroup() %>%
+  mutate(country = fct_reorder(country, total))
+
+ggplot(heat, aes(x = year, y = country, fill = violent_events_no_onset)) +
+  geom_tile(color = "white", linewidth = .2) +
+  scale_fill_gradient(low = "white", high = bu_green, trans = "sqrt",
+                      breaks = c(1, 5, 20, 50)) +
+  labs(x = NULL, y = NULL, fill = "Events") +
+  theme_bu(base_size = 10) +
+  theme(panel.grid = element_blank())
+```
+
+The heatmap shows two things the histogram hid. First, the high counts aren't scattered — they belong to a handful of countries, year after year. That's what heterogeneity in the rate looks like, and it's the first sign these data won't be equidispersed. Second, the zeros aren't scattered either. They pile up in the bottom half of the figure: `r n_half` of the `r n_countries` countries have violent events in fewer than half of the 19 years, and `r n_rare` in five or fewer. Are those zeros from countries that *could* have had violent conflict in a given year and didn't, or from countries where it was never likely to happen? That's a question for next week.
+
+## The model
+
+@tbl-hs-poisson reports the Poisson estimates twice. The first column is the coefficients, $\widehat\beta$, on the log-count scale: the change in $\ln\lambda$ for a one-unit increase in $x$. The second column is the **incidence rate ratios**, $e^{\widehat\beta}$: the factor by which the *expected count* is multiplied for a one-unit increase in $x$, holding the other variables constant. An IRR of 1 means no effect; 1.05 means 5% more expected events per unit of $x$; 0.90 means 10% fewer. The standard errors in that column are the coefficients' standard errors transformed by the delta method, and the stars are the same tests as in the first column. Why exponentiating gives a ratio, and why the rainfall rows can't be read this way, come up under quantities of interest below.
+
+```{r hs-poisson}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-hs-poisson
+
+hs_f <- events ~ events_l + rain + rain_sq + rain_l + rain_l_sq + polity2 + polity2_sq +
+  lnpop + popgrowth + lngdppc + gdpgrowth + incidence + ttrend
+
+hs_p <- glm(hs_f, data = hs, family = poisson(link = "log"))
+
+hs_labels <- c("events_l" = "Violent events, lagged",
+               "rain" = "Rainfall deviation",
+               "rain_sq" = "Rainfall deviation, squared",
+               "rain_l" = "Rainfall deviation, lagged",
+               "rain_l_sq" = "Rainfall deviation, lagged, squared",
+               "polity2" = "Polity",
+               "polity2_sq" = "Polity, squared",
+               "lnpop" = "ln(population)",
+               "popgrowth" = "Population growth",
+               "lngdppc" = "ln(GDP per capita)",
+               "gdpgrowth" = "GDP per capita growth",
+               "incidence" = "Civil conflict",
+               "ttrend" = "Time trend")
+
+modelsummary(list("Coefficients" = hs_p, "Incidence rate ratios" = hs_p),
+             exponentiate = c(FALSE, TRUE),
+             stars = TRUE, coef_rename = hs_labels, gof_omit = "RMSE|F",
+             title = "Poisson regression, violent social conflict events per country-year, Africa, 1990-2008.",
+             notes = "Data from Hendrix and Salehyan (2012).")
+```
+
+The log-likelihood is `r sprintf("%.3f", logLik(hs_p))`. Coefficients are on the log-count scale. Both rainfall terms are positive, and together they make the U. Holding everything else constant, the part of the linear predictor that depends on rainfall is a parabola,
+
+$$
+f(rain) = \widehat\beta_{rain}\,rain + \widehat\beta_{rain^2}\,rain^2
+$$
+
+Its turning point is where its slope is zero. Differentiate and set the result to zero:
+
+$$
+\begin{aligned}
+\frac{\partial f}{\partial\, rain} = \widehat\beta_{rain} + 2\widehat\beta_{rain^2}\, rain &= 0 \\[6pt]
+rain^{*} &= -\frac{\widehat\beta_{rain}}{2\widehat\beta_{rain^2}} \\[6pt]
+&= -\frac{`r sprintf("%.4f", coef(hs_p)["rain"])`}{2 \times `r sprintf("%.4f", coef(hs_p)["rain_sq"])`} = `r sprintf("%.2f", -coef(hs_p)["rain"] / (2 * coef(hs_p)["rain_sq"]))`
+\end{aligned}
+$$
+
+The second derivative, $2\widehat\beta_{rain^2}$ = `r sprintf("%.3f", 2 * coef(hs_p)["rain_sq"])`, is positive, so the turning point is a minimum — the bottom of the U. (It's a minimum of the linear predictor, and so of $\lambda = e^{x\beta}$ too: the exponential is always increasing, so it can't move where the minimum is.) And it's `r sprintf("%.2f", abs(coef(hs_p)["rain"] / (2 * coef(hs_p)["rain_sq"])))` standard deviations *drier* than normal because the linear term is positive. Normal rainfall is zero, where the slope is $\widehat\beta_{rain} + 2\widehat\beta_{rain^2} \times 0 = \widehat\beta_{rain}$ = `r sprintf("%.3f", coef(hs_p)["rain"])`: at normal rainfall, expected violence is already rising with rain, so the bottom has to be on the dry side. If $\widehat\beta_{rain}$ were zero, the U would be centered exactly on normal rainfall; a positive linear term tilts it and slides the minimum to the left. Move away from the minimum in either direction, toward drought or toward flood, and expected violence rises.
+
+# Quantities of interest
+
+All the usual techniques apply (at-means; average effects; simulation). There are four quantities the Poisson gives us, and they're all very easy to compute:
+
+- $exp(\beta_k)$ is the **incidence rate ratio** (IRR) - similar to odds ratios in the logistic model.
+- $E[Y]=\lambda = e^{x_{i} \beta}$ - this is the **expected number of events** per period, conditional on $x \beta$.
+- $Pr(y_i=j) = \frac{e^{-\lambda}  \lambda^{j}}{j!}$ - the PMF (like any) describes the probabilities of all possible values of $y$. So we could examine the **probability** $y=2$, or $y = 0$.
+- $Pr(y_i \leq j) = \sum_{m=0}^{j} \frac{e^{-\lambda}  \lambda^{m}}{m!}$ - since this is a discrete distribution, the **cumulative probability** is the sum of the PMF up to the value of interest.
+
+## Incidence rate ratios
+
+Why does exponentiating a coefficient give a ratio? Take two cases identical except that $x_k$ is one unit higher in the second:
+
+$$
+\begin{aligned}
+\frac{\lambda(x_k + 1)}{\lambda(x_k)} &= \frac{e^{\beta_0 + \cdots + \beta_k (x_k + 1) + \cdots}}{e^{\beta_0 + \cdots + \beta_k x_k + \cdots}} \\[6pt]
+&= e^{\beta_k}
+\end{aligned}
+$$
+
+Everything else cancels. So $e^{\beta_k}$ is the factor by which the expected count is multiplied for a one-unit increase in $x_k$, and it's the same factor no matter where the other variables are. In the table, the IRR on lagged events is `r round(exp(coef(hs_p)["events_l"]), 3)`: each additional violent event last year multiplies the expected number this year by `r round(exp(coef(hs_p)["events_l"]), 3)`, about `r round(100 * (exp(coef(hs_p)["events_l"]) - 1), 1)`% more. Population is logged, so a one-unit change in $\ln(pop)$ isn't natural; doubling population adds $\ln 2$, and multiplies the expected count by $2^{`r sprintf("%.3f", coef(hs_p)["lnpop"])`}$ = `r round(2^coef(hs_p)["lnpop"], 2)`.
+
+Rainfall is the exception, and it's the variable we care about. It appears twice, so a one-unit change in rainfall changes both terms, and the ratio is $e^{\beta_{rain} + \beta_{rain^2}(2\,rain + 1)}$ — which depends on where you start. Going from normal rainfall to one standard deviation wetter multiplies expected violence by `r round(exp(coef(hs_p)["rain"] + coef(hs_p)["rain_sq"]), 3)`; going from two standard deviations of drought to one, by `r round(exp(coef(hs_p)["rain"] + coef(hs_p)["rain_sq"] * (2 * -2 + 1)), 3)`. With a squared term, there is no single IRR, and the two numbers in the rainfall rows of the table aren't interpretable on their own. We need expected counts.
+
+The IRR is a *ratio* anyway, and the same ratio means very different numbers of events depending on the baseline: a 5% increase on an expected count of 0.5 is 0.025 more events; on an expected count of 20 it is one more. As with odds ratios, the IRR is a useful summary, but it is not the quantity a reader needs.
+
+## Expected counts, by hand
+
+Since $E[Y] = e^{x\beta}$, we can multiply the $\widehat\beta$s by values of the $X$s, sum them, and exponentiate. Take a country-year with every covariate at its median and no civil conflict, and compare normal rainfall to a severe drought, two standard deviations below normal. Notice that the drought changes *two* rows — rainfall and rainfall squared — and that the squared term goes to $(-2)^2 = 4$.
+
+```{r ey-hand}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-ey-hand
+#| tbl-cap: "Computing E[Y] by hand: a country-year at the medians, normal rainfall and a two-standard-deviation drought."
+
+med <- function(v) median(hs[[v]])
+
+# covariate vector in the order of coef(hs_p): squares are squares of the
+# values chosen, and civil conflict is set to zero
+scenario <- function(rain) {
+  c(1, med("events_l"), rain, rain^2, med("rain_l"), med("rain_l")^2,
+    med("polity2"), med("polity2")^2, med("lnpop"), med("popgrowth"),
+    med("lngdppc"), med("gdpgrowth"), 0, med("ttrend"))
+}
+
+hand <- tibble(Variable = names(coef(hs_p)),
+               beta = coef(hs_p),
+               x_norm = scenario(0), bx_norm = beta * x_norm,
+               x_dry = scenario(-2), bx_dry = beta * x_dry)
+
+ey_norm <- exp(sum(hand$bx_norm))
+ey_dry  <- exp(sum(hand$bx_dry))
+ey_wet  <- exp(sum(coef(hs_p) * scenario(2)))
+
+options(knitr.kable.NA = "")   # blank, not "NA", in the summary rows
+
+hand %>%
+  bind_rows(tibble(Variable = "x beta", bx_norm = sum(hand$bx_norm), bx_dry = sum(hand$bx_dry)),
+            tibble(Variable = "exp(x beta)", bx_norm = ey_norm, bx_dry = ey_dry)) %>%
+  kbl(digits = 3, col.names = c("Variable", "beta-hat", "x", "beta x", "x", "beta x")) %>%
+  add_header_above(c(" " = 2, "Normal rainfall" = 2, "Drought, -2 s.d." = 2)) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The expected number of violent events is `r round(ey_norm, 2)` in a normal year and `r round(ey_dry, 2)` in a severe drought — `r round(ey_dry / ey_norm, 2)` times as many. A flood of the same size, two standard deviations above normal, gives `r round(ey_wet, 2)`.
+
+## Probabilities of particular counts
+
+Sometimes we want to know the probability of observing $Y_{i}=j$ where $j= 0, 1, 2 \ldots$ - for instance, what is the probability of exactly one violent event in a country-year? We simply resort to the distribution function, plugging in $\widehat\lambda$:
+
+$$
+Pr(Y_{i}=j) = \frac{e^{-\widehat{\lambda}}\, \widehat{\lambda}^{j}}{j!}
+$$
+
+So for the country in a severe drought, the probability of exactly one violent event is
+
+$$
+Pr(Y_{i}=1) = \frac{e^{-`r round(ey_dry, 3)`}\, `r round(ey_dry, 3)`^{1}}{1!} = `r round(dpois(1, ey_dry), 3)`
+$$
+
+In fact, we can compute this for every value of $Y$. Here are zero through five, and six or more, for the three rainfall scenarios:
+
+```{r pry}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-pry
+#| tbl-cap: "Pr(Y = j) under three rainfall scenarios, other variables at their medians."
+
+tibble(j = c(as.character(0:5), "6 or more"),
+       `Normal rainfall` = c(dpois(0:5, ey_norm), ppois(5, ey_norm, lower.tail = FALSE)),
+       `Drought, -2 s.d.` = c(dpois(0:5, ey_dry), ppois(5, ey_dry, lower.tail = FALSE)),
+       `Flood, +2 s.d.` = c(dpois(0:5, ey_wet), ppois(5, ey_wet, lower.tail = FALSE))) %>%
+  kbl(digits = 3) %>%
+  kable_styling(full_width = FALSE)
+```
+
+Each column sums to one, since the probabilities of each number of events are an exhaustive set of possibilities; the last row is a cumulative probability, one minus the probability of five or fewer. In a normal year, the most likely outcome is `r c("no events", "one event", "two events", "three events")[which.max(dpois(0:3, ey_norm))]`, and the probability of none at all is `r round(dpois(0, ey_norm), 2)`. In a severe drought the probability of none falls to `r round(dpois(0, ey_dry), 2)`, and the probability of three or more rises from `r round(ppois(2, ey_norm, lower.tail = FALSE), 2)` to `r round(ppois(2, ey_dry, lower.tail = FALSE), 2)`.
+
+## Expected counts across rainfall
+
+An even better way to present predictions from the Poisson model (and from event count models in general) is to plot the expected values or probabilities across values of some continuous independent variable. @fig-hs-ey plots expected violent events across rainfall deviations, with everything else at its median and no civil conflict. The intervals use the endpoint transformation: compute the 95% interval for $x\widehat\beta$, then exponentiate the endpoints, so the bounds can't go below zero. The rug along the bottom marks the observed rainfall deviations.
+
+```{r hs-ey}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-hs-ey
+#| fig-height: 3.8
+#| fig-cap: "Expected violent events per country-year across deviations from normal rainfall, Poisson, other variables at their medians, with 95% intervals by endpoint transformation. Ticks along the bottom mark the observed country-years."
+#| fig-alt: !expr 'sprintf("A U-shaped curve of expected violent events against rainfall deviation from minus 3 to plus 3 standard deviations, with a 95 percent interval. Expected events are %.2f at minus 3, bottom out at %.2f near minus 0.5, and rise to %.2f at plus 3. The interval is narrow in the middle and widens toward both ends. A rug along the bottom shows most country-years between minus 2 and plus 2.", nd$ey[1], min(nd$ey), nd$ey[nrow(nd)])'
+
+# every covariate at its median except rainfall, which varies (with its square)
+nd <- tibble(rain = seq(-3, 3, by = .05)) %>%
+  mutate(rain_sq = rain^2,
+         events_l = med("events_l"), rain_l = med("rain_l"), rain_l_sq = med("rain_l")^2,
+         polity2 = med("polity2"), polity2_sq = med("polity2")^2, lnpop = med("lnpop"),
+         popgrowth = med("popgrowth"), lngdppc = med("lngdppc"), gdpgrowth = med("gdpgrowth"),
+         incidence = 0, ttrend = med("ttrend"))
+
+hs_pred <- predict(hs_p, newdata = nd, type = "link", se.fit = TRUE)
+nd <- nd %>%
+  mutate(xb = hs_pred$fit, se = hs_pred$se.fit,
+         ey = exp(xb), lb = exp(xb - 1.96 * se), ub = exp(xb + 1.96 * se))
+
+ggplot(nd, aes(x = rain, y = ey)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_greyfill, alpha = .4) +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_rug(data = hs, aes(x = rain), inherit.aes = FALSE, sides = "b",
+           color = bu_grey, alpha = .4) +
+  labs(x = "Deviation from normal rainfall (standard deviations)",
+       y = "Expected violent events") +
+  theme_bu()
+```
+
+Expected violence bottoms out at `r round(min(nd$ey), 2)` events a little drier than normal and rises to `r round(nd$ey[1], 2)` at three standard deviations of drought and `r round(nd$ey[nrow(nd)], 2)` at three of flood. The interval widens toward both ends: the prediction is least certain farthest from the center of the data, and the rug shows how few country-years are out there — `r sum(abs(hs$rain) > 2)` of `r nrow(hs)` are more than two standard deviations from normal.
+
+## Probabilities across rainfall
+
+We can do the same with the probability of each count. @fig-hs-pr plots $Pr(Y = j)$ for zero through three events across rainfall.
+
+```{r hs-pr}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-hs-pr
+#| fig-height: 3.6
+#| fig-cap: "Predicted probability of 0, 1, 2, and 3 violent events in a country-year across rainfall deviations, Poisson, other variables at their medians."
+#| fig-alt: !expr 'sprintf("Four panels, for zero, one, two, and three events, each plotting probability against rainfall deviation. The probabilities of zero and one event are highest near the bottom of the U, about %.2f and %.2f, and fall toward both extremes, most steeply toward flood: to %.2f and %.2f at plus 3. The probability of two events is nearly flat on the dry side and falls on the wet side. The probability of three events rises toward both extremes, from %.2f to %.2f at plus 3.", dpois(0, min(nd$ey)), dpois(1, min(nd$ey)), dpois(0, nd$ey[nrow(nd)]), dpois(1, nd$ey[nrow(nd)]), dpois(3, min(nd$ey)), dpois(3, nd$ey[nrow(nd)]))'
+
+nd_pr <- nd %>%
+  select(rain, ey) %>%
+  expand_grid(j = 0:3) %>%
+  mutate(p = dpois(j, ey),
+         j = factor(paste0("Pr(y = ", j, ")")))
+
+ggplot(nd_pr, aes(x = rain, y = p)) +
+  geom_line(color = bu_green, linewidth = 1) +
+  facet_wrap(~ j, nrow = 1) +
+  labs(x = "Deviation from normal rainfall (s.d.)", y = "Probability") +
+  theme_bu()
+```
+
+As rainfall departs from normal in either direction, probability moves out of the low counts and into the higher ones. Between the bottom of the U and three standard deviations of flood, $Pr(y = 0)$ falls from `r round(dpois(0, min(nd$ey)), 2)` to `r round(dpois(0, nd$ey[nrow(nd)]), 2)`, $Pr(y = 1)$ from `r round(dpois(1, min(nd$ey)), 2)` to `r round(dpois(1, nd$ey[nrow(nd)]), 2)`, and $Pr(y = 3)$ rises from `r round(dpois(3, min(nd$ey)), 2)` to `r round(dpois(3, nd$ey[nrow(nd)]), 2)`. $Pr(y = 2)$ hardly moves on the dry side and falls on the wet side: with expected counts near two, two is where the mass sits before it moves on to three and beyond. Which count's probability rises or falls depends on where $\lambda$ starts — another reason to plot the whole distribution rather than one number.
+
+# Exposure and offsets
+
+In the Snickers example every shift was eight hours, so the exposure was constant and disappeared into the intercept. That's not true of most count data. In @hendrix2012climate, every unit is one year long, but countries differ enormously in population, and more people means more opportunities for conflict events. Nigeria and Gabon are not exposed to the same risk — the two maps in @fig-hs-maps make the point.
+
+## The offset
+
+How do we account for exposure? Go back to the Poisson with exposure $d_i$: the expected count is a rate times an exposure,
+
+$$
+\begin{aligned}
+E[y_i] = \lambda_i &= d_i \, e^{x_i\beta} \\[6pt]
+\ln \lambda_i &= \ln d_i + x_i\beta \\[6pt]
+\lambda_i &= e^{x_i\beta + \ln d_i}
+\end{aligned}
+$$
+
+So the log of the exposure enters the linear predictor like a variable — but with its coefficient **fixed at one**. That's an **offset**: a term in the linear predictor whose coefficient we don't estimate. And now $\beta$ describes the *rate*, $\lambda_i / d_i = e^{x_i\beta}$, events per unit of exposure, rather than the raw count. Exponentiated coefficients are now ratios of rates — events per capita, per hour, per mile of border.
+
+## What fixing the coefficient at one means
+
+Conceptually, fixing the coefficient at one is an assumption about how exposure produces events: **the expected count is proportional to exposure.** Double the exposure, double the expected count; multiply it by 100, multiply the expected count by 100. Every unit of exposure — every person, every hour, every mile of border — carries the same rate, $e^{x_i\beta}$, and the count is just that rate summed over however much exposure the unit has. This is the Snickers bars example again: a 12-hour shift should produce one and a half times the failures of an 8-hour shift, because it's one and a half times as many hours of the same machine.
+
+That's why the offset lets us model the *rate* while keeping the *count* as the $y$ variable. It might seem simpler to divide — make $y_i/d_i$ the dependent variable — but then $y$ is no longer a count, it isn't Poisson, and we've thrown away information. Three events in a country of one million and 300 events in a country of 100 million are the same rate, but the second is far more informative about that rate. The count likelihood knows that; a regression on the ratio doesn't.
+
+## The offset in the regression
+
+Mechanically, what does an offset look like? Write out the linear predictor with the offset in it:
+
+$$
+\ln \lambda_i = \beta_0 + \beta_1 x_{1i} + \cdots + \beta_k x_{ki} + 1 \cdot \ln d_i
+$$
+
+$\ln d_i$ is a column of data in the linear predictor, like any $x$ — but it comes with a 1 instead of a $\beta$. It's not a parameter, so the model doesn't estimate anything for it. It shifts each observation's linear predictor up or down by a known amount, the log of that observation's exposure.
+
+Follow it into the log-likelihood. With $\lambda_i = d_i e^{x_i\beta}$, so $\ln\lambda_i = x_i\beta + \ln d_i$:
+
+$$
+\begin{aligned}
+\ln L(\beta) &= \sum_{i=1}^{n}\big[\, y_i (x_i\beta + \ln d_i) - d_i e^{x_i\beta} - \ln(y_i!)\,\big] \\[6pt]
+\frac{\partial \ln L}{\partial \beta} &= \sum_{i=1}^{n}\big(y_i - d_i e^{x_i\beta}\big)\,x_i' = X'(y - \lambda)
+\end{aligned}
+$$
+
+The exposure does two things. In the score, it scales each observation's expected count, $d_i e^{x_i\beta}$, so a country with a hundred times the population is expected to have a hundred times the events, and its residual is measured against that. And the term $y_i \ln d_i$ has no $\beta$ in it, so, like $\ln(y_i!)$, it drops out when we differentiate. What there *isn't* is a derivative with respect to a coefficient on $\ln d_i$ — there's no coefficient, so there's nothing to set to zero and solve for. The score has one row per $\beta$, and $\ln d_i$ isn't one of them.
+
+In R, the offset goes in the formula wrapped in `offset()` (or as the `offset =` argument to `glm`). In Stata, it's `poisson y x1 x2, offset(lnpop)`, or `exposure(pop)`, which takes the log for you. Either way, look for the offset in the output and you won't find it: it has no coefficient, no standard error, no row in the table.
+
+Here's the violent events model with log population as an offset. Population in these data is measured in thousands, so the model is of events per thousand people per year. I check two things by hand: that the fitted linear predictor really is $X\widehat\beta$ plus the log of population, with a coefficient of exactly one, and what that implies for two countries that are identical except for their size.
+
+```{r hs-off-mech}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-off-mech
+#| tbl-cap: "Expected violent events per year for two countries identical except for population, other variables at their sample means."
+
+hs_off <- glm(events ~ rain + rain_sq + polity2 + polity2_sq + lngdppc + incidence + offset(lnpop),
+              data = hs, family = poisson)
+
+# the fitted linear predictor is X beta-hat plus ln(population), times exactly one
+xb_hand <- as.vector(model.matrix(hs_off) %*% coef(hs_off)) + hs$lnpop
+off_check <- isTRUE(all.equal(as.numeric(xb_hand), as.numeric(predict(hs_off, type = "link"))))
+
+# average population (thousands) of two countries, over their years in the sample
+pops <- hs %>%
+  filter(country %in% c("Gabon", "Nigeria")) %>%
+  group_by(country) %>%
+  summarize(pop = mean(exp(lnpop)))
+
+# same covariates for both, at the sample means; only lnpop differs
+nd_off <- hs %>%
+  summarize(across(c(rain, rain_sq, polity2, polity2_sq, lngdppc, incidence), mean)) %>%
+  crossing(pops) %>%
+  mutate(lnpop = log(pop))
+
+nd_off %>%
+  mutate(`population (millions)` = pop / 1000,
+         `rate per million` = exp(predict(hs_off, newdata = ., type = "link") - lnpop) * 1000,
+         `expected events` = predict(hs_off, newdata = ., type = "response")) %>%
+  select(country, `population (millions)`, `rate per million`, `expected events`) %>%
+  kbl(digits = 3) %>%
+  kable_styling(full_width = FALSE)
+
+ratio_pop <- pops$pop[pops$country == "Nigeria"] / pops$pop[pops$country == "Gabon"]
+```
+
+First, the hand computation matches `predict()` (`all.equal` returns `r off_check`): the offset is just $\ln d_i$ added to $X\widehat\beta$. Second, look at the table. The two countries have the same rate — the offset model *says* they do, since they have the same $x$ values and the rate is $e^{x\beta}$. Nigeria has about `r round(ratio_pop)` times Gabon's population, so it's expected to have `r round(ratio_pop)` times the events. Not more, not less: that's what fixing the coefficient at one buys.
+
+## Estimating the coefficient instead
+
+What happens if, instead of an offset, we just put $\ln d_i$ in the model as a covariate with a coefficient, $\gamma$?
+
+$$
+\lambda_i = e^{x_i\beta + \gamma \ln d_i} = d_i^{\,\gamma}\, e^{x_i\beta}
+$$
+
+If $\gamma = 1$, events grow in proportion to exposure: double the population, double the expected events. If $\gamma < 1$, events grow less than proportionally. So the offset is a *restriction* — $\gamma = 1$ — and it's one we can test. Mechanically, the two models differ by one thing: in one, the column $\ln d_i$ gets a coefficient fixed at one; in the other, it gets a coefficient the data choose.
+
+## Testing the restriction
+
+Here are the two models side by side. The first puts log population in as a covariate; the second is the offset model from above.
+
+```{r hs-offset}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-hs-offset
+
+hs_free <- glm(events ~ rain + rain_sq + polity2 + polity2_sq + lngdppc + incidence + lnpop,
+               data = hs, family = poisson)
+
+modelsummary(list("ln(population) estimated" = hs_free, "ln(population) as offset" = hs_off),
+             stars = TRUE,
+             coef_rename = c("rain" = "Rainfall deviation",
+                             "rain_sq" = "Rainfall deviation, squared",
+                             "polity2" = "Polity",
+                             "polity2_sq" = "Polity, squared",
+                             "lngdppc" = "ln(GDP per capita)",
+                             "incidence" = "Civil conflict",
+                             "lnpop" = "ln(population)"),
+             gof_omit = "RMSE|F",
+             title = "Violent social conflict events, Poisson, with and without the offset.")
+
+g_hat <- coef(hs_free)["lnpop"]
+g_se  <- sqrt(vcov(hs_free)["lnpop", "lnpop"])
+lr_off <- as.numeric(2 * (logLik(hs_free) - logLik(hs_off)))
+```
+
+The estimated coefficient on log population is `r round(g_hat, 3)`, with a standard error of `r round(g_se, 3)`. To test $\gamma = 1$ we can use a Wald test, $z = (\widehat\gamma - 1)/s.e.$ = `r round((g_hat - 1) / g_se, 2)`, or a likelihood ratio test — the offset model is the restricted model — $\chi^2_1$ = `r round(lr_off, 2)`. The data reject proportionality: violent events increase with population, but less than one-for-one. A country with twice the population has about $2^{`r round(g_hat, 2)`}$ = `r round(2^g_hat, 2)` times as many expected events, not twice as many. Go back to Nigeria and Gabon: with the coefficient estimated, a `r round(ratio_pop)`-fold difference in population means about $`r round(ratio_pop)`^{`r round(g_hat, 2)`}$ = `r round(ratio_pop^g_hat)` times the events, rather than `r round(ratio_pop)`.
+
+So which do we use? The offset is right when theory tells us the count is proportional to exposure — events per hour of a shift, cases per person-year at risk. When we're not sure, estimating $\gamma$ is the safer choice, and testing it is the honest one. Hendrix and Salehyan put population in as a covariate, and these numbers say that was a good call. Either way, notice the rainfall coefficients barely move between the two columns; the offset changes what the intercept and the population term mean, not the effects of variables unrelated to exposure.
+
+# Equidispersion
+
+Back to the Poisson's single parameter. The Poisson assumes
+
+$$
+E[Y \mid X] = var[Y \mid X] = \lambda
+$$
+
+the expected count is equal to the variance, *conditional on* $X$. Data can have more variance than the mean unconditionally and still satisfy this, if the $X$ variables explain enough of the spread. The question is whether, *after* the model, there's more variability than the Poisson allows.
+
+Variance greater than the mean is **overdispersion**; variance less than the mean is **underdispersion**. There's a name for overdispersion that I like: *extra-Poisson variation*.
+
+## A first look: means against variances
+
+```{r mean-var-alt, include=FALSE}
+mv <- hs_map %>%
+  group_by(country) %>%
+  summarize(mean = mean(violent_events_no_onset), variance = var(violent_events_no_onset),
+            years = n(), .groups = "drop") %>%
+  filter(mean > 0, variance > 0)          # units with no events can't go on a log scale
+
+# the same countries, same means, same number of years, but Poisson counts
+mv_sim <- mv %>%
+  mutate(variance = map2_dbl(mean, years, ~ var(rpois(.y, .x))))
+
+mv_both <- bind_rows(`Observed countries` = mv,
+                     `Poisson counts with the same means` = mv_sim, .id = "series") %>%
+  filter(variance > 0)
+
+mv_big <- list(n = nrow(mv), country_n = sum(mv$variance >= 2 * mv$mean))
+alt_mv <- sprintf("Log-log scatterplot of variance against mean, with a dashed line where variance equals mean. Grey triangles, Poisson counts simulated with each country's mean and number of years, scatter tightly around the line. Green circles, the %d countries with any violent events, sit above it, %d of them at a variance at least twice the mean, and the distance above the line grows with the mean.",
+                  mv_big$n, mv_big$country_n)
+```
+
+A simple picture gets at this before any model. Take each country, observed for up to nineteen years, and compute the mean and the variance of its counts. If the counts were Poisson, each country's variance would be about equal to its mean, and the points would fall along the line where variance equals mean. To show what that looks like, @fig-mean-var also plots simulated Poisson counts with the same means and the same number of years as each country.
+
+```{r mean-var}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-mean-var
+#| fig-height: 3.8
+#| fig-cap: "Mean and variance of violent events within each country, 1990-2008, against Poisson counts simulated with the same means. The line is variance = mean. Both axes are logged."
+#| fig-alt: !expr 'alt_mv'
+#| cache.extra: !expr 'alt_mv'
+
+ggplot(mv_both, aes(x = mean, y = variance, color = series, shape = series)) +
+  geom_abline(intercept = 0, slope = 1, color = bu_grey, linetype = "dashed") +
+  geom_point(size = 2) +
+  scale_x_log10() +
+  scale_y_log10() +
+  scale_color_manual(values = c(bu_green, bu_grey)) +
+  scale_shape_manual(values = c(16, 17)) +
+  labs(x = "Mean count", y = "Variance of the count", color = NULL, shape = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+```
+
+The simulated Poisson counts sit around the line. The countries sit well above it, and the gap grows as the mean grows — `r mv_big$country_n` of the `r mv_big$n` countries with any events have a variance at least twice their mean. Variance growing faster than the mean is the pattern the negative binomial is built for; keep this picture in mind when we get there. These are still unconditional summaries — a country's counts vary over time partly because its covariates do — so this is a reason to suspect overdispersion, not a test of it. The tests come below.
+
+## What causes overdispersion?
+
+Go back to the three assumptions from the derivation. Overdispersion arises when one of them fails:
+
+- **Heterogeneity.** The rate is not the same across units with the same $x$ — some units have a higher rate for reasons we haven't measured. Mixing high-rate and low-rate units produces more spread than any single Poisson can.
+- **Positive contagion.** Events are not independent; one event increases the chances of another event in the same period.
+- **Heterogeneous events.** Some events are "bigger" than others, e.g. militarized disputes, so a single underlying occurrence produces several counted events.
+- **Two processes.** Some units can't experience the event at all (they produce only zeros), while others produce counts — a dual process generating spells with zero events and those with more than zero events. This is next week's topic.
+
+### Positive contagion
+
+Imagine we were modeling the number of family members who catch the flu each winter. It's not hard to see that if one person catches the flu, the probability someone else catches the flu increases; thus, the probabilities of events are not independent of one another and there is a (literal) contagion across events. If events are not independent, then it is very likely that the variance in $Y$ will be quite different from the mean.
+
+Here are (fake) data on flu cases per household:
+
+```{r flu}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+flu <- c(0, 0, 0, 5, 0, 0, 6, 0, 3, 0, 2, 2, 0)
+```
+
+$$
+\left( 0, 0, 0, 5, 0, 0, 6, 0, 3, 0, 2, 2, 0 \right)
+$$
+
+The observed mean is `r round(mean(flu), 2)` and the variance is `r round(var(flu), 2)`, obviously suggesting that the mean-variance equality requirement is not met. Note this is the unconditional mean and variance, so it's not a formal test; but in households with flu, flu tends to come in bunches. One event increases the probability of more events.
+
+### Negative contagion
+
+What if, instead of modeling the number of family members with the flu, we are modeling the number of high school students a teacher catches cheating during an exam. When the teacher nails the first student, the others are going to become much more cautious; this means that fewer may actually cheat and the ones who do cheat will be very careful. Thus, catching one reduces the probability of catching a second student. This is called negative contagion; it manifests as underdispersion.
+
+In reality, negative contagion or underdispersion is relatively rare in political science (and social science) data. Most econometric work develops models for overdispersion (like the negative binomial model).
+
+## Consequences
+
+::: {.callout-note title="Bad news, friends"}
+If we model overdispersed data using a Poisson model, the Poisson restricts the variance to be equal to the mean. Think about the practical result - the variance will be restricted to be smaller than it actually is, so it will be underestimated. If we underestimate the variance, the estimated standard errors will be smaller than they really should be, so we will conclude coefficients are statistically significant when they really are not - this is bad and it's Type I error time.
+
+With underdispersion, the reverse: we overestimate the standard errors, and we're likely to make Type II errors, failing to find relationships that actually exist in the data.
+:::
+
+The coefficients themselves are still consistent as long as the expected value, $e^{x\beta}$, is correctly specified — the problem is the standard errors.
+
+## Checking for overdispersion
+
+There are four ways to check whether the violent events data are overdispersed, conditional on the Poisson model in @tbl-hs-poisson. The first is the one to use.
+
+**1. Estimate the negative binomial and test $\alpha = 0$.** The Poisson is the negative binomial with $\alpha$ fixed at zero, so the two models are nested, and a likelihood ratio test compares them: $LR = 2(\ln L_{NB} - \ln L_{P})$, on one degree of freedom. Because $\alpha$ can't be negative, the null value is on the boundary of the parameter space, and the $\chi^2_1$ $p$-value is halved. This is the test you'll see in published work, and the one to report: it estimates $\alpha$ directly and tests it in one step, with a model we'd want to fit anyway. We'll build the negative binomial properly in the next section; here it's just the test.
+
+```{r lr-test}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-lr-test
+#| tbl-cap: "Likelihood ratio test of the Poisson against the negative binomial, violent events."
+
+hs_nb <- glm.nb(hs_f, data = hs)                               # same specification as the Poisson
+
+lr_hs <- as.numeric(2 * (logLik(hs_nb) - logLik(hs_p)))        # LR statistic
+p_lr  <- pchisq(lr_hs, df = 1, lower.tail = FALSE) / 2         # halved: alpha = 0 is a boundary
+
+tibble(`ln L, Poisson` = as.numeric(logLik(hs_p)),
+       `ln L, negative binomial` = as.numeric(logLik(hs_nb)),
+       LR = lr_hs,
+       p = format.pval(p_lr, digits = 2, eps = 1e-10),
+       `alpha-hat` = 1 / hs_nb$theta) %>%
+  kbl(digits = 2) %>%
+  kable_styling(full_width = FALSE)
+```
+
+$LR$ = `r round(lr_hs, 1)`, and $\widehat\alpha$ = `r round(1 / hs_nb$theta, 2)`. The data are overdispersed, and that's really all we need to know.
+
+The other three checks are older or more informal, and almost no one reports them now, because the negative binomial gives us $\alpha$ directly. They're worth seeing once, though, because each shows what overdispersion *is*.
+
+**2. The Pearson dispersion statistic.** The Pearson residual divides each residual by the standard deviation the model says it should have, which in the Poisson is $\sqrt{\lambda_i}$:
+
+$$
+r_i = \frac{y_i - \widehat\lambda_i}{\sqrt{\widehat\lambda_i}}
+$$
+
+If the Poisson is right, each squared Pearson residual has expected value about one, so their sum divided by the residual degrees of freedom, $n - k$ (as with $s^2$ in OLS, estimating $k$ coefficients uses up $k$ pieces of information), should be about one. The code computes it by hand and checks it against R's built-in Pearson residuals.
+
+```{r pearson}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Pearson dispersion statistic for a fitted Poisson model
+dispersion <- function(m) {
+  y <- m$y                                    # observed counts the model was fit to
+  lambda_hat <- fitted(m)                     # expected counts, exp(x beta-hat)
+  r <- (y - lambda_hat) / sqrt(lambda_hat)    # Pearson residuals: residual over the Poisson s.d.
+  sum(r^2) / df.residual(m)                   # sum of squared residuals over n - k
+}
+
+disp_hs <- dispersion(hs_p)
+
+# the same statistic from R's built-in Pearson residuals
+disp_check <- sum(residuals(hs_p, type = "pearson")^2) / df.residual(hs_p)
+```
+
+The sum of the `r nobs(hs_p)` squared Pearson residuals over `r df.residual(hs_p)` degrees of freedom is `r round(disp_hs, 2)` (the built-in residuals give `r round(disp_check, 2)`): about `r round(disp_hs)` times as much variance, conditional on the covariates, as the Poisson allows.
+
+**3. The Cameron-Trivedi regression test.** @cameron1990count turn the same idea into a regression. The expected squared residual is the variance: $\lambda_i$ under the Poisson, $\lambda_i + \alpha\lambda_i^2$ under the negative binomial. Subtract $y_i$ (whose expected value is $\lambda_i$) to remove the Poisson part, and divide by $\lambda_i$:
+
+$$
+E\left[\frac{(y_i - \lambda_i)^2 - y_i}{\lambda_i}\right] = \alpha\lambda_i
+$$
+
+So build $z_i = \frac{(y_i - \widehat\lambda_i)^2 - y_i}{\widehat\lambda_i}$ from the Poisson's fitted values and regress it on $\widehat\lambda_i$, with no intercept:
+
+$$
+z_i = \alpha\,\widehat\lambda_i + u_i
+$$
+
+The slope is an estimate of $\alpha$. There's no intercept because $E[z_i]$ is exactly $\alpha\lambda_i$, and the division by $\widehat\lambda_i$ is what makes OLS valid: under the Poisson, the variance of $(y_i - \lambda_i)^2 - y_i$ is $2\lambda_i^2$, so dividing by $\lambda_i$ gives every observation the same error variance. The test of $\alpha = 0$ is one-sided.
+
+```{r ct-test}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-ct
+#| tbl-cap: "Cameron-Trivedi auxiliary regression, Poisson model of violent events."
+
+ct_test <- function(m) {
+  ct_data <- tibble(y = m$y,                                    # observed counts the model was fit to
+                    lambda_hat = fitted(m)) %>%                 # Poisson expected counts, exp(x beta-hat)
+    mutate(z = ((y - lambda_hat)^2 - y) / lambda_hat)           # squared residual, less y, over lambda-hat
+
+  aux <- lm(z ~ 0 + lambda_hat, data = ct_data)                 # "0 +" drops the intercept
+
+  broom::tidy(aux) %>%
+    mutate(p_one_sided = pt(statistic, df = df.residual(aux), lower.tail = FALSE))
+}
+
+ct_hs <- ct_test(hs_p)
+
+ct_hs %>%
+  select(estimate, std.error, statistic, p_one_sided) %>%
+  kbl(digits = 3, col.names = c("alpha-hat (slope)", "s.e.", "t", "p, one-sided")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The auxiliary regression estimates $\alpha$ at `r round(ct_hs$estimate, 2)`, with $t$ = `r round(ct_hs$statistic, 1)`: overdispersed, again. Its slope, though, isn't the negative binomial's $\widehat\alpha$ of `r round(1 / hs_nb$theta, 2)`: the regression works from the Poisson's fitted means, which are themselves off when the data are overdispersed, so read it as a test of $\alpha = 0$, not as an estimate of $\alpha$.
+
+**4. Observed against predicted counts.** The most useful *informal* check is to look. For each count $j$, compute the share of observations with $y = j$, and the share the model predicts — the average over all observations of $Pr(y_i = j \mid \widehat\lambda_i)$. If the model is right, they should line up.
+
+```{r obs-pred}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-obs-pred
+#| fig-height: 3.6
+#| fig-cap: "Observed share of each count against the predicted probability from the Poisson: von Bortkiewicz's horse kicks (Poisson at the sample mean) and violent events (the Poisson regression)."
+#| fig-alt: !expr 'sprintf("Two panels comparing observed and Poisson-predicted shares of each count. For horse-kick deaths, counts 0 to 4, the observed and predicted shares nearly coincide. For violent events, counts 0 to 15, the Poisson predicts %.0f percent zeros against %.0f percent observed, overpredicts counts of 1 through about 5, and predicts almost none of the larger counts.", 100 * mean(dpois(0, fitted(hs_p))), 100 * mean(hs$events == 0))'
+
+obs_pred <- function(m, maxj, dfun = function(j, m) dpois(j, fitted(m))) {
+  tibble(j = 0:maxj) %>%
+    mutate(observed  = map_dbl(j, ~ mean(m$y == .x)),
+           predicted = map_dbl(j, ~ mean(dfun(.x, m))))
+}
+
+op <- bind_rows(`Horse kicks, Prussian corps-years` =
+                  transmute(vb, j = deaths, observed = corps_years / sum(corps_years),
+                            predicted = dpois(deaths, vb_mean)),
+                `Violent events, African country-years` = obs_pred(hs_p, 15), .id = "data") %>%
+  pivot_longer(c(observed, predicted), names_to = "series", values_to = "share")
+
+ggplot(op, aes(x = j, y = share, color = series, linetype = series, shape = series)) +
+  geom_line() +
+  geom_point(size = 2) +
+  facet_wrap(~ data, scales = "free") +
+  scale_color_manual(values = c(bu_black, bu_green)) +
+  labs(x = "Count, j", y = "Share of observations", color = NULL, linetype = NULL, shape = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+```
+
+The left panel is what a Poisson that fits looks like — von Bortkiewicz's horse kicks, from the start of these notes. The right panel is what overdispersion looks like: the Poisson predicts `r round(100 * mean(dpois(0, fitted(hs_p))))`% zeros where we observe `r round(100 * mean(hs$events == 0))`%, it piles too much probability on small counts, and it has nothing to say about the country-years with 20 or 30 events. The model is too narrow — the data are both more often zero and more often large than a Poisson with these means can produce.
+
+# Negative binomial regression
+
+The Poisson function described above has only one estimable parameter, $\lambda$, the mean of the Poisson distributed variable, $y$. The model assumes the conditional expected mean and variance are equal, so one parameter captures both central tendency and dispersion. Thus, heterogeneity is restricted in the model by construction:
+
+$$
+\begin{aligned}
+E[Y \mid X] &= var[Y \mid X] \\[4pt]
+\frac{E[Y \mid X]}{var[Y \mid X]} &= 1
+\end{aligned}
+$$
+
+so we only need to estimate one parameter, $\lambda$.
+
+## Unobserved heterogeneity
+
+We can motivate the negative binomial model by thinking about unobserved heterogeneity. Let's begin with the observed heterogeneity:
+
+$$
+\lambda_i = e^{x_i \beta}
+$$
+
+so the observed variability in the data is modeled via the $X$ variables; put another way, we model or observe the heterogeneity in the data. However, if the data are overdispersed, we can say that $X$ does not adequately capture the heterogeneity in the variable $y$. In other words, there is some error in our specification, so we might restate our expectation of the mean as
+
+$$
+\tilde{\lambda}_i = e^{x_i \beta + \varepsilon_i}
+$$
+
+$\tilde{\lambda}_i$ is a random variable and $\varepsilon_i$ is an error term (uncorrelated with $X$) that represents the effects of omitted variables. So suppose that some unobserved (and therefore omitted) variables produce the positive contagion in the model of family members with the flu - we have effectively relegated the effects of those variables to an error term, $\varepsilon$.
+
+Thus, the expected value of $y$ is not just a function of $X$, but is a function of excluded variables or unobserved heterogeneity. As a result, cases with the same value of $X$ can have different expected values of $y$.
+
+Let's separate these terms:
+
+$$
+\begin{aligned}
+\tilde{\lambda}_i &= e^{x_i \beta + \varepsilon_i} \\[4pt]
+&= e^{x_i \beta}\, e^{\varepsilon_i}
+\end{aligned}
+$$
+
+and, recalling that $\lambda_i=e^{x_i \beta}$, let's substitute $\lambda_i$ and let's call $e^{\varepsilon_i}$ $\upsilon_i$, so
+
+$$
+\tilde{\lambda}_i = \lambda_i \upsilon_i
+$$
+
+$\lambda_i$ is the systematic part — the Poisson's conditional mean. $\upsilon_i$ is the random part, the unobserved heterogeneity. Given $\upsilon_i$, $y_i$ is Poisson with mean $\lambda_i\upsilon_i$. Now we need to describe the distribution of $\upsilon_i$.
+
+## The gamma mixture
+
+Typically, we assume $\upsilon$ follows a gamma distribution with mean one, $E[\upsilon]=1$, and variance $\alpha$. Mean one makes sense — the heterogeneity scales the mean up for some units and down for others, but on average leaves it alone, so $\lambda_i$ is still the expected count. The variance, $\alpha$, is how much the units with the same $x$ differ in their underlying rates.
+
+The combination — a **mixture** — of the Poisson systematic portion of the model and the gamma distributed random component produces a marginal distribution of $Y$ called the **negative binomial**:
+
+$$
+Pr(y_{i} \mid \lambda_i,\alpha)=\frac{\Gamma(y_i+\alpha^{-1})}{y_i!\,\Gamma(\alpha^{-1})} \left( \frac{\alpha^{-1}}{\alpha^{-1}+\lambda_i}\right) ^{\alpha^{-1}} \left( \frac{\lambda_i}{\alpha^{-1}+\lambda_i}\right) ^{y_i}
+$$
+
+That looks rough, but we don't need to manipulate it to see what it does. What we need is its mean and variance, and we can get both without touching the PMF. The mean is easy:
+
+$$
+E[y_i] = E\big[E[y_i \mid \upsilon_i]\big] = E[\lambda_i \upsilon_i] = \lambda_i E[\upsilon_i] = \lambda_i
+$$
+
+The same expected count as the Poisson — the $\beta$s mean the same thing in both models. The variance uses the law of total variance: the variance of $y$ is the average of the within-$\upsilon$ variance plus the variance of the within-$\upsilon$ mean. Given $\upsilon_i$, $y_i$ is Poisson, so its conditional variance and conditional mean are both $\lambda_i\upsilon_i$:
+
+$$
+\begin{aligned}
+var[y_i] &= E\big[var[y_i \mid \upsilon_i]\big] + var\big[E[y_i \mid \upsilon_i]\big] \\[4pt]
+&= E[\lambda_i \upsilon_i] + var[\lambda_i\upsilon_i] \\[4pt]
+&= \lambda_i + \lambda_i^2\, var[\upsilon_i] \\[4pt]
+&= \color{red}{\lambda_i + \alpha\lambda_i^2}
+\end{aligned}
+$$
+
+There it is. The first term is the Poisson variance. The second is the extra-Poisson variation, and it's governed by $\alpha$. When $\alpha = 0$, every unit has the same rate, the gamma collapses to a spike at one, and the negative binomial *is* the Poisson. When $\alpha > 0$, the variance exceeds the mean, and by more as the mean grows. The negative binomial allows the variance to exceed the mean; it cannot produce underdispersion.
+
+```{r nb-shapes}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-nb-shapes
+#| fig-height: 3.4
+#| fig-cap: "Poisson and negative binomial distributions with the same mean, 3."
+#| fig-alt: "Three overlaid distributions over counts 0 to 15, all with mean 3. The Poisson peaks at 2 and 3 with almost nothing above 9. The negative binomial with alpha 0.5 has more mass at zero and a longer tail. The negative binomial with alpha 2 is highest at zero, about 0.3, and declines steadily with a long right tail."
+
+nbs <- expand_grid(j = 0:15) %>%
+  mutate(`Poisson` = dpois(j, 3),
+         `Negative binomial, alpha = 0.5` = dnbinom(j, mu = 3, size = 1 / .5),
+         `Negative binomial, alpha = 2` = dnbinom(j, mu = 3, size = 1 / 2)) %>%
+  pivot_longer(-j, names_to = "distribution", values_to = "p")
+
+ggplot(nbs, aes(x = j, y = p, color = distribution, linetype = distribution, shape = distribution)) +
+  geom_line() +
+  geom_point(size = 2) +
+  scale_color_manual(values = c(bu_lightgreen, bu_teal, bu_green)) +
+  labs(x = "Count, j", y = "Pr(y = j)", color = NULL, linetype = NULL, shape = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+```
+
+Same mean, three very different distributions. As $\alpha$ grows, probability moves out of the middle and into *both* ends — more zeros and more large counts. That's exactly the pattern the Poisson missed in @fig-obs-pred.
+
+::: {.callout-important title="Estimation: know which dispersion parameter your software reports"}
+The log-likelihood is the log of the PMF above, summed over observations, with $\lambda_i = e^{x_i\beta}$; we maximize over the $\beta$s and the **ancillary parameter** together. The only thing to watch is how that ancillary parameter is defined, because it differs across software:
+
+- **R's `MASS::glm.nb`** reports $\theta = 1/\alpha$. A *large* $\theta$ means *little* overdispersion, and $\theta \rightarrow \infty$ is the Poisson.
+- **Stata's `nbreg`** reports $\alpha$ (and $\ln\alpha$). A large $\alpha$ means a lot of overdispersion, and $\alpha = 0$ is the Poisson.
+
+Same model, different parameterizations, and the numbers don't look alike: our $\widehat\theta$ of `r round(hs_nb$theta, 3)` is an $\widehat\alpha$ of `r round(1 / hs_nb$theta, 3)`. Check which one you're reading before you interpret it, and especially before you compare your estimate to someone else's.
+:::
+
+## Negative binomial example
+
+Here's a negative binomial regression of the violent events data, specified exactly as the Poisson model above.
+
+```{r hs-nb}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-hs-nb
+
+alpha_hs <- 1 / hs_nb$theta
+
+# dispersion rows: alpha (what Stata and most published work report) and theta
+# (what glm.nb estimates); alpha = 1 / theta, s.e. by the delta method
+nb_rows <- data.frame(term = c("alpha", "", "theta (= 1 / alpha)", ""),
+                      Poisson = c("", "", "", ""),
+                      `Negative binomial` = c(sprintf("%.3f", 1 / hs_nb$theta),
+                                              sprintf("(%.3f)", hs_nb$SE.theta / hs_nb$theta^2),
+                                              sprintf("%.3f", hs_nb$theta),
+                                              sprintf("(%.3f)", hs_nb$SE.theta)),
+                      check.names = FALSE)
+attr(nb_rows, "position") <- 2 * length(coef(hs_p)) + 1:4
+
+modelsummary(list("Poisson" = hs_p, "Negative binomial" = hs_nb),
+             stars = TRUE, coef_rename = hs_labels, gof_omit = "RMSE|F",
+             add_rows = nb_rows,
+             title = "Violent social conflict events per country-year, Poisson and negative binomial.",
+             notes = "alpha is the negative binomial dispersion parameter: var(y) = lambda + alpha lambda^2. glm.nb estimates theta = 1/alpha; alpha's standard error is by the delta method. The Poisson fixes alpha at zero.")
+```
+
+This is the model we fit for the likelihood ratio test above. $\widehat\theta$ = `r round(hs_nb$theta, 3)`, so $\widehat\alpha$ = 1/`r round(hs_nb$theta, 3)` = `r round(alpha_hs, 3)`, and the test against the Poisson gave $\chi^2$ = `r round(lr_hs, 1)`. The data are overdispersed due to some unobserved heterogeneity.
+
+Now compare the two columns. If the conditional mean, $e^{x\beta}$, were correctly specified, both models would be estimating the same $\beta$s, and the coefficients would differ only by sampling noise. They differ by more than that. Rainfall deviation falls from `r sprintf("%.3f", coef(hs_p)["rain"])` to `r sprintf("%.3f", coef(hs_nb)["rain"])`, Polity goes from `r sprintf("%.3f", coef(hs_p)["polity2"])` to `r sprintf("%.3f", coef(hs_nb)["polity2"])`, the time trend changes sign, and the coefficient on lagged events nearly doubles.
+
+Part of the reason is weighting. The negative binomial's score is $\sum_i \frac{y_i - \lambda_i}{1 + \alpha\lambda_i}\,x_i'$ — the Poisson's score with each residual divided by $1 + \alpha\lambda_i$. So observations with large expected counts count for less; the negative binomial treats them as noisy, which, given $\alpha$, they are. The Poisson lets the country-years with 30 and 60 events pull hard on the estimates. When two models that should estimate the same mean disagree this much, that is evidence the mean itself is misspecified — which is what $\alpha$ is telling us too (more on this below).
+
+And the standard errors:
+
+```{r se-ratio}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-se-ratio
+#| tbl-cap: "Standard errors, Poisson and negative binomial, violent events model."
+
+tibble(term = names(coef(hs_p)),
+       `Poisson s.e.` = sqrt(diag(vcov(hs_p))),
+       `NB s.e.` = sqrt(diag(vcov(hs_nb)))) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(term = hs_labels[term], ratio = `NB s.e.` / `Poisson s.e.`) %>%
+  kbl(digits = 3, col.names = c("Variable", "Poisson s.e.", "NB s.e.", "Ratio")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The negative binomial standard errors are about twice the Poisson's for nearly every variable, and more than three times for lagged events. These are the too-small standard errors the callout above warned about. Rainfall deviation, the lagged squared rainfall term, Polity, and population growth all clear conventional significance in the Poisson column, and none does in the negative binomial column — partly because the standard errors doubled, and partly because the estimates moved. Type I error time.
+
+## Did it fix the zeros?
+
+Back to the observed and predicted counts, now with the negative binomial.
+
+```{r obs-pred-nb}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-obs-pred-nb
+#| fig-height: 3.6
+#| fig-cap: "Observed share of each count against the average predicted probability, Poisson and negative binomial, violent events."
+#| fig-alt: !expr 'sprintf("Observed and predicted shares for violent event counts 0 to 15. Observed zeros are %.0f percent. The Poisson predicts %.0f percent zeros and misses the tail. The negative binomial predicts %.0f percent zeros and tracks the observed shares closely across the whole range.", 100 * mean(hs$events == 0), 100 * mean(dpois(0, fitted(hs_p))), 100 * mean(dnbinom(0, mu = fitted(hs_nb), size = hs_nb$theta)))'
+
+nb_dfun <- function(j, m) dnbinom(j, mu = fitted(m), size = m$theta)
+
+op_nb <- obs_pred(hs_p, 15) %>%
+  rename(Poisson = predicted) %>%
+  mutate(`Negative binomial` = obs_pred(hs_nb, 15, nb_dfun)$predicted) %>%
+  pivot_longer(-j, names_to = "series", values_to = "share") %>%
+  mutate(series = factor(series, levels = c("observed", "Poisson", "Negative binomial")))
+
+ggplot(op_nb, aes(x = j, y = share, color = series, linetype = series, shape = series)) +
+  geom_line() +
+  geom_point(size = 2) +
+  scale_color_manual(values = c(bu_black, bu_lightgreen, bu_green)) +
+  labs(x = "Count, j", y = "Share of observations", color = NULL, linetype = NULL, shape = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+```
+
+The negative binomial predicts `r round(100 * mean(dnbinom(0, mu = fitted(hs_nb), size = hs_nb$theta)))`% zeros against `r round(100 * mean(hs$events == 0))`% observed. Allowing extra-Poisson variation fixed most of what the Poisson got wrong — but we should ask *why* there are so many zeros. If some countries simply never produce violent social conflict events, that's not heterogeneity in a single rate; it's a second process. Next week.
+
+## Negative binomial predictions
+
+The U-shaped rainfall effect is the paper's argument. @fig-hs-rain plots expected violent events across rainfall deviations from both models, using the average-case approach: for each value of rainfall, set every observation's rainfall (and its square) to that value, predict for every observation, and take the median of the linear predictions and their standard errors. The intervals use the endpoint transformation.
+
+```{r hs-rain}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-hs-rain
+#| fig-height: 3.8
+#| fig-cap: "Expected violent events per country-year across deviations from normal rainfall, Poisson and negative binomial, with 95% intervals."
+#| fig-alt: "Two U-shaped curves of expected violent events against rainfall deviation from minus 3 to plus 3 standard deviations. The Poisson curve bottoms out at about 1.8 events and rises to about 2.5 at minus 3 and 3.5 at plus 3. The negative binomial curve is lower and flatter on the wet side, bottoming out at about 1.45 and rising to about 2.9 and 3.0. The negative binomial interval is much wider, roughly 1.6 to 5.1 at both extremes, against 1.9 to 3.3 and 2.8 to 4.4 for the Poisson."
+
+rain_grid <- seq(-3, 3, .1)
+
+avg_pred <- function(m) {
+  map_dfr(rain_grid, function(r) {
+    d <- hs %>% mutate(rain = r, rain_sq = r^2)
+    p <- predict(m, newdata = d, type = "link", se.fit = TRUE)
+    tibble(rain = r, xb = median(p$fit), se = median(p$se.fit))
+  })
+}
+
+rain_preds <- bind_rows(Poisson = avg_pred(hs_p),
+                        `Negative binomial` = avg_pred(hs_nb), .id = "model") %>%
+  mutate(ey = exp(xb), lb = exp(xb - 1.96 * se), ub = exp(xb + 1.96 * se),
+         model = factor(model, levels = c("Poisson", "Negative binomial")))
+
+ggplot(rain_preds, aes(x = rain, y = ey, color = model, fill = model, linetype = model)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), alpha = .25, color = NA) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = c(bu_lightgreen, bu_green)) +
+  scale_fill_manual(values = c(bu_greyfill, bu_palegreen)) +
+  labs(x = "Deviation from normal rainfall (standard deviations)",
+       y = "Expected violent events", color = NULL, fill = NULL, linetype = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+```
+
+Both curves are U-shaped, so the paper's argument survives the change of model. But the negative binomial curve is lower in the middle and flatter on the wet side, because its estimates moved, and its interval at the extremes is far wider: at three standard deviations of drought, `r with(subset(rain_preds, model == "Negative binomial" & rain == -3), sprintf("%.1f to %.1f", lb, ub))` expected events against the Poisson's `r with(subset(rain_preds, model == "Poisson" & rain == -3), sprintf("%.1f to %.1f", lb, ub))`.
+
+## $\alpha$ indicates poor model specification?
+
+If the overdispersion arises from unobserved heterogeneity, then the problem really could be one of model specification; if we could specify the sources of that heterogeneity in the data, we could include those variables in the model and account explicitly for the factors leading to overdispersion.
+
+Thus, as we change the specification of the model, evidence of overdispersion can disappear. So, $\alpha \neq 0|X_{c}$ but $\alpha = 0|X_{f}$, where $X_c$ is a less complete specification and $X_f$ a fuller one.
+
+Emphasizing ...
+
+The **ancillary parameter** $\alpha$, like many such parameters, soaks up heterogeneity we are failing to measure adequately in the model. Such parameters are almost always best thought of as indicators of poor model specification.
+
+If $\alpha$ is different from zero, we should be asking what variables (excluded) would explain the heterogeneity in the data - the heterogeneity in these models will be due to excess variance, most probably given by outlying values of $y$. Because the left limit is zero, outliers are higher counts.
+
+So what variables would predict the higher (extra Poisson) counts? In the violent events data, think about Nigeria and South Africa, which together account for `r round(100 * sum(hs$events[hs$country %in% c("Nigeria", "South Africa")]) / sum(hs$events))`% of all events in the sample.
+
+Let's watch it happen. @tbl-alpha-steps estimates the negative binomial on the violent events data in steps — no covariates, then the rainfall variables, then the controls, then lagged events, then a fixed effect for each country — and reports $\widehat\alpha$ at each step.
+
+```{r alpha-steps}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-alpha-steps
+#| tbl-cap: "The estimated dispersion parameter as the violent events model is filled in. Each row adds the variables named to the row above."
+
+alpha_steps <- list(
+  "No covariates" = events ~ 1,
+  "+ rainfall deviation, its square, and their lags" =
+    events ~ rain + rain_sq + rain_l + rain_l_sq,
+  "+ Polity, population, GDP, conflict, trend" =
+    events ~ rain + rain_sq + rain_l + rain_l_sq + polity2 + polity2_sq +
+      lnpop + popgrowth + lngdppc + gdpgrowth + incidence + ttrend,
+  "+ lagged events (the full model)" = hs_f,
+  "+ country fixed effects" = update(hs_f, . ~ . + factor(country)))
+
+map_dfr(alpha_steps, function(f) {
+  m <- glm.nb(f, data = hs, control = glm.control(maxit = 200))
+  tibble(alpha = 1 / m$theta, `se(alpha)` = m$SE.theta / m$theta^2,
+         `ln L` = as.numeric(logLik(m)))
+}, .id = "Model") %>%
+  kbl(digits = 3) %>%
+  kable_styling(full_width = FALSE)
+```
+
+With no covariates, $\widehat\alpha$ is about 2.6. Rainfall alone barely moves it. The controls cut it nearly in half, lagged events cut it again, and country fixed effects — which let Nigeria and South Africa have their own baseline rates — take it under 0.5. The extra-Poisson variance here wasn't random. Most of it was a function of things we can measure: population, prior violence, and the persistent differences between countries. Left out of the model, that variation has nowhere to go but $\alpha$, and the negative binomial reports it as dispersion. Put in, it is measured directly by the $\beta$s, and $\alpha$ shrinks to what's left. That's what it means to say $\alpha$ is an indicator of specification: it measures what we haven't explained, and the way to make it smaller is to explain more.
+
+::: {.callout-note title="Advice"}
+Always estimate the NB first. If $\alpha=0$, the model is Poisson, but inefficient because you estimated an additional, unnecessary parameter. So now, estimate and report the Poisson. Say clearly in the text that you report the Poisson because the NB showed no evidence of overdispersion.
+
+If $\alpha > 0$, report the NB — but don't stop there. $\alpha$ is telling you something is missing from the model, so go looking for the variables that would explain the extra variation. And compare the NB and Poisson coefficients: if they differ a lot, as they do in the violent events data, the problem is in the mean, not only the variance, and the NB alone doesn't fix that.
+:::
+
+# Counts and hazards
+
+So far, $y$ has been the number of events in a period. But the same events could be described differently — as the time *between* events. The fact that $d$ is usually some period of time, and that $\lambda$ is a rate of occurrence over time, is interesting:
+
+- these models observe or count events per **spell**.
+- we can imagine dividing a spell, $d$, into segments between events.
+- we could count the time units between events, or count the events within each period.
+- so instead of counting events, we could count time between events.
+
+## One process, three data structures, three models
+
+The same events can be recorded three ways, and **each data structure implies a different model**, because each makes $y$ a different kind of variable. I'll label them Structure 1, 2, and 3 and carry the labels through the rest of the section.
+
+**Structure 1 — counts per period. $y$ is a count, so the model is a count model** (Poisson or negative binomial). Suppose data that look like this:
+
+| Year | Events |
+|:----:|:------:|
+| 1945 |   0    |
+| 1946 |   3    |
+| 1947 |   1    |
+| 1948 |   0    |
+| 1949 |   0    |
+| 1950 |   1    |
+
+: Structure 1 — events per year. $y$ is a count → Poisson or negative binomial.
+
+The unit of observation is the year, and $y$ is how many events happened in it. That's what we've done all week. But the same events could be recorded differently.
+
+**Structure 2 — spells. $y$ is a duration, so the model is a duration (survival) model.** Record the time between events instead:
+
+| Spell ends | Months in spell | Event? | Event month |
+|:----------:|:---------------:|:------:|:-----------:|
+|    1946    |       15        |   1    |    March    |
+|    1946    |        6        |   1    |  September  |
+|    1946    |        1        |   1    |   October   |
+|    1947    |        4        |   1    |  February   |
+|    1950    |       37        |   1    |    March    |
+
+: Structure 2 — one row per spell. $y$ is a duration (months until the event) → a duration model (exponential, Weibull, Cox).
+
+The unit of observation is now the spell, and $y$ is how long it lasted before the event ended it — a positive, continuous-ish quantity, which calls for a duration model, not a count model.
+
+**Structure 3 — period records. $y$ is binary, so the model is a binary model of the hazard: the discrete-time hazard model.** Break each spell into the periods it covers — here, months — with one row per month:
+
+|   Year   |  Month   |  Event   |
+|:--------:|:--------:|:--------:|
+|   1946   |    1     |    0     |
+|   1946   |    2     |    0     |
+|   1946   |    3     |    1     |
+|   1946   |    4     |    0     |
+| $\vdots$ | $\vdots$ | $\vdots$ |
+|   1946   |    9     |    1     |
+|   1946   |    10    |    1     |
+|   1946   |    11    |    0     |
+| $\vdots$ | $\vdots$ | $\vdots$ |
+
+: Structure 3 — one row per month. $y$ is binary (event or not that month) → a discrete-time hazard model (logit or cloglog).
+
+The unit of observation is the month, and $y$ is whether the event happened in it. A binary $y$ calls for a binary model, and a binary model of whether the event happens in each period, given it hasn't yet, is the discrete-time hazard model from [Week 5](discretehazards26.html).
+
+| | Structure 1 | Structure 2 | Structure 3 |
+|:--|:--|:--|:--|
+| One row per | period (year) | spell | period at risk (month) |
+| $y$ is | a count of events | a duration until the event | binary: event or not |
+| Model | Poisson, negative binomial | duration model (exponential, Weibull, Cox) | discrete-time hazard (logit, cloglog) |
+
+: The same events, three data structures, three models.
+
+These aren't three different phenomena — they're three views of one process, and the models are related to each other in exact ways. The rest of this section shows how: Structure 1 and Structure 2 are linked by the exponential distribution, and Structure 1 and Structure 3 are linked by the offset and the complementary log-log.
+
+## Counting and waiting
+
+**Structure 1 and Structure 2: counts and durations.** Go back to the Poisson derivation. Events arrive at a constant rate $\lambda$, independently. We asked how many arrive in a period. Ask instead: how long until the first one? The probability that the wait is longer than $t$ is the probability of *zero* events in a period of length $t$ — and that's a Poisson probability with exposure $t$:
+
+$$
+Pr(T > t) = Pr(y = 0 \text{ in } [0, t]) = \frac{e^{-\lambda t}(\lambda t)^0}{0!} = e^{-\lambda t}
+$$
+
+That's the survivor function of the **exponential** distribution, with hazard rate $\lambda$. So if counts per period are Poisson with rate $\lambda$, waiting times between events are exponential with the same $\lambda$, and vice versa. The rate in the count model and the hazard in the duration model are the same parameter.
+
+Let's see it. I simulate a long stream of events by drawing exponential waiting times with rate $\lambda = 2$, then chop the stream into periods of length one and count the events in each.
+
+```{r poisson-process}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-poisson-process
+#| fig-height: 3.4
+#| fig-cap: "One simulated process with rate 2, viewed two ways: waiting times between events, and counts per period."
+#| fig-alt: "Two panels from the same simulation. Left: a histogram of waiting times between events, declining from a peak at zero, with the exponential density at rate 2 drawn over it and matching closely. Right: bars of the share of periods with 0 through 8 events, with Poisson probabilities at rate 2 as points matching the bar heights."
+
+waits <- rexp(20000, rate = 2)
+arrivals <- cumsum(waits)
+periods <- floor(max(arrivals))
+counts <- tabulate(floor(arrivals[arrivals < periods]) + 1, nbins = periods)
+
+p_wait <- ggplot(tibble(w = waits), aes(x = w)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = .1, boundary = 0,
+                 fill = bu_palegreen, color = bu_green) +
+  stat_function(fun = dexp, args = list(rate = 2), color = bu_black, linewidth = 1) +
+  coord_cartesian(xlim = c(0, 3)) +
+  labs(x = "Waiting time between events", y = "Density", subtitle = "Exponential(2)") +
+  theme_bu()
+
+p_count <- tibble(j = 0:8) %>%
+  mutate(observed = map_dbl(j, ~ mean(counts == .x)), poisson = dpois(j, 2)) %>%
+  ggplot(aes(x = j)) +
+  geom_col(aes(y = observed), fill = bu_palegreen, color = bu_green, width = .7) +
+  geom_point(aes(y = poisson), color = bu_black, size = 2) +
+  labs(x = "Events per period", y = "Share of periods", subtitle = "Poisson(2)") +
+  theme_bu()
+
+p_wait + p_count
+```
+
+The mean count per period is `r round(mean(counts), 3)` and the mean waiting time is `r round(mean(waits), 3)` — one is the inverse of the other, because a rate of two events per period means half a period between events, on average.
+
+## Counting events in the risk set
+
+**Structure 3 and Structure 1: the hazard as a count.** In [Week 5](discretehazards26.html) we computed the empirical hazard by counting: at each survival time, the number of leaders who leave office divided by the number still in office at the start of that year — the risk set. Look at that ratio again. The numerator is a count of events; the denominator is an exposure. An empirical hazard is a count divided by its exposure, which is exactly the rate a Poisson with an offset estimates.
+
+Let's do it. I collapse the leader-years to one row per year of tenure, holding the number of exits and the number of leaders at risk, and fit a Poisson to the exits with the log of the number at risk as an offset and a dummy for each year of tenure. With a dummy for every year, the Poisson's estimate of each year's rate is just that year's exits over that year's number at risk — the score for each dummy is $\sum(y - \lambda) = 0$ within its year — so the exponentiated coefficients should reproduce the empirical hazard exactly.
+
+```{r risk-set}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-risk-set
+#| tbl-cap: "Leaving office by year of tenure: the empirical hazard and the Poisson rate with the risk set as exposure."
+
+# one row per year of tenure: exits, and leaders at risk
+by_t <- lt %>%
+  group_by(t) %>%
+  summarize(exits = sum(leftoffice), at_risk = n(), .groups = "drop")
+
+h_base <- glm(exits ~ 0 + factor(t) + offset(log(at_risk)), data = by_t, family = poisson)
+
+by_t %>%
+  mutate(empirical = exits / at_risk,
+         poisson = exp(coef(h_base))) %>%
+  head(8) %>%
+  kbl(digits = 4, col.names = c("Year of tenure", "Exits", "At risk",
+                                "Empirical hazard", "Poisson rate")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The two columns are identical. The Poisson with the risk set as its exposure *is* the empirical hazard. Notice what each column means: the Poisson rate in year one is the expected number of exits per leader at risk, and since a leader can leave office only once in a year, that is the probability a leader in their first year leaves office — the hazard.
+
+## Grouped counts and person-period data
+
+**Structure 1 against Structure 3, with a covariate.** Now add a covariate. I'll use a democracy indicator (Polity of 6 or more) because a categorical variable lets us collapse the data into cells: one row per year of tenure for democracies and one for everyone else, `r nrow(unique(lt[c("t", "democracy")]))` rows in all, each holding the exits and the number at risk. Fit the Poisson to those counts with the offset — and, separately, fit a Poisson directly to the `r format(nrow(lt), big.mark = ",")` leader-years, where $y$ is the 0/1 exit indicator and each row is exposed for one year, so its offset is $\ln 1 = 0$.
+
+```{r grouped}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-grouped
+#| tbl-cap: "Democracy and leaving office: Poisson on grouped counts and on person-period data."
+
+cells <- lt %>%
+  group_by(t, democracy) %>%
+  summarize(exits = sum(leftoffice), at_risk = n(), .groups = "drop")
+
+h_grouped <- glm(exits ~ democracy + factor(t) + offset(log(at_risk)), data = cells, family = poisson)
+h_pp      <- glm(leftoffice ~ democracy + factor(t), data = lt, family = poisson)
+
+tibble(data = c(paste0("Grouped counts (", nrow(cells), " rows)"),
+                paste0("Person-period (", format(nrow(lt), big.mark = ","), " rows)")),
+       estimate = c(coef(h_grouped)["democracy"], coef(h_pp)["democracy"]),
+       s.e. = c(sqrt(vcov(h_grouped)["democracy", "democracy"]),
+                sqrt(vcov(h_pp)["democracy", "democracy"]))) %>%
+  kbl(digits = 8, col.names = c("Data", "Democracy", "s.e.")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+Same estimate, same standard error, from `r nrow(cells)` rows or `r format(nrow(lt), big.mark = ",")`. The reason is in the log-likelihood: when the covariates are constant within a cell, the terms containing $\beta$ — $\sum y_i x_i\beta$ and $\sum e^{x_i\beta}$ — depend on the data only through each cell's total events and total exposure. The individual rows contribute nothing else except the $\ln(y_i!)$ terms, which have no $\beta$ in them. So counting events per cell and modeling the count with an offset is the same thing as modeling each unit-period's event.
+
+And the exponentiated coefficient, $e^{`r sprintf("%.3f", coef(h_pp)["democracy"])`}$ = `r sprintf("%.2f", exp(coef(h_pp)["democracy"]))`, is an incidence rate ratio that is also a **hazard ratio**: in any given year of tenure, democratic leaders leave office at about `r sprintf("%.2f", exp(coef(h_pp)["democracy"]))` times the rate of other leaders.
+
+## The logit, the cloglog, and the Poisson
+
+**Structure 3, three links.** In Week 5 we estimated the discrete-time hazard with a logit on the person-period data — Structure 3, binary $y$. How does that relate to the Poisson, which we've been fitting to Structure 1? The link between them runs through the **complementary log-log**.
+
+Suppose events in a period arrive as a Poisson process with rate $\lambda_{it}$, but all we record is whether *any* event happened — a 0/1 variable, like whether a leader left office this year. The probability of at least one event is one minus the probability of none:
+
+$$
+\begin{aligned}
+Pr(y_{it} = 1) &= 1 - Pr(\text{no events}) \\[4pt]
+&= 1 - e^{-\lambda_{it}} \\[4pt]
+&= 1 - \exp\left(-e^{x_{it}\beta}\right)
+\end{aligned}
+$$
+
+That last line is the complementary log-log link. So a cloglog model of a binary hazard is a Poisson rate model for data where we only see whether the count was zero or not, and its $\beta$s are on the same scale as the Poisson's. The Poisson fit directly to the 0/1 variable treats it as a count, ignoring that it can't exceed one; the logit models the odds rather than the rate. When events are rare in each period, none of this matters much: $1 - e^{-\lambda} \approx \lambda$, and the odds $\frac{p}{1-p} \approx p$, so all three models estimate nearly the same thing. When events are common, they come apart.
+
+Here are all three on two sets of person-period data from Week 5: leader-years, where about `r round(100 * mean(lt$leftoffice))`% of rows end in an exit, and the dispute dyad-years, where about `r round(100 * mean(survivaldp$dispute))`% of rows have a dispute. Both use Week 5's specifications — a dummy for each year of tenure for leaders, a cubic in peace-years for disputes. For disputes I fit the models twice: on every dyad-year, and on the dyad-years after the first year of peace (survival time greater than zero).
+
+```{r three-links}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-three-links
+#| tbl-cap: "The same discrete-time hazard estimated three ways."
+
+fit3 <- function(f, d) {
+  list(logit   = glm(f, data = d, family = binomial(link = "logit")),
+       cloglog = glm(f, data = d, family = binomial(link = "cloglog")),
+       poisson = glm(f, data = d, family = poisson))
+}
+
+f_disp <- dispute ~ border + deml + lncaprat + ally + stime + stime2 + stime3
+
+lead3  <- fit3(leftoffice ~ democracy + factor(t), lt)
+disp3  <- fit3(f_disp, survivaldp)
+disp3b <- fit3(f_disp, filter(survivaldp, stime > 0))
+
+tibble(model = c("Logit", "Complementary log-log", "Poisson"),
+       lead_dem = map_dbl(lead3, ~ coef(.x)["democracy"]),
+       all_border = map_dbl(disp3, ~ coef(.x)["border"]),
+       all_deml = map_dbl(disp3, ~ coef(.x)["deml"]),
+       later_border = map_dbl(disp3b, ~ coef(.x)["border"]),
+       later_deml = map_dbl(disp3b, ~ coef(.x)["deml"])) %>%
+  kbl(digits = 4, col.names = c("Model", "Democracy", "Shared border", "Min. democracy",
+                                "Shared border", "Min. democracy")) %>%
+  add_header_above(c(" " = 1, "Leaders" = 1, "Disputes, all years" = 2,
+                     "Disputes, survival time > 0" = 2)) %>%
+  kable_styling(full_width = FALSE)
+
+# dispute rate in the year right after a dispute, and everywhere else
+s0_rates <- survivaldp %>%
+  group_by(first_year = stime == 0) %>%
+  summarize(rate = mean(dispute), disputes = sum(dispute))
+```
+
+For leaders, where nearly one row in five is an exit, the logit's democracy coefficient is noticeably larger than the Poisson's, and the cloglog sits between them. Neither is wrong; the logit is on the odds scale, and odds and rates diverge as events become common.
+
+The disputes are more interesting. Overall, disputes are rare, and yet the logit's border coefficient is just as far from the Poisson's as it is for leaders. The reason is that the average hides where the events are. `r round(100 * s0_rates$disputes[s0_rates$first_year] / sum(s0_rates$disputes))`% of all disputes happen in the year right after a dispute, survival time zero, where the dispute rate is `r round(100 * s0_rates$rate[s0_rates$first_year])`% — that's Week 5's lesson about memory. Drop those years and the rate in the rest of the data is `r sprintf("%.1f", 100 * s0_rates$rate[!s0_rates$first_year])`%; now the three models agree closely. What decides whether the logit approximates the rate model is how common the event is in the observations that carry the information, not the overall average.
+
+Putting these together: a count model with an offset is a hazard model. The empirical hazard from Week 5 is a Poisson rate with the risk set as its exposure. Grouped counts and person-period rows give the same Poisson. The cloglog is the Poisson seen through a 0/1 lens, and the Week 5 logit approximates both when events are rare. In Week 11 we'll see that this connection runs all the way to the Cox model.
+
+# Take away points
+
+- A count is a number of events per unit of exposure. If the number of trials is known and finite, it's a proportion, not a count.
+- The Poisson is the binomial with infinitely many, infinitely unlikely trials. Its three assumptions — constant rate, no simultaneous events, independence — come straight from that derivation.
+- The Poisson regression parameterizes the rate as $\lambda_i = e^{x_i\beta}$. Its log-likelihood is globally concave, so estimation is easy.
+- Interpretation is everything: IRRs are ratios; expected counts and probabilities of particular counts are the quantities a reader can use.
+- When exposure varies, use an offset — or estimate the coefficient on log exposure and test whether it's one.
+- The Poisson's single parameter forces the variance to equal the mean. Overdispersed data leave the coefficients consistent but the standard errors too small. Check by estimating the negative binomial and testing $\alpha = 0$ with a likelihood ratio test; the Pearson statistic, the Cameron-Trivedi regression, and observed against predicted counts show the same thing in other ways.
+- The negative binomial adds $\alpha$, giving variance $\lambda + \alpha\lambda^2$. Estimate it first; if $\alpha = 0$, report the Poisson. If $\alpha > 0$, ask what unmeasured variable it's standing in for.
+- Counts and durations are two views of the same process. The Poisson rate is the exponential hazard; the empirical hazard is a Poisson rate with the risk set as exposure; and the cloglog is the Poisson seen through a 0/1 variable.
+
+# Coming up next
+
+The violent events data have a lot of zeros — `r round(100 * mean(hs$events == 0))`% of country-years. The negative binomial accounts for most of them by widening the distribution. But some of those zeros may come from countries where violent social conflict was never going to happen in a given year, rather than from countries where it could have and didn't. Those are two different processes, and next week we'll model them separately with zero-inflated and split-population models.
+
+# References
+
+::: {#refs}
+:::

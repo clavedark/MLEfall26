@@ -1,0 +1,1708 @@
+---
+title: "Traffic Cameras in DC"
+subtitle: "Where the cameras go, and how many tickets they write"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: false   # renders in seconds; caching would not see a rebuilt data file
+filters:
+  - parse-latex
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE}
+options(htmltools.dir.version = FALSE)
+
+# R starts in the C locale here, which cannot encode non-ASCII characters. Any
+# Greek letter, minus sign, or +/- typed into a ggplot title, subtitle, axis
+# label, or annotation gets drawn as the literal text <U+03B1>. Setting a UTF-8
+# ctype fixes it for the whole document.
+Sys.setlocale("LC_CTYPE", "en_US.UTF-8")
+
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+library(sf)
+library(patchwork)
+library(modelsummary)
+library(kableExtra)
+library(marginaleffects)
+library(MASS)       # glm.nb
+library(leaflet)    # the interactive map
+
+source("_common.R")   # Binghamton palette + theme_bu()
+
+# MASS masks dplyr::select
+select <- dplyr::select
+
+set.seed(20261007)
+
+# One row per fixed camera: tickets issued Sept 2025 - Aug 2026 in months the
+# camera was live, plus road and tract characteristics. Built by make-dccameras.R.
+cams <- read_csv(here::here("data", "dccameras.csv"),
+                 col_types = cols(tract = "c", ward = "c")) %>%
+  mutate(type = factor(type, levels = c("red light", "speed", "stop sign")),
+         lnaadt = log(aadt),
+         lncrashes = log(crashes),
+         lninc = log(medinc))
+
+# One row per 2020 census tract: the number of cameras placed in it.
+tracts <- read_csv(here::here("data", "dctracts.csv"), col_types = cols(tract = "c")) %>%
+  mutate(lnmajorkm = log(majorkm),
+         lncrashes = log(crashes),
+         lninc = log(medinc))
+
+# the same tracts with their polygons, for the map
+tracts_sf <- st_read(here::here("data", "dctracts.gpkg"), quiet = TRUE)
+
+# rivers and lakes, for the maps
+water_sf <- st_read(here::here("data", "dcwater.gpkg"), quiet = TRUE)
+```
+
+<style>
+table, th, td { font-size: 18px; }
+tr:nth-child(odd) { background-color: #f2f2f2; }
+</style>
+
+# The question
+
+Washington, DC runs a lot of traffic cameras. In the twelve months from September 2025 through August 2026, its `r nrow(cams)` fixed speed, red-light, and stop-sign cameras issued `r format(sum(cams$tickets), big.mark = ",")` tickets. The program is defended as a safety measure — cameras slow drivers down, and slower drivers kill fewer pedestrians. It is criticized as a revenue program, and, more pointedly, as one whose burden falls disproportionately on Black neighborhoods. @farrell2018dcpc made exactly that argument for the DC Policy Center, finding that census tracts with more Black residents saw more automated tickets, despite not having more crashes.
+
+That's an equity question, and it's really two questions, because the number of tickets written in a neighborhood is the product of two things:
+
+1. **Placement** — how many cameras does DDOT put in a neighborhood?
+2. **Yield** — how many tickets does each camera write once it's there?
+
+A neighborhood could bear more enforcement because it gets more cameras, because its cameras write more tickets, or both. These are different processes with different explanations — placement is a decision DDOT makes; yield is mostly about traffic and driver behavior — so I'm going to model them separately. Both outcomes are counts. The number of cameras in a tract is a small count with a lot of zeros; the number of tickets a camera writes is a large count with an enormous variance. The two make a nice pair for thinking about the Poisson and the negative binomial, because one is nearly Poisson and the other is not at all.
+
+# The data
+
+Everything here is public. [`make-dccameras.R`](https://github.com/clavedark/MLEfall26/blob/main/make-dccameras.R) pulls it, joins it, and writes two analysis files (plus the map layers and a camera-month panel used for the novelty check at the end):
+
+- **`dccameras.csv`**, one row per camera (N = `r nrow(cams)`). The outcome is the number of tickets the camera issued from September 2025 through August 2026, counting only months when the camera was live — warning-period, test, and idle months are dropped. `months` records how many live months that was; `r sum(cams$months == 12)` cameras were live all twelve.
+- **`dctracts.csv`**, one row per 2020 census tract (N = `r nrow(tracts)`). The outcome is the number of those cameras located in the tract.
+
+The sources:
+
+| Variable | Source |
+|---|---|
+| Tickets by camera and month; camera location, type, speed limit | DDOT Automated Safety Cameras, Open Data DC |
+| Traffic volume (AADT) on the camera's road | DDOT Traffic Volume 2024, nearest road segment |
+| Road functional class; km of major road per tract | DDOT Roadway Functional Classification |
+| Crashes, 2019--2022 (within 150 m of a camera; per tract) | Vehicular Crash Data, Open Data DC |
+| % Black, median household income, % households with no car | ACS 2020--2024 5-year estimates, tract level |
+
+A few choices in the build are worth stating. Traffic volume is the annual average daily traffic (AADT) of the 2024 count segment nearest the camera. At an intersection, the nearest segment may be the cross street rather than the street the camera watches; `dist_aadt` records the distance so this can be checked, and I check it below. Crashes are counted over 2019--2022, before most of the current cameras went in, so they measure how dangerous the location was rather than the camera's effect on it. Tract characteristics are those of the tract the camera stands in — which is not the same thing as the people who get the tickets. More on that at the end.
+
+Two versions of the same map. The static one is the overview. The interactive one lets you zoom in, see the streets and rivers underneath, and click on any tract or camera for its numbers.
+
+::: {.panel-tabset}
+
+## Static map
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-map
+#| fig-height: 7
+#| fig-cap: "DC census tracts shaded by percent Black (ACS 2020-2024), with each fixed traffic camera. Points are sized by tickets per month. White lines are tract boundaries; blue is water."
+#| fig-alt: !expr 'sprintf("Map of Washington, DC census tracts, outlined in white and shaded from light grey (few Black residents) to dark green (nearly all Black residents). The Potomac River runs along the southwest edge of the city and the Anacostia River cuts diagonally through its southeast, both drawn in blue and labeled. The dark tracts are concentrated east of the Anacostia and in the northeast; the light tracts are in the northwest. %d camera locations are drawn as black points sized by tickets per month. Cameras are spread across the city but are dense along the major roads of the east and northeast, including the border roads with Maryland.", nrow(cams))'
+
+cams_sf <- cams %>%
+  mutate(tpm = tickets / months) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+# label positions for the two rivers (longitude, latitude)
+river_labels <- tibble(label = c("Anacostia River", "Potomac River"),
+                       lon = c(-76.975, -77.031), lat = c(38.887, 38.828),
+                       angle = c(48, 78))
+
+ggplot() +
+  geom_sf(data = tracts_sf, aes(fill = pctblack), color = "white", linewidth = .2) +
+  geom_sf(data = water_sf, fill = "#8DB6CF", color = NA) +
+  geom_sf(data = cams_sf, aes(size = tpm), shape = 21, fill = bu_black,
+          color = "white", stroke = .2, alpha = .8) +
+  geom_label(data = river_labels, aes(x = lon, y = lat, label = label, angle = angle),
+             size = 3, fontface = "italic", color = "#1F3F55", fill = "white",
+             alpha = .75, label.size = 0, label.padding = unit(.1, "lines")) +
+  scale_fill_gradient(low = "#EDEDED", high = bu_green, name = "% Black") +
+  scale_size_area(max_size = 5, name = "Tickets\nper month") +
+  coord_sf(xlim = st_bbox(tracts_sf)[c(1, 3)], ylim = st_bbox(tracts_sf)[c(2, 4)]) +
+  theme_void() +
+  theme(legend.position = "right")
+```
+
+## Interactive map
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: map-interactive
+
+# tract polygons simplified to 3 m (projected), which keeps the page small
+# without visibly moving any boundary; tract number as the Census Bureau writes
+# it: the last six digits of the GEOID, divided by 100
+tracts_map <- tracts_sf %>%
+  st_transform(26985) %>%
+  st_simplify(preserveTopology = TRUE, dTolerance = 3) %>%
+  st_transform(4326) %>%
+  mutate(tract_no = as.numeric(substr(tract, 6, 11)) / 100,
+         popup = sprintf(paste0("<b>Census tract %s</b><br>",
+                                "Population: %s<br>",
+                                "%% Black: %.1f<br>",
+                                "Median household income: %s<br>",
+                                "Crashes, 2019-2022: %s<br>",
+                                "km of major road: %.1f<br>",
+                                "Cameras: %d"),
+                         tract_no, scales::comma(tractpop), pctblack,
+                         ifelse(is.na(medinc), "not reported", scales::dollar(medinc * 1000)),
+                         scales::comma(crashes), majorkm, as.integer(ncams)))
+
+cams_map <- cams_sf %>%
+  mutate(popup = sprintf(paste0("<b>%s</b><br>",
+                                "%s camera, %d mph<br>",
+                                "Tickets per month: %s<br>",
+                                "Months live: %d<br>",
+                                "Average daily traffic: %s"),
+                         location, type, speedlimit, scales::comma(tpm), months,
+                         scales::comma(aadt)))
+
+pal <- colorNumeric(c("#EDEDED", bu_green), domain = c(0, 100))
+
+# explicit starting view: the tab is hidden when the page loads, so leaflet
+# can't fit the bounds to a map it can't measure
+leaflet(tracts_map, height = 650) %>%
+  setView(lng = -77.015, lat = 38.895, zoom = 12) %>%
+  addProviderTiles(providers$OpenStreetMap, group = "Streets") %>%
+  addProviderTiles(providers$Esri.WorldGrayCanvas, group = "Light grey") %>%
+  addPolygons(fillColor = ~ pal(pctblack), fillOpacity = .55,
+              color = "#333333", weight = 1, opacity = .8,
+              label = ~ paste("Census tract", tract_no), popup = ~ popup,
+              highlightOptions = highlightOptions(weight = 3, color = bu_black,
+                                                  bringToFront = FALSE),
+              group = "Census tracts (% Black)") %>%
+  addCircleMarkers(data = cams_map, radius = ~ 1.5 + sqrt(tpm) / 12,
+                   fillColor = bu_black, fillOpacity = .8, color = "white", weight = 1,
+                   label = ~ location, popup = ~ popup, group = "Cameras") %>%
+  addLegend(pal = pal, values = c(0, 100), title = "% Black", position = "bottomright") %>%
+  addLayersControl(baseGroups = c("Streets", "Light grey"),
+                   overlayGroups = c("Census tracts (% Black)", "Cameras"),
+                   options = layersControlOptions(collapsed = FALSE)) %>%
+  htmlwidgets::onRender(sprintf(
+    "function(el) { el.setAttribute('role', 'region'); el.setAttribute('aria-label', '%s'); }",
+    paste("Interactive map of Washington DC, zoomable, with the same content as the static map:",
+          nrow(tracts_map), "census tracts shaded by percent Black, with boundaries outlined,",
+          "and", nrow(cams_map), "cameras as points sized by tickets per month,",
+          "over a street map that shows the rivers. Click a tract or a camera for its values.")))
+```
+
+Hover over a tract for its number, and click it for its population, racial composition, income, crashes, road, and cameras; click a camera for its location, type, and tickets. The layer control in the corner switches the street map and turns the tracts or the cameras off. (The street tiles load from the web, so this tab needs an internet connection; the tracts and cameras are in the page itself.)
+
+:::
+
+**What is a census tract?** Tracts are small, fairly permanent areas the Census Bureau draws for reporting statistics. They're designed to hold between about 1,200 and 8,000 people, with 4,000 the target, and to be relatively homogeneous in population and housing when they're first drawn. Their boundaries usually follow visible features — major streets, rivers, rail lines, parks — which is why, zoomed in, so many DC tracts are bounded by avenues and why the Anacostia is a tract boundary along its whole length. DC has `r nrow(tracts)` of them; in these data the median tract has `r scales::comma(median(tracts$tractpop))` residents and covers `r round(median(tracts$areakm2), 2)` square kilometers. A tract is not a neighborhood in the sense residents would recognize — a neighborhood like Anacostia or Columbia Heights spans several — but it's the smallest area for which the ACS publishes reasonably reliable estimates of things like income, and so it's what we use to describe "the neighborhood a camera sits in."
+
+The cameras are all over the city, but they are not spread evenly. The darkest tracts — east of the Anacostia River in Wards 7 and 8, and the northeast — have a lot of them, many strung along the big arterials and the Maryland line. But those are also places with big roads and a lot of crashes. Whether the cameras follow race or follow roads and danger is what the placement model has to sort out.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-dists
+#| fig-height: 3.4
+#| fig-cap: "Left: cameras per census tract. Right: tickets per camera per month (log scale)."
+#| fig-alt: !expr 'sprintf("Two panels. Left, a bar chart of cameras per tract: %d tracts have none, %d have one, %d have two, and the counts thin out to a maximum of %d. Right, a histogram of tickets per camera per month on a log scale, running from about %d to about %s, roughly symmetric on the log scale with its center near %d.", sum(tracts$ncams == 0), sum(tracts$ncams == 1), sum(tracts$ncams == 2), max(tracts$ncams), round(min(cams$tickets / cams$months)), format(round(max(cams$tickets / cams$months)), big.mark = ","), round(median(cams$tickets / cams$months)))'
+
+p1 <- ggplot(tracts, aes(x = ncams)) +
+  geom_bar(fill = bu_green, width = .7) +
+  scale_x_continuous(breaks = 0:max(tracts$ncams)) +
+  labs(x = "Cameras in the tract", y = "Tracts") +
+  theme_bu()
+
+p2 <- ggplot(cams, aes(x = tickets / months)) +
+  geom_histogram(fill = bu_green, color = "white", bins = 30) +
+  scale_x_log10(labels = scales::comma) +
+  labs(x = "Tickets per month (log scale)", y = "Cameras") +
+  theme_bu()
+
+p1 + p2
+```
+
+The two outcomes look nothing alike. Cameras per tract has a mean of `r round(mean(tracts$ncams), 2)` and a variance of `r round(var(tracts$ncams), 2)`, and `r sum(tracts$ncams == 0)` of the `r nrow(tracts)` tracts have no camera at all. Tickets per camera per month has a median of `r round(median(cams$tickets / cams$months))`, a mean of `r round(mean(cams$tickets / cams$months))`, and a standard deviation of `r format(round(sd(cams$tickets / cams$months)), big.mark = ",")` — the variance is about `r format(round(var(cams$tickets / cams$months) / mean(cams$tickets / cams$months)), big.mark = ",")` times the mean. Those are unconditional figures; the question is how much of the spread survives the covariates. But it's a strong hint about where we're headed.
+
+Here are the variables in each file. The tract file has one row per tract whether or not it has a camera; the camera file has one row per camera, and its neighborhood variables are those of the tract the camera stands in.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-desc-tracts
+#| tbl-cap: "Census tracts (N = 206)."
+
+describe <- function(d, vars) {
+  tibble(Variable = names(vars), x = map(vars, ~ d[[.x]])) %>%
+    mutate(N = map_int(x, ~ sum(!is.na(.x))),
+           Mean = map_dbl(x, ~ mean(.x, na.rm = TRUE)),
+           SD = map_dbl(x, ~ sd(.x, na.rm = TRUE)),
+           Min = map_dbl(x, ~ min(.x, na.rm = TRUE)),
+           Median = map_dbl(x, ~ median(.x, na.rm = TRUE)),
+           Max = map_dbl(x, ~ max(.x, na.rm = TRUE))) %>%
+    select(-x)
+}
+
+describe(tracts, c("Cameras in the tract" = "ncams",
+                   "km of major road" = "majorkm",
+                   "Crashes, 2019-2022" = "crashes",
+                   "% Black" = "pctblack",
+                   "Median household income ($000)" = "medinc",
+                   "% households with no car" = "pctnocar",
+                   "Population (000s per sq. km)" = "popdens")) %>%
+  kbl(digits = 1, format.args = list(big.mark = ",")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-desc-cams
+#| tbl-cap: "Cameras (N = 295)."
+
+cams %>%
+  mutate(tpm = tickets / months,
+         speed = as.integer(type == "speed"),
+         redlight = as.integer(type == "red light"),
+         stopsign = as.integer(type == "stop sign")) %>%
+  describe(c("Tickets, Sept 2025-Aug 2026" = "tickets",
+             "Months live" = "months",
+             "Tickets per month" = "tpm",
+             "Speed camera" = "speed",
+             "Red-light camera" = "redlight",
+             "Stop-sign camera" = "stopsign",
+             "Speed limit (mph)" = "speedlimit",
+             "Average daily traffic" = "aadt",
+             "Distance to traffic count segment (m)" = "dist_aadt",
+             "Crashes within 150 m, 2019-2022" = "crashes",
+             "% Black (tract)" = "pctblack",
+             "Median household income, $000 (tract)" = "medinc")) %>%
+  kbl(digits = 1, format.args = list(big.mark = ",")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+Of the `r nrow(tracts)` tracts, `r sum(is.na(tracts$medinc))` have no median household income in the ACS — the National Mall tract, with `r tracts$tractpop[tracts$tract == "11001980000"]` residents, and `r sum(is.na(tracts$medinc)) - 1` populated tracts where the Census Bureau published no estimate. The models below use a common sample that drops those tracts and the `r sum(is.na(cams$medinc))` cameras that sit in them.
+
+# Part 1: Where do the cameras go?
+
+## A first look
+
+Before any model, @fig-tract-scatter plots the number of cameras in each tract against the two variables the argument is about: % Black, and crashes. The lines are local (loess) smooths, just to show the shape.[^loess]
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-tract-scatter
+#| fig-height: 3.6
+#| fig-cap: "Cameras per tract against percent Black and against crashes (2019-2022, log scale). Points are jittered vertically; lines are loess smooths."
+#| fig-alt: !expr 'sprintf("Two scatterplots of cameras per tract, jittered, with smooth lines. Left, against percent Black: the smooth rises from under 1 camera in tracts with few Black residents to about 2.5 around 70 percent Black, then falls back a little. Right, against crashes on a log scale: the smooth rises from near zero in tracts with few crashes to more than 5 in the tracts with the most. The correlation of cameras with percent Black is %.2f; with log crashes it is %.2f.", cor(tracts$ncams, tracts$pctblack), cor(tracts$ncams, tracts$lncrashes))'
+
+s1 <- ggplot(tracts, aes(x = pctblack, y = ncams)) +
+  geom_jitter(width = 0, height = .15, color = bu_green, alpha = .6) +
+  geom_smooth(method = "loess", se = FALSE, color = bu_black, linewidth = .8) +
+  labs(x = "% Black", y = "Cameras in the tract") +
+  theme_bu()
+
+s2 <- ggplot(tracts, aes(x = crashes, y = ncams)) +
+  geom_jitter(width = 0, height = .15, color = bu_green, alpha = .6) +
+  geom_smooth(method = "loess", se = FALSE, color = bu_black, linewidth = .8) +
+  scale_x_log10(labels = scales::comma) +
+  labs(x = "Crashes, 2019-2022 (log scale)", y = "Cameras in the tract") +
+  theme_bu()
+
+s1 + s2
+```
+
+Both relationships are there. Blacker tracts have more cameras, and so do tracts with more crashes. And % Black and crashes are themselves correlated (`r round(cor(tracts$pctblack, tracts$lncrashes), 2)`), so each of these pictures is partly the other one. That's the job for the model: to ask whether % Black predicts cameras among tracts with the same number of crashes and the same amount of road.
+
+[^loess]: Loess (locally estimated scatterplot smoothing) draws a curve through a scatterplot without assuming a functional form. For each point $x_0$ along the horizontal axis, it takes the nearest share of the observations — `geom_smooth`'s default span is 75% of them — weights each by how close it is to $x_0$ (the tricube weight, $\big(1 - (\text{distance}/\text{max distance})^3\big)^3$, so close points count a lot and the farthest count nothing), fits a weighted quadratic regression of $y$ on $x$ to just those points, and keeps that regression's fitted value at $x_0$. Repeat across the range of $x$ and connect the fitted values, and you have the curve. A smaller span follows the data more closely and wiggles more; a larger one is smoother. It's a description of the data, not a model of them — there are no parameters to interpret, the curve is least reliable at the ends where there are neighbors on only one side, and here it ignores that $y$ is a count. That's what the models below are for.
+
+## The model
+
+Let $y_i$ be the number of cameras in tract $i$. We'll walk the same recipe as in [the likelihood notes](likelihood26.html#sec-general) and [the count notes](countA26.html): look at $y$, pick $f$, write the joint probability, log it, make the parameter a function of $x\beta$ through a link, and differentiate. In King's notation,
+
+$$
+Y \sim f(y \mid \theta, \alpha), \qquad \theta = G(X, \beta).
+$$
+
+$y$ is a count of cameras, so $f$ is the Poisson, and its one parameter is the rate, $\lambda$.
+
+**The PMF.** For each tract,
+
+$$
+f(y_i \mid \lambda_i) = \frac{e^{-\lambda_i}\lambda_i^{\,y_i}}{y_i!}
+$$
+
+This is the probability that tract $i$ has exactly $y_i$ cameras, given its rate $\lambda_i$.
+
+**The joint probability.** Assuming the tracts are independent, the joint probability of the data is the product of the individual probabilities — and rewritten as a function of the parameter given the data, that's the likelihood:
+
+$$
+L(\lambda \mid y) = \prod_{i=1}^{n} \frac{e^{-\lambda_i}\lambda_i^{\,y_i}}{y_i!}
+$$
+
+**Take logs.** The log of a product is the sum of the logs; the log of $e^{-\lambda_i}$ is $-\lambda_i$, the log of $\lambda_i^{y_i}$ is $y_i \ln\lambda_i$, and the factorial comes out as a subtraction:
+
+$$
+\ln L(\lambda \mid y) = \sum_{i=1}^{n}\big[\, -\lambda_i + y_i\ln\lambda_i - \ln(y_i!)\,\big]
+$$
+
+**Parameterize $\lambda$.** So far $\lambda$ is just a parameter of a distribution. The regression idea is to make it a function of covariates, so each tract gets its own expected count depending on its % Black, crashes, roads, and income. $\lambda$ is a rate and must be positive; $x_i\beta$ can be any real number. The exponential maps the whole real line onto the positive half of it:
+
+$$
+\lambda_i = E[y_i \mid x_i] = e^{x_i \beta}
+$$
+
+Equivalently $\ln\lambda_i = x_i\beta$, which is why this is a log-linear model, and why the covariates act multiplicatively on the expected count — exponentiated coefficients are rate ratios.
+
+**The log-likelihood in terms of $\beta$.** Substitute $\lambda_i = e^{x_i\beta}$. In the middle term, $\ln\lambda_i = \ln e^{x_i\beta} = x_i\beta$, so
+
+$$
+\ln L(\beta \mid y, X) = \sum_{i=1}^{n}\big[\, y_i\, x_i\beta - e^{x_i\beta} - \ln(y_i!)\,\big]
+$$
+
+Each tract contributes its count times its linear prediction, minus its expected count, minus a term that involves only the data. That last term, $\ln(y_i!)$, has no $\beta$ in it; it shifts the level of the log-likelihood and has no effect on where the maximum is.
+
+**The gradient and Hessian.** The score (first derivative) with respect to $\beta$:
+
+$$
+\frac{\partial \ln L}{\partial \beta} = \sum_{i=1}^{n}\big(y_i - e^{x_i\beta}\big)\,x_i' = X'(y - \lambda)
+$$
+
+the same form as the logit's $X'(y - \pi)$: $X'$ times the gap between the cameras a tract has and the cameras the model expects it to have. Setting it to zero can't be solved for $\beta$ — $\beta$ is stuck inside the exponential — so we maximize numerically. The Hessian (second derivative):
+
+$$
+\frac{\partial^2 \ln L}{\partial \beta\,\partial \beta'} = -\sum_{i=1}^{n} e^{x_i\beta}\,x_i' x_i = -X'WX, \quad W = \text{diag}(\lambda_1, \ldots, \lambda_n)
+$$
+
+Every $\lambda_i$ is positive, so the Hessian is negative definite at every value of $\beta$. The log-likelihood is globally concave — one hill, no false summits — and the inverse of the negative Hessian at the maximum, $(X'\widehat{W}X)^{-1}$, is the estimated variance-covariance matrix of $\widehat\beta$.
+
+**The negative binomial.** The Poisson ties the variance to the mean: $var[y_i \mid x_i] = \lambda_i$. The negative binomial relaxes that by letting tracts with the same $x$ have different underlying rates, $\tilde\lambda_i = \lambda_i\upsilon_i$, where $\upsilon_i$ is gamma distributed with mean one and variance $\alpha$. The result is
+
+$$
+var[y_i \mid x_i] = \lambda_i + \alpha \lambda_i^2
+$$
+
+When $\alpha = 0$ the negative binomial is the Poisson. When $\alpha > 0$, the variance exceeds the mean, and by more as the mean grows. I'll walk the negative binomial's PMF and log-likelihood in Part 2, where overdispersion is the whole story. One practical point now: `glm.nb` reports $\theta = 1/\alpha$, not $\alpha$, so a large $\theta$ means little overdispersion. The tables below report $\alpha$, computed from $\widehat\theta$.
+
+What goes in $x_i$? The equity hypothesis is that tracts with more Black residents get more cameras. The obvious alternative — DDOT's own account — is that cameras go where the danger is, and danger means crashes. And cameras can only go on roads, so a tract with more major road has more places a camera could go. That's **exposure**: opportunity to receive cameras, as distinct from the chance of getting one per unit of opportunity. The models include:
+
+- `pctblack` — percent of tract residents who are Black.
+- `lncrashes` — log of the number of crashes in the tract, 2019--2022.
+- `lnmajorkm` — log of the km of road above the local-street class in the tract. **This is the exposure measure.**
+- `lninc` — log median household income, since race and income are correlated at $r$ = `r round(cor(tracts$pctblack, tracts$lninc, use = "complete.obs"), 2)` across tracts, and the alternative to a race story is a class story.
+
+With $m_i$ for km of major road, the model is $\lambda_i = e^{x_i\beta + \gamma\ln m_i} = m_i^{\gamma} e^{x_i\beta}$. An offset fixes $\gamma = 1$: cameras proportional to road. Here $\gamma$ is estimated — it's the coefficient on `lnmajorkm` — so the data decide how cameras scale with road. I test $\gamma = 1$ after the estimates.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-tract
+
+# common estimation sample: tracts with median income reported
+tr <- tracts %>% drop_na(ncams, pctblack, lncrashes, lnmajorkm, lninc)
+
+t1 <- glm.nb(ncams ~ pctblack, data = tr)
+t2 <- glm.nb(ncams ~ pctblack + lncrashes + lnmajorkm, data = tr)
+t3 <- glm.nb(ncams ~ pctblack + lncrashes + lnmajorkm + lninc, data = tr)
+t3p <- glm(ncams ~ pctblack + lncrashes + lnmajorkm + lninc, data = tr, family = poisson)
+
+tract_labels <- c("pctblack" = "% Black",
+                  "lncrashes" = "ln(crashes, 2019-22)",
+                  "lnmajorkm" = "ln(km of major road): exposure",
+                  "lninc" = "ln(median income)",
+                  "(Intercept)" = "Constant")
+
+# alpha = 1 / theta; delta method: se(alpha) = se(theta) / theta^2
+alpha_hat <- function(m) if (inherits(m, "negbin")) 1 / m$theta else NA
+alpha_se  <- function(m) if (inherits(m, "negbin")) m$SE.theta / m$theta^2 else NA
+
+# two extra table rows: alpha and its standard error, formatted like modelsummary
+alpha_rows <- function(models) {
+  est <- map_chr(models, ~ if (inherits(.x, "negbin")) sprintf("%.3f", alpha_hat(.x)) else "")
+  se  <- map_chr(models, ~ if (inherits(.x, "negbin")) sprintf("(%.3f)", alpha_se(.x)) else "")
+  bind_rows(c(term = "alpha", est), c(term = "", se)) %>% as.data.frame()
+}
+
+tract_models <- list("NB (1)" = t1, "NB (2)" = t2, "NB (3)" = t3, "Poisson (3)" = t3p)
+tract_alpha <- alpha_rows(tract_models)
+attr(tract_alpha, "position") <- c(11, 12)
+
+modelsummary(tract_models,
+             stars = TRUE, coef_map = tract_labels, add_rows = tract_alpha,
+             gof_map = c("nobs", "logLik", "AIC"),
+             title = "Cameras per census tract.",
+             notes = c("Negative binomial and Poisson regression. N excludes tracts with no reported median income.",
+                       "alpha is the negative binomial dispersion parameter, 1/theta; its standard error is by the delta method."))
+```
+
+```{r tract-numbers, include=FALSE}
+irr10 <- function(m, v = "pctblack") exp(10 * coef(m)[v])
+```
+
+In the first column, with nothing else in the model, each 10 points of % Black multiplies the expected number of cameras by `r round(irr10(t1), 3)` — about `r round(100 * (irr10(t1) - 1))`% more cameras. The second column adds crashes and road length, and both matter in the expected direction: tracts with more crashes and more major road get more cameras. Black tracts have more crashes (the correlation across tracts is `r round(cor(tr$pctblack, tr$lncrashes), 2)`), so the race coefficient shrinks, but it does not go away; each 10 points of % Black now multiplies the expected count by `r round(irr10(t2), 3)`.
+
+The third column adds income, and this is the test of the class story. If cameras followed poverty rather than race, the race coefficient should shrink once income is in the model, and income should be negative. Neither happens. The race coefficient goes back *up*, to `r sprintf("%.4f", coef(t3)["pctblack"])` ($z$ = `r round(coef(summary(t3))["pctblack", 3], 2)`), and income is *positive* (`r sprintf("%.3f", coef(t3)["lninc"])`, $p$ = `r sprintf("%.2f", coef(summary(t3))["lninc", 4])`): comparing tracts with the same racial composition, crashes, and roads, the richer one has, if anything, more cameras. Race and income are correlated at `r round(cor(tr$pctblack, tr$lninc), 2)`, so leaving income out lets the two partly cancel. At the placement stage, the gradient is race, not class.
+
+Now look at the $\alpha$ row, because it moves more than any coefficient. With % Black alone, $\widehat\alpha$ is `r sprintf("%.3f", alpha_hat(t1))`. Add crashes and road length and it falls to `r sprintf("%.3f", alpha_hat(t2))`; add income and it's `r sprintf("%.3f", alpha_hat(t3))`. That is the general lesson about the ancillary parameter, and it's worth stating plainly. The extra-Poisson variance in a count is often not random noise. Much of it is a function of variables we know about and could measure — here, tracts with lots of crashes and lots of major road have many more cameras than tracts without them. Leave those variables out, and the variation they produce has nowhere to go but $\alpha$: the model can't say *why* some tracts have five cameras and others none, so it calls the difference dispersion. Put them in, and the model measures their effects directly, through $\beta$, and $\alpha$ shrinks to whatever variation is left over. Between the first and second columns, `r round(100 * (1 - alpha_hat(t2) / alpha_hat(t1)))`% of the estimated overdispersion turns out to be crashes and roads. So a large $\widehat\alpha$ is less a property of the data than a report on the specification — a measure of how much of $y$'s variation we haven't explained — and the right response to it is usually to ask what's missing from $x$, not only to switch from the Poisson to the negative binomial.
+
+## Rate ratios
+
+Coefficients on the log scale are hard to read, and a one-unit change isn't meaningful for most of these variables — nobody cares about one percentage point of % Black or one log-point of crashes. So @tbl-tract-irr exponentiates each coefficient times a change that is meaningful: ten points of % Black, and a doubling of crashes, road, and income. For a logged covariate, doubling it adds $\ln 2$, so the rate ratio is $e^{\beta \ln 2} = 2^{\beta}$. The intervals are the endpoints of the coefficient's interval, transformed the same way.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-tract-irr
+#| tbl-cap: "Rate ratios from the full negative binomial placement model, for meaningful changes in each covariate."
+
+# rate ratio and 95% interval for a change of `delta` in each covariate
+irr_table <- function(m, deltas, labels) {
+  b <- coef(m)[names(deltas)]
+  se <- sqrt(diag(vcov(m)))[names(deltas)]
+  tibble(Change = labels,
+         `Rate ratio` = exp(b * deltas),
+         `2.5%` = exp((b - 1.96 * se) * deltas),
+         `97.5%` = exp((b + 1.96 * se) * deltas))
+}
+
+irr_table(t3,
+          deltas = c(pctblack = 10, lncrashes = log(2), lnmajorkm = log(2), lninc = log(2)),
+          labels = c("% Black, +10 points", "Crashes, doubled",
+                     "km of major road (exposure), doubled", "Median income, doubled")) %>%
+  kbl(digits = 2) %>%
+  kable_styling(full_width = FALSE)
+```
+
+Ten more points of % Black multiplies the expected number of cameras by `r round(irr10(t3), 2)` — `r round(100 * (irr10(t3) - 1))`% more cameras, holding crashes, road, and income constant. Doubling crashes multiplies it by `r round(2^coef(t3)["lncrashes"], 2)`. Put differently, the race effect of moving from a 20% Black tract to a 70% Black tract (a rate ratio of `r round(exp(50 * coef(t3)["pctblack"]), 2)`) is about the size of the effect of `r round(exp(50 * coef(t3)["pctblack"] / coef(t3)["lncrashes"]), 1)` times as many crashes.
+
+## Is the Poisson good enough here?
+
+The standard test is the **likelihood ratio test** of $\alpha = 0$, which compares the two models directly: $LR = 2(\ln L_{NB} - \ln L_{P})$ on one degree of freedom, with the $p$-value halved because $\alpha$ can't be negative ($\alpha = 0$ is on the boundary of the parameter space). The **Pearson dispersion statistic** from the Poisson, $\sum_i (y_i - \widehat\lambda_i)^2/\widehat\lambda_i$ divided by $n - k$, is an informal check: it should be about one if the Poisson's variance is right. The third row is not a test but the practical question: how different are the standard errors?
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-tract-disp
+#| tbl-cap: "Negative binomial or Poisson? Cameras per tract (model 3)."
+
+# Pearson dispersion: sum of squared Pearson residuals over residual df
+pearson_disp <- function(y, lambda, alpha = 0, k) {
+  r <- (y - lambda) / sqrt(lambda + alpha * lambda^2)
+  sum(r^2) / (length(y) - k)
+}
+
+# the tests that decide between the negative binomial and the Poisson
+disp_table <- function(m_nb, m_p, y) {
+  k <- length(coef(m_nb))
+  pd_p <- pearson_disp(y, fitted(m_p), 0, k)
+  lr <- 2 * (as.numeric(logLik(m_nb)) - as.numeric(logLik(m_p)))
+  p <- pchisq(lr, 1, lower.tail = FALSE) / 2
+  se_r <- sqrt(diag(vcov(m_nb))) / sqrt(diag(vcov(m_p)))
+
+  # the hand-computed Pearson statistic matches R's Pearson residuals
+  stopifnot(isTRUE(all.equal(pd_p, sum(residuals(m_p, type = "pearson")^2) / df.residual(m_p))))
+
+  tibble(
+    Test = c("LR test of alpha = 0",
+             "Pearson dispersion, Poisson (about 1 if Poisson)",
+             "NB s.e. / Poisson s.e."),
+    Value = c(sprintf("%s (p %s)", format(round(lr, 1), big.mark = ","),
+                      format.pval(p, digits = 2, eps = 1e-4)),
+              format(round(pd_p, 2), big.mark = ","),
+              sprintf("%.2f to %.2f", min(se_r), max(se_r))),
+    `Points toward` = c(if (p < .05) "NB" else "Poisson",
+                        if (pd_p > 1.1) "NB" else "Poisson",
+                        if (max(se_r) < 1.3) "Either: little practical difference" else "NB"))
+}
+
+disp_table(t3, t3p, tr$ncams) %>%
+  kbl(align = "lrl") %>%
+  kable_styling(full_width = FALSE) %>%
+  column_spec(3, bold = TRUE)
+```
+
+Both tests point toward the negative binomial ($\widehat\alpha$ = `r round(1 / t3$theta, 3)` in @tbl-tract), but the last row says it hardly matters: the overdispersion is mild, the Poisson's standard errors are nearly right, and the two models' estimates are nearly the same.
+
+Another way to see it is to ask each model how many tracts it expects to have zero cameras, one camera, two, and so on, and compare with what we observe. Each tract has its own fitted rate $\widehat\lambda_i$, so the expected number of tracts with $j$ cameras is $\sum_i Pr(Y_i = j \mid \widehat\lambda_i)$ — the PMF evaluated at each tract's rate, summed over tracts.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-tract-freq
+#| fig-height: 3.6
+#| fig-cap: "Observed number of tracts with each count of cameras (bars), against the number each model predicts (points). The last category is 8 or more."
+#| fig-alt: !expr 'sprintf("Bar chart of the number of tracts with 0 through 8 or more cameras, with points for the Poisson and negative binomial predictions. Observed: %d tracts with zero, %d with one, %d with two. The Poisson predicts %.1f, %.1f, and %.1f; the negative binomial predicts %.1f, %.1f, and %.1f. Both track the bars closely, the negative binomial a little better at zero and in the tail.", freq$observed[1], freq$observed[2], freq$observed[3], freq$Poisson[1], freq$Poisson[2], freq$Poisson[3], freq$NB[1], freq$NB[2], freq$NB[3])'
+
+# expected number of tracts at each count j: sum over tracts of Pr(Y_i = j)
+# (dnbinom's size is theta = 1 / alpha, and its mu is lambda)
+j <- 0:8
+freq <- tibble(
+  j = j,
+  observed = map_int(j, ~ if (.x < 8) sum(tr$ncams == .x) else sum(tr$ncams >= 8)),
+  Poisson = map_dbl(j, ~ if (.x < 8) sum(dpois(.x, fitted(t3p)))
+                         else sum(ppois(7, fitted(t3p), lower.tail = FALSE))),
+  NB = map_dbl(j, ~ if (.x < 8) sum(dnbinom(.x, size = t3$theta, mu = fitted(t3)))
+                    else sum(pnbinom(7, size = t3$theta, mu = fitted(t3), lower.tail = FALSE))))
+
+freq %>%
+  pivot_longer(c(Poisson, NB), names_to = "model", values_to = "predicted") %>%
+  mutate(model = recode(model, NB = "Negative binomial")) %>%
+  ggplot(aes(x = j)) +
+  geom_col(data = freq, aes(y = observed), fill = bu_grey, width = .7) +
+  geom_point(aes(y = predicted, shape = model, color = model), size = 2.6,
+             position = position_dodge(width = .4)) +
+  scale_x_continuous(breaks = j, labels = c(0:7, "8+")) +
+  scale_color_manual(values = c(bu_black, bu_green)) +
+  scale_shape_manual(values = c(17, 16)) +
+  labs(x = "Cameras in the tract", y = "Number of tracts", color = NULL, shape = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+```
+
+The Poisson predicts `r round(freq$Poisson[1], 1)` tracts with no camera against `r freq$observed[1]` observed; the negative binomial predicts `r round(freq$NB[1], 1)`. At one camera, both points sit above the bar: we observe `r freq$observed[2]` tracts with exactly one camera, and the Poisson predicts `r round(freq$Poisson[2], 1)`, the negative binomial `r round(freq$NB[2], 1)`. Both models expect too many single-camera tracts — mass they should have put at zero and in the tail. The negative binomial does a little better at zero and in the tail, which is what extra-Poisson variation looks like — more zeros and more large counts than a Poisson with the same means produces — but the differences are small. This is a count the Poisson describes reasonably well. Keep that in mind for Part 2.
+
+## Exposure: estimate its coefficient, or fix it as an offset?
+
+Both versions treat road length as exposure; they differ in whether $\gamma$ is assumed to be one or estimated. $\widehat\gamma$ = `r sprintf("%.3f", coef(t3)["lnmajorkm"])` (s.e. `r sprintf("%.3f", sqrt(vcov(t3)["lnmajorkm", "lnmajorkm"]))`), and a Wald test of $\gamma = 1$ gives $z$ = `r round((coef(t3)["lnmajorkm"] - 1) / sqrt(vcov(t3)["lnmajorkm", "lnmajorkm"]), 2)`. Doubling the road multiplies the expected number of cameras by $2^{`r sprintf("%.2f", coef(t3)["lnmajorkm"])`}$ = `r round(2^coef(t3)["lnmajorkm"], 2)`, not by 2: DDOT doesn't place cameras at a constant rate per km. The likelihood ratio version fits the restricted model, with road length as an offset:
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# restricted model: ln(major road km) enters with its coefficient fixed at 1
+t3_off <- glm.nb(ncams ~ pctblack + lncrashes + lninc + offset(lnmajorkm), data = tr)
+
+lr_off <- 2 * (as.numeric(logLik(t3)) - as.numeric(logLik(t3_off)))
+```
+
+$LR$ = `r round(lr_off, 2)` on one degree of freedom ($p$ = `r format.pval(pchisq(lr_off, 1, lower.tail = FALSE), digits = 2)`), and imposing the offset moves the race coefficient from `r sprintf("%.4f", coef(t3)["pctblack"])` to `r sprintf("%.4f", coef(t3_off)["pctblack"])` — a wrong offset leaks into the other estimates.
+
+Estimating $\gamma$ is usually the safer choice, since it doesn't assume a fixed multiplier. Use an offset when exposure is literally the time or population at risk and proportionality is the theory — the months a camera was live, in Part 2. And remember that an estimated exposure coefficient also absorbs whatever is correlated with exposure and missing from the model.
+
+## Quantities of interest
+
+### Expected counts, by hand
+
+The coefficients tell us direction and significance, but not how many cameras. Since $E[Y] = e^{x\widehat\beta}$, we can compute expected counts directly: multiply each $\widehat\beta$ by a value of its $x$, sum, and exponentiate. Take two tracts with median crashes, median road, and median income — one 10% Black, one 90% Black.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-tract-hand
+#| tbl-cap: "Expected cameras by hand: two tracts at the medians of crashes, road, and income, 10% and 90% Black."
+
+x_10 <- c(1, 10, median(tr$lncrashes), median(tr$lnmajorkm), median(tr$lninc))
+x_90 <- c(1, 90, median(tr$lncrashes), median(tr$lnmajorkm), median(tr$lninc))
+
+hand_t <- tibble(Variable = names(coef(t3)), beta = coef(t3),
+                 x_10 = x_10, bx_10 = beta * x_10,
+                 x_90 = x_90, bx_90 = beta * x_90)
+
+options(knitr.kable.NA = "")   # blank, not "NA", in the summary rows
+
+hand_t %>%
+  bind_rows(tibble(Variable = "x beta", bx_10 = sum(hand_t$bx_10), bx_90 = sum(hand_t$bx_90)),
+            tibble(Variable = "exp(x beta)", bx_10 = exp(sum(hand_t$bx_10)),
+                   bx_90 = exp(sum(hand_t$bx_90)))) %>%
+  kbl(digits = 3, col.names = c("Variable", "beta-hat", "x", "beta x", "x", "beta x")) %>%
+  add_header_above(c(" " = 2, "10% Black" = 2, "90% Black" = 2)) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The two linear predictors differ only in the % Black row: $80 \times$ `r sprintf("%.4f", coef(t3)["pctblack"])` = `r sprintf("%.3f", 80 * coef(t3)["pctblack"])`. So the expected count for the 90% Black tract, `r round(exp(sum(hand_t$bx_90)), 2)`, is $e^{`r sprintf("%.3f", 80 * coef(t3)["pctblack"])`}$ = `r round(exp(80 * coef(t3)["pctblack"]), 2)` times the expected count for the 10% Black tract, `r round(exp(sum(hand_t$bx_10)), 2)`. The ratio is the same wherever the other variables are set; the difference in cameras is not.
+
+### Across the range of % Black
+
+@fig-tract-ey plots the expected number of cameras in a tract across the range of % Black, with crashes, road length, and income held at their medians. The intervals use the endpoint transformation — form the interval on $x\widehat\beta$, then exponentiate the endpoints.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-tract-ey
+#| fig-height: 3.6
+#| fig-cap: "Expected cameras per tract, and the probability a tract has no camera, across percent Black. Crashes, km of major road, and median income at their medians. 95% intervals by endpoint transformation. Ticks along the bottom mark the observed tracts."
+#| fig-alt: !expr 'sprintf("Two panels against percent Black from 0 to 100. Left, expected cameras per tract rises from %.2f to %.2f, with an interval that widens at the high end. Right, the probability a tract has no camera falls from %.2f to %.2f. A rug of tick marks along the bottom of each panel shows the observed tracts: dense below 20 percent Black, sparse between 40 and 80 percent, and dense again above 90.", tnd$ey[1], tnd$ey[nrow(tnd)], tnd$p0[1], tnd$p0[nrow(tnd)])'
+
+tnd <- tibble(pctblack = 0:100,
+              lncrashes = median(tr$lncrashes),
+              lnmajorkm = median(tr$lnmajorkm),
+              lninc = median(tr$lninc))
+
+tp <- predict(t3, newdata = tnd, type = "link", se.fit = TRUE)
+
+# Pr(Y = 0) falls as lambda rises, so the lambda bounds give the Pr(0) bounds
+# in reverse (theta held at its estimate)
+tnd <- tnd %>%
+  mutate(xb = tp$fit, se = tp$se.fit,
+         ey = exp(xb), lb = exp(xb - 1.96 * se), ub = exp(xb + 1.96 * se),
+         p0 = dnbinom(0, size = t3$theta, mu = ey),
+         p0_lb = dnbinom(0, size = t3$theta, mu = ub),
+         p0_ub = dnbinom(0, size = t3$theta, mu = lb))
+
+e1 <- ggplot(tnd, aes(x = pctblack, y = ey)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_greyfill, alpha = .4) +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_rug(data = tr, aes(x = pctblack), inherit.aes = FALSE, sides = "b",
+           color = bu_grey, alpha = .6) +
+  labs(x = "% Black", y = "Expected cameras in the tract") +
+  theme_bu()
+
+e2 <- ggplot(tnd, aes(x = pctblack, y = p0)) +
+  geom_ribbon(aes(ymin = p0_lb, ymax = p0_ub), fill = bu_greyfill, alpha = .4) +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_rug(data = tr, aes(x = pctblack), inherit.aes = FALSE, sides = "b",
+           color = bu_grey, alpha = .6) +
+  labs(x = "% Black", y = "Pr(no cameras in the tract)") +
+  theme_bu()
+
+e1 + e2
+```
+
+A tract with no Black residents and median crashes, road, and income is expected to have `r round(tnd$ey[1], 2)` cameras; an otherwise identical tract that is entirely Black is expected to have `r round(tnd$ey[nrow(tnd)], 2)` — about `r round(tnd$ey[nrow(tnd)] / tnd$ey[1], 1)` times as many. The right panel says the same thing a different way: the probability the tract has no camera at all falls from `r round(tnd$p0[1], 2)` to `r round(tnd$p0[nrow(tnd)], 2)`. That second panel uses the negative binomial PMF at $y = 0$, $Pr(Y=0) = \left(\frac{\alpha^{-1}}{\alpha^{-1} + \lambda}\right)^{\alpha^{-1}} = (1 + \alpha\lambda)^{-1/\alpha}$, evaluated at each $\widehat\lambda$ and at the interval endpoints. Because $Pr(Y = 0)$ falls as $\lambda$ rises, the upper bound on $\lambda$ gives the lower bound on the probability. (These intervals treat $\widehat\alpha$ as known.)
+
+The rug along the bottom shows where the curve has data behind it: `r sum(tr$pctblack < 20)` of the `r nrow(tr)` tracts are under 20% Black and `r sum(tr$pctblack >= 90)` are 90% or more, but only `r sum(tr$pctblack >= 40 & tr$pctblack < 80)` fall between 40% and 80%. DC is a segregated city.
+
+Yet the interval is *narrowest* in that sparse middle. Why? A parametric model's interval doesn't depend on how many observations sit near a given $x$. The variance of the linear prediction is $x_0'\widehat V x_0$, which is smallest near the center of the data and grows with distance from it — the same reason OLS prediction intervals flare at the ends. Here the link-scale standard error bottoms out at `r tnd$pctblack[which.min(tnd$se)]`% Black, next to the sample mean of `r round(mean(tr$pctblack))`%. The middle is pinned down by the tracts at both ends *because the model assumes* $\ln\lambda$ is linear in % Black. So the narrow band there reflects the assumption of a log-linear relationship, not a lot of data in the middle. The interval widens more at the high end for two reasons: 100% is farther from the mean than 0% is, and exponentiating stretches the interval where $\lambda$ is larger. On the count scale, the interval is `r round(tnd$ub[1] - tnd$lb[1], 2)` cameras wide at 0%, `r round(tnd$ub[51] - tnd$lb[51], 2)` at 50%, and `r round(tnd$ub[101] - tnd$lb[101], 2)` at 100%. Read the two together: the ribbon measures uncertainty assuming the model's functional form is right, and the rug shows where the data can actually check that assumption.
+
+Here is the endpoint transformation computed step by step at five values of % Black: the linear predictor and its standard error from `predict(..., type = "link", se.fit = TRUE)`, the interval on the link scale, and then all three exponentiated.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-tract-ept
+#| tbl-cap: "Endpoint transformation, step by step: expected cameras at five values of percent Black, other variables at their medians."
+
+tnd %>%
+  filter(pctblack %in% c(0, 25, 50, 75, 100)) %>%
+  transmute(`% Black` = pctblack,
+            `x beta` = xb, `se(x beta)` = se,
+            `x beta - 1.96 se` = xb - 1.96 * se, `x beta + 1.96 se` = xb + 1.96 * se,
+            `E[Y] = exp(x beta)` = ey, `Lower = exp(...)` = lb, `Upper = exp(...)` = ub) %>%
+  kbl(digits = 3) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The interval is symmetric on the link scale and asymmetric once exponentiated — the upper bound is farther from the estimate than the lower bound — and it can't go below zero. That's the point of transforming the endpoints rather than building $\widehat{E[Y]} \pm 1.96\,se$ on the count scale.
+
+### Probabilities of particular counts
+
+The PMF gives the whole distribution of cameras for a tract, not just its mean. @tbl-tract-pry shows the probability of zero, one, two, three, and four or more cameras for tracts at the medians of everything else and 10%, 50%, and 90% Black.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-tract-pry
+#| tbl-cap: "Pr(Y = j cameras) from the negative binomial, at the medians of crashes, road, and income."
+
+pry <- tibble(pctblack = c(10, 50, 90),
+              lncrashes = median(tr$lncrashes),
+              lnmajorkm = median(tr$lnmajorkm),
+              lninc = median(tr$lninc)) %>%
+  mutate(mu = predict(t3, newdata = ., type = "response"))
+
+pry %>%
+  transmute(`% Black` = pctblack,
+            `E[Y]` = mu,
+            `0` = dnbinom(0, size = t3$theta, mu = mu),
+            `1` = dnbinom(1, size = t3$theta, mu = mu),
+            `2` = dnbinom(2, size = t3$theta, mu = mu),
+            `3` = dnbinom(3, size = t3$theta, mu = mu),
+            `4 or more` = pnbinom(3, size = t3$theta, mu = mu, lower.tail = FALSE)) %>%
+  kbl(digits = 2) %>%
+  add_header_above(c(" " = 2, "Pr(Y = j)" = 5)) %>%
+  kable_styling(full_width = FALSE)
+```
+
+Each row sums to one. A median tract that is 10% Black is most likely to have no camera at all (`r round(dnbinom(0, size = t3$theta, mu = pry$mu[1]), 2)`); one that is 90% Black is more likely to have two or more (`r round(pnbinom(1, size = t3$theta, mu = pry$mu[3], lower.tail = FALSE), 2)`) than none (`r round(dnbinom(0, size = t3$theta, mu = pry$mu[3]), 2)`).
+
+### Average effects
+
+Those are predictions at the medians of the other variables. An average-effects version holds every tract at its observed values, sets % Black to some value for all of them, and averages the predictions. `marginaleffects` does that directly:
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-tract-avg
+#| tbl-cap: "Average predicted cameras per tract, with every tract set to 10% and to 90% Black."
+
+# type = "response": average the predicted counts (the default for glm.nb in
+# marginaleffects 0.20 averages the linear predictor, then exponentiates)
+t_avg <- avg_predictions(t3, variables = list(pctblack = c(10, 90)), type = "response")
+t_cmp <- avg_comparisons(t3, variables = list(pctblack = c(10, 90)))
+
+bind_rows(
+  t_avg %>% transmute(Quantity = paste0("Average prediction, ", pctblack, "% Black"),
+                      estimate, conf.low, conf.high),
+  t_cmp %>% transmute(Quantity = "Difference, 90% minus 10%", estimate, conf.low, conf.high)) %>%
+  kbl(digits = 2, col.names = c("", "Estimate", "2.5%", "97.5%")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+Here is what `avg_predictions` is doing, by hand. Set every tract's % Black to 10, predict, and average; do it again at 90. For the uncertainty, `marginaleffects` uses the delta method. The alternative we've used all semester is simulation: draw 1,000 coefficient vectors from the estimated sampling distribution, $\widetilde\beta \sim MVN(\widehat\beta, \widehat V)$, recompute the average predictions for each draw, and take the 2.5th and 97.5th percentiles of the difference.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-tract-avg-hand
+#| tbl-cap: "Average predictions by hand, with a simulation interval for the difference."
+
+# every tract at its observed values, % Black set to 10 and then to 90
+tr10 <- mutate(tr, pctblack = 10)
+tr90 <- mutate(tr, pctblack = 90)
+X10 <- model.matrix(~ pctblack + lncrashes + lnmajorkm + lninc, tr10)
+X90 <- model.matrix(~ pctblack + lncrashes + lnmajorkm + lninc, tr90)
+
+avg10 <- mean(exp(X10 %*% coef(t3)))
+avg90 <- mean(exp(X90 %*% coef(t3)))
+
+# 1,000 draws of beta from MVN(beta-hat, V-hat); average-prediction difference for each
+b_sim <- mvrnorm(1000, coef(t3), vcov(t3))
+diff_sim <- colMeans(exp(X90 %*% t(b_sim))) - colMeans(exp(X10 %*% t(b_sim)))
+
+tibble(Quantity = c("Average prediction, 10% Black", "Average prediction, 90% Black",
+                    "Difference", "Simulation 95% interval, lower", "Simulation 95% interval, upper"),
+       `By hand` = c(avg10, avg90, avg90 - avg10, quantile(diff_sim, c(.025, .975))),
+       marginaleffects = c(t_avg$estimate, t_cmp$estimate, t_cmp$conf.low, t_cmp$conf.high)) %>%
+  kbl(digits = 3) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The point estimates match exactly — but only because the `avg_predictions` call above sets `type = "response"`. Leave that out and, for a `glm.nb` (or a logit), `marginaleffects` 0.20 averages the *linear predictor* across the tracts and then exponentiates: $e^{\overline{x_i\widehat\beta}}$ rather than $\overline{e^{x_i\widehat\beta}}$. Because the exponential is convex, the first is always smaller than the second (Jensen's inequality); here it gives `r round(avg_predictions(t3, variables = list(pctblack = c(10, 90)))$estimate[1], 2)` and `r round(avg_predictions(t3, variables = list(pctblack = c(10, 90)))$estimate[2], 2)` instead of `r round(avg10, 2)` and `r round(avg90, 2)`. `avg_comparisons` and `avg_slopes` default to the response scale, so the difference from `avg_comparisons` would silently disagree with the difference between the two `avg_predictions`. The printout says which it did — "Type: invlink(link)" — and that's the line to read. This is exactly why we compute these things by hand first.
+
+The simulation interval (`r round(quantile(diff_sim, .025), 2)` to `r round(quantile(diff_sim, .975), 2)`) and the delta-method interval (`r round(t_cmp$conf.low, 2)` to `r round(t_cmp$conf.high, 2)`) are close but not identical — the simulation interval is asymmetric, following the skew of the exponential, while the delta method forces symmetry around the estimate.
+
+Setting every tract in DC to 90% Black rather than 10%, holding everything else about it as it is, raises the average expected number of cameras from `r round(t_avg$estimate[1], 2)` to `r round(t_avg$estimate[2], 2)` — a difference of `r round(t_cmp$estimate, 2)` cameras per tract (95% interval `r round(t_cmp$conf.low, 2)` to `r round(t_cmp$conf.high, 2)`), or about `r round(t_avg$estimate[2] / t_avg$estimate[1], 1)` times as many.
+
+The average marginal effect is the same idea for a small change: the derivative of $E[Y]$ with respect to % Black, $\partial \lambda_i / \partial x_{ik} = \beta_k \lambda_i$, computed for every tract at its own $\widehat\lambda_i$ and averaged.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+t_ame <- avg_slopes(t3, variables = "pctblack")
+
+# the same thing by hand: beta times each tract's fitted count, averaged
+t_ame_hand <- mean(coef(t3)["pctblack"] * fitted(t3))
+```
+
+Each additional point of % Black adds `r sprintf("%.4f", t_ame$estimate)` expected cameras to the average tract (95% interval `r sprintf("%.4f", t_ame$conf.low)` to `r sprintf("%.4f", t_ame$conf.high)`); by hand, $\widehat\beta_{black} \times \overline{\widehat\lambda}$ = `r sprintf("%.4f", t_ame_hand)`. Ten points is about `r round(10 * t_ame$estimate, 2)` cameras per tract. Because the effect on $E[Y]$ depends on $\lambda_i$, it's larger in tracts that already have more cameras, which is why the curve in @fig-tract-ey bends upward.
+
+# Part 2: How many tickets does a camera write?
+
+## A first look
+
+Now the unit is the camera. @tbl-cam-type breaks tickets per month down by camera type, and @fig-cam-scatter plots tickets per month against the two things that should matter most and least: traffic on the road, and income in the tract.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-cam-type
+#| tbl-cap: "Tickets per camera per month, by camera type."
+
+cams %>%
+  group_by(Type = type) %>%
+  summarise(Cameras = n(),
+            Median = median(tickets / months),
+            Mean = mean(tickets / months),
+            SD = sd(tickets / months),
+            Max = max(tickets / months),
+            `Median daily traffic` = median(aadt)) %>%
+  kbl(digits = 0, format.args = list(big.mark = ",")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-cam-scatter
+#| fig-height: 3.6
+#| fig-cap: "Tickets per camera per month against average daily traffic and against tract median income. Both vertical axes, and the traffic axis, are logged. Lines are least-squares fits on the log scale."
+#| fig-alt: !expr 'sprintf("Two scatterplots of tickets per camera per month on a log scale, with fitted lines. Left, against average daily traffic on a log scale: a wide cloud with a clearly rising line; the correlation of the logs is %.2f. Right, against tract median household income: a wide cloud with a gently falling line; the correlation of log tickets per month with log income is %.2f.", cor(log(cams$tickets / cams$months), cams$lnaadt), cor(log(cams$tickets / cams$months), cams$lninc, use = "complete.obs"))'
+
+c1 <- ggplot(cams, aes(x = aadt, y = tickets / months)) +
+  geom_point(color = bu_green, alpha = .6) +
+  geom_smooth(method = "lm", se = FALSE, color = bu_black, linewidth = .8) +
+  scale_x_log10(labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  scale_y_log10(labels = scales::comma) +
+  labs(x = "Average daily traffic (log scale)", y = "Tickets per month (log scale)") +
+  theme_bu()
+
+c2 <- ggplot(filter(cams, !is.na(medinc)), aes(x = medinc, y = tickets / months)) +
+  geom_point(color = bu_green, alpha = .6) +
+  geom_smooth(method = "lm", se = FALSE, color = bu_black, linewidth = .8) +
+  scale_x_log10(labels = scales::dollar_format(accuracy = 1, suffix = "k"),
+                breaks = c(25, 50, 100, 200)) +
+  scale_y_log10(labels = scales::comma) +
+  labs(x = "Tract median income (log scale)", y = "Tickets per month (log scale)") +
+  theme_bu()
+
+c1 + c2
+```
+
+The first thing to see is the spread. At any given level of traffic, cameras range over two orders of magnitude in tickets per month. The relationships are there — busier roads, more tickets; richer tracts, fewer — but they're weak relative to the noise. That spread is what the negative binomial is for.
+
+## The model
+
+Let $y_i$ be the number of tickets camera $i$ issued, and $d_i$ the number of months it was live. Same recipe as Part 1 — look at $y$, pick $f$, write the joint probability, log it, parameterize, differentiate — but this time $f$ is the negative binomial, because of the spread we just saw.
+
+**Where the negative binomial comes from.** Start from the Poisson, with the expected count for camera $i$ equal to $\lambda_i$. If the covariates captured everything that makes one camera write more tickets than another, cameras with the same $x$ would share a rate. They don't. Some unmeasured feature — the hill, the sight line, the commuters who haven't learned the camera is there — makes the rate differ across cameras with identical $x$. So write the rate as
+
+$$
+\begin{aligned}
+\tilde{\lambda}_i &= e^{x_i \beta + \varepsilon_i} \\[4pt]
+&= e^{x_i \beta}\, e^{\varepsilon_i} \\[4pt]
+&= \lambda_i \upsilon_i
+\end{aligned}
+$$
+
+where $\upsilon_i = e^{\varepsilon_i}$ is the unobserved heterogeneity. Given $\upsilon_i$, $y_i$ is Poisson with mean $\lambda_i\upsilon_i$. Assume $\upsilon_i$ follows a gamma distribution with mean one and variance $\alpha$ — mean one, so the heterogeneity scales some cameras up and some down but leaves $\lambda_i$ as the expected count. Mixing the Poisson over the gamma produces the negative binomial.
+
+**The PMF.**
+
+$$
+f(y_i \mid \lambda_i, \alpha) = \frac{\Gamma(y_i+\alpha^{-1})}{y_i!\,\Gamma(\alpha^{-1})} \left( \frac{\alpha^{-1}}{\alpha^{-1}+\lambda_i}\right) ^{\alpha^{-1}} \left( \frac{\lambda_i}{\alpha^{-1}+\lambda_i}\right) ^{y_i}
+$$
+
+Its mean is $E[y_i] = E\big[E[y_i \mid \upsilon_i]\big] = E[\lambda_i\upsilon_i] = \lambda_i$, the same expected count as the Poisson, so the $\beta$s mean the same thing in both models. Its variance, by the law of total variance, is
+
+$$
+\begin{aligned}
+var[y_i] &= E\big[var[y_i \mid \upsilon_i]\big] + var\big[E[y_i \mid \upsilon_i]\big] \\[4pt]
+&= E[\lambda_i \upsilon_i] + var[\lambda_i\upsilon_i] \\[4pt]
+&= \lambda_i + \lambda_i^2\, var[\upsilon_i] \\[4pt]
+&= \lambda_i + \alpha\lambda_i^2
+\end{aligned}
+$$
+
+The first term is the Poisson variance; the second is the extra-Poisson variation, governed by $\alpha$. When $\alpha = 0$ the gamma collapses to a spike at one, every camera with the same $x$ has the same rate, and this is the Poisson.
+
+**The joint probability.** Assuming the cameras are independent,
+
+$$
+L(\lambda, \alpha \mid y) = \prod_{i=1}^{n} \frac{\Gamma(y_i+\alpha^{-1})}{y_i!\,\Gamma(\alpha^{-1})} \left( \frac{\alpha^{-1}}{\alpha^{-1}+\lambda_i}\right) ^{\alpha^{-1}} \left( \frac{\lambda_i}{\alpha^{-1}+\lambda_i}\right) ^{y_i}
+$$
+
+**Take logs.** Each factor of the product becomes a term in the sum; the gamma functions and the factorial come out as their logs, and the two exponents come down in front:
+
+$$
+\ln L(\lambda, \alpha \mid y) = \sum_{i=1}^{n} \left[ \ln\Gamma(y_i + \alpha^{-1}) - \ln\Gamma(\alpha^{-1}) - \ln(y_i!) + \alpha^{-1} \ln\left(\frac{\alpha^{-1}}{\alpha^{-1} + \lambda_i}\right) + y_i \ln\left(\frac{\lambda_i}{\alpha^{-1} + \lambda_i}\right) \right]
+$$
+
+It's easier to work with after multiplying the top and bottom of both fractions by $\alpha$: $\frac{\alpha^{-1}}{\alpha^{-1}+\lambda_i} = \frac{1}{1+\alpha\lambda_i}$ and $\frac{\lambda_i}{\alpha^{-1}+\lambda_i} = \frac{\alpha\lambda_i}{1+\alpha\lambda_i}$. Then the last two terms are $-\alpha^{-1}\ln(1+\alpha\lambda_i)$ and $y_i\ln\alpha + y_i\ln\lambda_i - y_i\ln(1+\alpha\lambda_i)$, and collecting the two $\ln(1+\alpha\lambda_i)$ pieces,
+
+$$
+\ln L(\lambda, \alpha \mid y) = \sum_{i=1}^{n} \left[ \ln\Gamma(y_i + \alpha^{-1}) - \ln\Gamma(\alpha^{-1}) - \ln(y_i!) + y_i\ln\alpha + y_i\ln\lambda_i - (y_i + \alpha^{-1})\ln(1 + \alpha\lambda_i) \right]
+$$
+
+**Parameterize $\lambda$, with exposure.** Tickets accumulate over time, so the expected count is the monthly rate times the number of months:
+
+$$
+\begin{aligned}
+\lambda_i = E[y_i \mid x_i, d_i] &= d_i \, e^{x_i\beta} \\[6pt]
+&= e^{x_i\beta + \ln(d_i)}
+\end{aligned}
+$$
+
+Here, unlike road length in Part 1, the offset is exactly right: a camera that's live for six months has six months of opportunity to ticket, and there's no reason the rate should change with $d_i$ itself (setting aside a novelty effect, which I come back to). With the offset in, $e^{x_i\beta}$ is the expected number of tickets per month, and that's the quantity I'll report.
+
+**The log-likelihood in terms of $\beta$ and $\alpha$.** Substitute $\lambda_i = e^{x_i\beta + \ln d_i}$, so $\ln\lambda_i = x_i\beta + \ln d_i$:
+
+$$
+\ln L(\beta, \alpha \mid y, X) = \sum_{i=1}^{n} \left[ \ln\Gamma(y_i + \alpha^{-1}) - \ln\Gamma(\alpha^{-1}) - \ln(y_i!) + y_i\ln\alpha + y_i(x_i\beta + \ln d_i) - (y_i + \alpha^{-1})\ln\left(1 + \alpha e^{x_i\beta + \ln d_i}\right) \right]
+$$
+
+Now there are two kinds of parameters: the $\beta$s, and the ancillary parameter $\alpha$. We maximize over both. (Notice $y_i \ln d_i$ has no parameter in it; like $\ln(y_i!)$, it shifts the level and drops out of the derivatives.)
+
+**The gradient.** Differentiate with respect to $\beta$. The $y_i(x_i\beta)$ term gives $y_i x_i'$. The last term gives $(y_i + \alpha^{-1})\frac{\alpha\lambda_i}{1+\alpha\lambda_i}x_i' = \frac{(\alpha y_i + 1)\lambda_i}{1+\alpha\lambda_i}x_i'$. Putting them over a common denominator,
+
+$$
+\begin{aligned}
+\frac{\partial \ln L}{\partial \beta} &= \sum_{i=1}^{n} \left[ y_i - \frac{(\alpha y_i + 1)\lambda_i}{1 + \alpha\lambda_i} \right] x_i' \\[6pt]
+&= \sum_{i=1}^{n} \frac{y_i(1 + \alpha\lambda_i) - (\alpha y_i + 1)\lambda_i}{1 + \alpha\lambda_i}\, x_i' \\[6pt]
+&= \sum_{i=1}^{n} \frac{y_i - \lambda_i}{1 + \alpha\lambda_i}\, x_i'
+\end{aligned}
+$$
+
+Compare it to the Poisson score in Part 1, $\sum (y_i - \lambda_i) x_i'$. It's the same residual, but each camera's residual is divided by $1 + \alpha\lambda_i$. Cameras with large expected counts — where the variance is largest — get less weight. When $\alpha = 0$ the two scores are identical. The Poisson treats a 5,000-ticket miss at a 50,000-ticket camera the same as a 5,000-ticket miss at a 2,000-ticket camera; the negative binomial does not.
+
+The derivative with respect to $\alpha$ involves the digamma function, $\psi(z) = \frac{d}{dz}\ln\Gamma(z)$, from the two $\ln\Gamma$ terms:
+
+$$
+\frac{\partial \ln L}{\partial \alpha} = \sum_{i=1}^{n} \left[ -\alpha^{-2}\Big( \psi(y_i + \alpha^{-1}) - \psi(\alpha^{-1}) - \ln(1 + \alpha\lambda_i) \Big) + \frac{y_i - \lambda_i}{\alpha(1 + \alpha\lambda_i)} \right]
+$$
+
+We'll use both of these below, when we estimate the model by hand.
+
+The covariates fall into two groups. The first is about the road, and these should explain most of the variation:
+
+- `type` — speed, red-light, or stop-sign camera.
+- `speedlimit` — the posted limit.
+- `lnaadt` — log of average daily traffic. More cars, more tickets: this is exposure in a second sense, the number of drivers who pass the camera and could be ticketed. Like road length in Part 1, it's a proxy for opportunity rather than a literal count at risk, so it goes in with an estimated coefficient, not as an offset.
+- `lncrashes` — log crashes within 150 m, 2019--2022.
+
+The second is about the neighborhood: `pctblack` and `lninc`. With the road held constant, there's no mechanical reason a camera in a poorer or a Blacker tract should write more tickets per car. If it does, it means drivers there speed more, or the camera is placed where it catches more of them, or the traffic count misses something.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-cam
+
+# common estimation sample: cameras whose tract reports median income
+cs <- cams %>% drop_na(tickets, months, type, speedlimit, lnaadt, lncrashes, pctblack, lninc)
+
+cam_f <- tickets ~ type + speedlimit + lnaadt + lncrashes + pctblack + lninc + offset(log(months))
+
+c_p  <- glm(cam_f, data = cs, family = poisson)
+c_nb <- glm.nb(cam_f, data = cs, control = glm.control(maxit = 100))
+
+cam_labels <- c("typespeed" = "Speed camera",
+                "typestop sign" = "Stop-sign camera",
+                "speedlimit" = "Speed limit",
+                "lnaadt" = "ln(daily traffic)",
+                "lncrashes" = "ln(crashes within 150 m)",
+                "pctblack" = "% Black",
+                "lninc" = "ln(median income)",
+                "(Intercept)" = "Constant")
+
+cam_models <- list("Poisson" = c_p, "Negative binomial" = c_nb, "NB, IRR" = c_nb)
+cam_alpha <- alpha_rows(cam_models)
+attr(cam_alpha, "position") <- c(17, 18)
+
+modelsummary(cam_models,
+             exponentiate = c(FALSE, FALSE, TRUE),
+             stars = TRUE, coef_map = cam_labels, add_rows = cam_alpha,
+             gof_map = c("nobs", "logLik", "AIC"),
+             title = "Tickets per camera, September 2025 - August 2026.",
+             notes = c("Offset: ln(months live). Red-light cameras are the reference type.",
+                       "alpha is the negative binomial dispersion parameter, 1/theta, in every column (it is not exponentiated); its standard error is by the delta method."))
+```
+
+```{r cam-numbers, include=FALSE}
+irr <- function(m, v, k = 1) exp(k * coef(m)[v])
+```
+
+## The Poisson is badly wrong here
+
+Look at the Poisson column first. Nearly every coefficient has three stars, and the standard errors are tiny. That should make you suspicious. Here are the same computations as in Part 1, now for the camera model.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-cam-disp
+#| tbl-cap: "Negative binomial or Poisson? Tickets per camera."
+
+k_c <- length(coef(c_nb))
+lr_c <- 2 * (as.numeric(logLik(c_nb)) - as.numeric(logLik(c_p)))
+se_ratio <- sqrt(diag(vcov(c_nb))) / sqrt(diag(vcov(c_p)))
+
+disp_table(c_nb, c_p, cs$tickets) %>%
+  kbl(align = "lrl") %>%
+  kable_styling(full_width = FALSE) %>%
+  column_spec(3, bold = TRUE)
+```
+
+Same tests, very different answer. The conditional variance is on the order of `r format(round(pearson_disp(cs$tickets, fitted(c_p), 0, k_c), -2), big.mark = ",")` times what the Poisson allows, and the likelihood ratio statistic is `r format(round(lr_c), big.mark = ",")`. There's no contest.
+
+As in Part 1, $\widehat\alpha$ depends on what's in the model. @tbl-cam-alpha estimates the camera model in steps, from the offset alone to the full specification and then with ward fixed effects, and reports $\widehat\alpha$ at each one.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-cam-alpha
+#| tbl-cap: "The estimated dispersion parameter as the camera model is filled in. Each row adds the variables named to the row above."
+
+alpha_steps <- list(
+  "Offset only (tickets per month, no covariates)" = tickets ~ offset(log(months)),
+  "+ camera type" = tickets ~ type + offset(log(months)),
+  "+ speed limit, traffic, crashes" = tickets ~ type + speedlimit + lnaadt + lncrashes + offset(log(months)),
+  "+ % Black, income (the full model)" = cam_f,
+  "+ ward fixed effects" = update(cam_f, . ~ . + ward))
+
+map_dfr(alpha_steps, function(f) {
+  m <- glm.nb(f, data = cs, control = glm.control(maxit = 100))
+  tibble(alpha = 1 / m$theta, `se(alpha)` = m$SE.theta / m$theta^2,
+         `ln L` = as.numeric(logLik(m)), k = length(coef(m)))
+}, .id = "Model") %>%
+  kbl(digits = 3, format.args = list(big.mark = ",")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+$\widehat\alpha$ falls at every step, as the same logic says it should — each set of variables takes over some of the variation $\alpha$ was absorbing. But notice how *little* it falls here compared to Part 1. Camera type, traffic, crashes, and the neighborhood together take $\widehat\alpha$ from about 0.9 to about 0.7. What makes one camera write ten times as many tickets as another camera that looks the same on paper — the grade of the road, the sight lines, whether drivers have learned it's there, how long it's been live — is mostly not in these data. The negative binomial is the honest model given what we have, and $\widehat\alpha$ is an honest measure of how much we don't know about these cameras.
+
+What overdispersion does to the Poisson is make it far too confident. The negative binomial standard errors are between `r round(min(se_ratio))` and `r round(max(se_ratio))` times as large as the Poisson's. The Poisson finds a % Black effect with a $z$ of `r round(coef(summary(c_p))["pctblack", 3], 1)`; the negative binomial puts the same coefficient at a $z$ of `r round(coef(summary(c_nb))["pctblack", 3], 2)`. Perversely, the Poisson's point estimates aren't crazy — they're consistent as long as $E[y|x]$ is right — but anyone reading the Poisson column would think they knew things they don't. Compare this to Part 1, where the Poisson and negative binomial were nearly interchangeable. Overdispersion is a property of the data-generating process, not of count data in general. Tickets per camera vary enormously even among cameras that look alike on paper — a camera at the bottom of a hill where everyone speeds, versus one at a light where traffic crawls — and none of that is in $x$.
+
+We can see the shape of the overdispersion directly. Sort the cameras into ten groups by their fitted count $\widehat\lambda_i$; within each group, compute the average fitted count and the average squared residual, $(y_i - \widehat\lambda_i)^2$, which estimates the conditional variance. If the Poisson were right, the points would fall on the line where the variance equals the mean. If the negative binomial is right, they'd fall on $\lambda + \widehat\alpha\lambda^2$.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-cam-meanvar
+#| fig-height: 3.8
+#| fig-cap: "Average squared residual against average fitted count, in ten groups of cameras sorted by fitted count. Lines show the variance each model implies. Both axes are logged."
+#| fig-alt: !expr 'sprintf("Log-log plot of the average squared residual against the average fitted count for ten groups of cameras, with fitted counts from about %s to %s tickets. Two lines: the Poisson variance (equal to the mean) runs along the bottom at around %s to %s; the negative binomial variance runs about three orders of magnitude higher. The ten points scatter around the negative binomial line, from about %s to %s, and nowhere near the Poisson line.", format(round(mv$mu[1]), big.mark = ","), format(round(mv$mu[10]), big.mark = ","), format(round(mv$mu[1]), big.mark = ","), format(round(mv$mu[10]), big.mark = ","), format(signif(min(mv$v), 2), big.mark = ","), format(signif(max(mv$v), 2), big.mark = ","))'
+
+# deciles of the fitted count; average fitted count and squared residual in each
+mv <- tibble(mu = fitted(c_nb), r2 = (cs$tickets - fitted(c_nb))^2) %>%
+  mutate(group = ntile(mu, 10)) %>%
+  group_by(group) %>%
+  summarise(mu = mean(mu), v = mean(r2))
+
+curves <- tibble(mu = exp(seq(log(min(mv$mu)), log(max(mv$mu)), length.out = 100))) %>%
+  mutate(`Poisson: variance = mean` = mu,
+         `Negative binomial: mean + alpha mean^2` = mu + mu^2 / c_nb$theta) %>%
+  pivot_longer(-mu, names_to = "model", values_to = "variance")
+
+ggplot() +
+  geom_line(data = curves, aes(x = mu, y = variance, linetype = model), color = bu_grey,
+            linewidth = .8) +
+  geom_point(data = mv, aes(x = mu, y = v), color = bu_green, size = 2.6) +
+  scale_x_log10(labels = scales::comma) +
+  scale_y_log10(labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  scale_linetype_manual(values = c("solid", "22")) +
+  labs(x = "Average fitted count (tickets over the window)", y = "Average squared residual",
+       linetype = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+```
+
+The points sit on or around the negative binomial line, and three orders of magnitude above the Poisson line. The variance grows with roughly the square of the mean, which is what $\lambda + \alpha\lambda^2$ says it should do when $\lambda$ is large. Here, $\lambda$ is in the thousands, so the $\alpha\lambda^2$ term is everything.
+
+## Estimating the negative binomial by hand
+
+`glm.nb` is a black box unless we open it. So let's write the log-likelihood in terms of $\beta$ and $\alpha$, exactly as derived above, as an R function and maximize it ourselves. Three details. First, I parameterize $\alpha$ as $\ln\alpha$, so the optimizer can search over the whole real line without proposing a negative variance; at the end, $\widehat\alpha = e^{\widehat{\ln\alpha}}$, and by the delta method $se(\widehat\alpha) = \widehat\alpha\, se(\widehat{\ln\alpha})$. Second, I start from the Poisson estimates and $\ln\alpha = 0$. Third, I give `optim` the analytic gradient — the two derivatives above, with the one for $\alpha$ multiplied by $\alpha$, since by the chain rule $\frac{\partial \ln L}{\partial \ln\alpha} = \alpha\frac{\partial \ln L}{\partial \alpha}$. (Without the gradient, `optim` approximates it numerically, and with counts in the tens of thousands that approximation is crude enough to stop the search a few decimals early.)
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-nb-hand
+#| tbl-cap: "The negative binomial by hand (optim, BFGS) against glm.nb."
+
+X <- model.matrix(cam_f, cs)           # N x k design matrix, intercept first
+y <- cs$tickets
+d <- log(cs$months)                    # the offset
+k <- ncol(X)
+
+# log-likelihood in beta and alpha; par = (beta_1, ..., beta_k, ln alpha)
+nb_ll <- function(par) {
+  b <- par[1:k]
+  a <- exp(par[k + 1])
+  lambda <- as.vector(exp(X %*% b + d))
+  sum(lgamma(y + 1 / a) - lgamma(1 / a) - lgamma(y + 1) +
+        y * log(a) + y * log(lambda) - (y + 1 / a) * log(1 + a * lambda))
+}
+
+# gradient: score for beta, then for ln alpha (= alpha times the score for alpha)
+nb_gr <- function(par) {
+  b <- par[1:k]
+  a <- exp(par[k + 1])
+  lambda <- as.vector(exp(X %*% b + d))
+  g_b <- colSums(X * ((y - lambda) / (1 + a * lambda)))
+  g_a <- sum(-a^-2 * (digamma(y + 1 / a) - digamma(1 / a) - log(1 + a * lambda)) +
+               (y - lambda) / (a * (1 + a * lambda)))
+  c(g_b, a * g_a)
+}
+
+start <- c(coef(c_p), 0)
+nb_fit <- optim(start, nb_ll, nb_gr, method = "BFGS",
+                control = list(fnscale = -1, maxit = 10000, reltol = 1e-14))
+
+# standard errors from the inverse of the negative Hessian at the estimates
+H <- optimHess(nb_fit$par, nb_ll, nb_gr)
+se_obs <- sqrt(diag(solve(-H)))
+
+# alpha and its standard error: alpha = exp(ln alpha); se(alpha) = alpha * se(ln alpha)
+alpha_hand <- exp(nb_fit$par[k + 1])
+alpha_hand_se <- alpha_hand * se_obs[k + 1]
+
+# glm.nb's standard errors come from the expected information, X'WX with
+# W = lambda / (1 + alpha lambda), holding alpha at its estimate
+lambda_hat <- fitted(c_nb)
+W <- lambda_hat / (1 + lambda_hat / c_nb$theta)
+se_exp <- sqrt(diag(solve(t(X) %*% (X * W))))
+
+tibble(Parameter = c(names(coef(c_nb)), "alpha"),
+       `By hand` = c(nb_fit$par[1:k], alpha_hand),
+       `glm.nb` = c(coef(c_nb), 1 / c_nb$theta),
+       `SE, observed information` = c(se_obs[1:k], alpha_hand_se),
+       `SE, expected information` = c(se_exp, NA),
+       `SE, glm.nb` = c(sqrt(diag(vcov(c_nb))), c_nb$SE.theta / c_nb$theta^2)) %>%
+  kbl(digits = 5) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The hand-rolled estimates match `glm.nb` to the third or fourth decimal — the intercept, the least precisely determined parameter, differs by `r sprintf("%.5f", abs(nb_fit$par[1] - coef(c_nb)[1]))` — and the log-likelihoods agree to five decimals: `r sprintf("%.5f", nb_fit$value)` by hand against `r sprintf("%.5f", logLik(c_nb))`. The surface is flat enough along the intercept that the two optimizers stop at slightly different points with the same height. $\widehat\alpha$ is `r sprintf("%.5f", alpha_hand)` either way. Its standard error is `r sprintf("%.4f", alpha_hand_se)` by hand (the delta method from $\ln\alpha$) and `r sprintf("%.4f", c_nb$SE.theta / c_nb$theta^2)` from `glm.nb` (the delta method from $\theta$, using the standard error `glm.nb` computes for $\widehat\theta$ in a separate step).
+
+The standard errors are worth a closer look, because they don't quite match, and the reason is instructive. The hand-rolled SEs come from the Hessian of the log-likelihood at the maximum — the *observed* information. `glm.nb` reports SEs from the *expected* information, $X'WX$ with weights $\widehat\lambda_i/(1 + \widehat\alpha\widehat\lambda_i)$, which is what iteratively reweighted least squares produces. The column labeled "expected information" computes that by hand and reproduces `glm.nb` exactly. For the Poisson with its log link, observed and expected information are the same matrix, because the log is the Poisson's canonical link. For the negative binomial with a log link they aren't, and the two sets of SEs differ by up to about `r round(100 * max(abs(se_exp / se_obs[1:k] - 1)))`% here. Both are consistent; they're two estimates of the same asymptotic variance. What matters is knowing which one your software reports.
+
+## What predicts a camera's tickets
+
+Turn to the negative binomial. The road variables do what we'd expect. Speed cameras write `r round(irr(c_nb, "typespeed"), 2)` times as many tickets per month as red-light cameras, and stop-sign cameras `r round(irr(c_nb, "typestop sign"), 2)` times as many. Traffic matters, though less than proportionally: doubling daily traffic multiplies tickets by $2^{`r sprintf("%.2f", coef(c_nb)["lnaadt"])`}$ = `r round(2^coef(c_nb)["lnaadt"], 2)`. (Same lesson as road length in Part 1. Traffic volume is exposure, but if it entered as an offset we'd be assuming tickets are proportional to traffic, and its estimated coefficient, `r sprintf("%.2f", coef(c_nb)["lnaadt"])` with a standard error of `r sprintf("%.2f", sqrt(vcov(c_nb)["lnaadt", "lnaadt"]))`, is nowhere near one. Heavy traffic is also slow traffic, and slow traffic doesn't speed — the point from Part 1 that an estimated exposure coefficient also absorbs whatever goes with exposure: here, congestion as well as opportunity.) Crashes near the camera are, if anything, *negatively* related to tickets, which is probably the same congestion story.
+
+The neighborhood variables are where it gets interesting. Conditional on the road, % Black is not related to how many tickets a camera writes — the coefficient is `r sprintf("%.4f", coef(c_nb)["pctblack"])`, and if anything negative. Income is. The coefficient on log median income is `r sprintf("%.3f", coef(c_nb)["lninc"])` ($z$ = `r round(coef(summary(c_nb))["lninc", 3], 2)`): a camera in a tract with half the median income writes about `r round(100 * (0.5^coef(c_nb)["lninc"] - 1))`% more tickets per month, holding the road constant.
+
+@tbl-cam-irr puts all of these on the same footing, as rate ratios for meaningful changes.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-cam-irr
+#| tbl-cap: "Rate ratios from the negative binomial camera model, for meaningful changes in each covariate."
+
+irr_table(c_nb,
+          deltas = c(`typespeed` = 1, `typestop sign` = 1, speedlimit = 10,
+                     lnaadt = log(2), lncrashes = log(2), pctblack = 10, lninc = log(2)),
+          labels = c("Speed camera (vs red-light)", "Stop-sign camera (vs red-light)",
+                     "Speed limit, +10 mph", "Daily traffic, doubled",
+                     "Crashes within 150 m, doubled", "% Black, +10 points",
+                     "Median income, doubled")) %>%
+  kbl(digits = 2) %>%
+  kable_styling(full_width = FALSE)
+```
+
+Notice the interval on the speed limit (`r round(exp(10 * (coef(c_nb)["speedlimit"] - 1.96 * sqrt(vcov(c_nb)["speedlimit", "speedlimit"]))), 2)` to `r round(exp(10 * (coef(c_nb)["speedlimit"] + 1.96 * sqrt(vcov(c_nb)["speedlimit", "speedlimit"]))), 2)`): ten more miles an hour of posted limit may well mean more tickets, but we can't tell. Most of DC's cameras sit on 25 mph streets (`r sum(cs$speedlimit == 25)` of `r nrow(cs)`), so there isn't much variation to learn from.
+
+So the two stages tell different stories. Placement follows race; yield follows income.
+
+## Quantities of interest
+
+### Expected tickets, by hand
+
+Take a speed camera on a 25 mph street, with median traffic, median nearby crashes, and median % Black, and put it in a tract with a median household income of \$50,000 and then \$150,000. Setting $d_i = 1$ makes the offset $\ln 1 = 0$, so $e^{x\widehat\beta}$ is tickets per month.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-cam-hand
+#| tbl-cap: "Expected tickets per month by hand: a speed camera, 25 mph, median traffic, crashes, and % Black, in a $50k and a $150k tract."
+
+x_base <- c(1, 1, 0, 25, median(cs$lnaadt), median(cs$lncrashes), median(cs$pctblack))
+x_50  <- c(x_base, log(50))
+x_150 <- c(x_base, log(150))
+
+hand_c <- tibble(Variable = names(coef(c_nb)), beta = coef(c_nb),
+                 x_50 = x_50, bx_50 = beta * x_50,
+                 x_150 = x_150, bx_150 = beta * x_150)
+
+hand_c %>%
+  bind_rows(tibble(Variable = "x beta", bx_50 = sum(hand_c$bx_50), bx_150 = sum(hand_c$bx_150)),
+            tibble(Variable = "exp(x beta)", bx_50 = exp(sum(hand_c$bx_50)),
+                   bx_150 = exp(sum(hand_c$bx_150)))) %>%
+  kbl(digits = 3, col.names = c("Variable", "beta-hat", "x", "beta x", "x", "beta x")) %>%
+  add_header_above(c(" " = 2, "$50k tract" = 2, "$150k tract" = 2)) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The camera writes `r round(exp(sum(hand_c$bx_50)))` tickets a month in the \$50k tract and `r round(exp(sum(hand_c$bx_150)))` in the \$150k tract. The ratio, `r round(exp(sum(hand_c$bx_50)) / exp(sum(hand_c$bx_150)), 2)`, is $3^{-\widehat\beta_{inc}} = 3^{`r sprintf("%.3f", -coef(c_nb)["lninc"])`}$, because \$150k is three times \$50k, and it would be the same for any camera. The difference, `r round(exp(sum(hand_c$bx_50)) - exp(sum(hand_c$bx_150)))` tickets a month, would not; it's larger for cameras with higher baseline counts.
+
+### Across traffic, and across income
+
+@fig-cam-aadt shows expected tickets per month across the observed range of daily traffic, separately for the three camera types, with everything else at its median. This is the "road" story, and it's most of the variation.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-cam-aadt
+#| fig-height: 3.8
+#| fig-cap: "Expected tickets per month by camera type, across daily traffic (log scale). Speed limit 25; crashes, % Black, and median income at their medians. 95% intervals by endpoint transformation. Ticks along the bottom mark the observed cameras of each type."
+#| fig-alt: !expr 'sprintf("Three panels, one per camera type, each plotting expected tickets per month against average daily traffic from about %s to %s vehicles on a log scale, with 95 percent intervals. All three lines rise. Stop-sign cameras are highest, from about %d to %d tickets per month; speed cameras are in the middle, from about %d to %d; red-light cameras are lowest, from about %d to %d. A rug along the bottom of each panel shows the cameras of that type; most sit between 5,000 and 50,000 vehicles a day, and stop-sign cameras sit on the quietest roads.", format(round(min(cs$aadt), -2), big.mark = ","), format(round(max(cs$aadt), -3), big.mark = ","), round(min(and$ey[and$type == "stop sign"])), round(max(and$ey[and$type == "stop sign"])), round(min(and$ey[and$type == "speed"])), round(max(and$ey[and$type == "speed"])), round(min(and$ey[and$type == "red light"])), round(max(and$ey[and$type == "red light"])))'
+
+and <- expand_grid(lnaadt = seq(log(min(cs$aadt)), log(max(cs$aadt)), length.out = 100),
+                   type = levels(cs$type)) %>%
+  mutate(type = factor(type, levels = levels(cs$type)),
+         speedlimit = 25,
+         lncrashes = median(cs$lncrashes),
+         pctblack = median(cs$pctblack),
+         lninc = median(cs$lninc),
+         months = 1)                       # offset ln(1) = 0: tickets per month
+
+ap <- predict(c_nb, newdata = and, type = "link", se.fit = TRUE)
+and <- and %>%
+  mutate(aadt = exp(lnaadt),
+         ey = exp(ap$fit), lb = exp(ap$fit - 1.96 * ap$se.fit), ub = exp(ap$fit + 1.96 * ap$se.fit))
+
+ggplot(and, aes(x = aadt, y = ey)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_greyfill, alpha = .4) +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_rug(data = cs, aes(x = aadt), inherit.aes = FALSE, sides = "b",
+           color = bu_grey, alpha = .6) +
+  facet_wrap(~ type, labeller = labeller(type = c("red light" = "Red-light cameras",
+                                                  "speed" = "Speed cameras",
+                                                  "stop sign" = "Stop-sign cameras"))) +
+  scale_x_log10(labels = scales::label_number(scale_cut = scales::cut_short_scale()),
+                breaks = c(1000, 10000, 100000)) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(x = "Average daily traffic (log scale)", y = "Expected tickets per month") +
+  theme_bu()
+```
+
+Read each panel where its rug is. Every line is drawn across the full range of traffic in the data, but the camera types don't share that range: `r sum(cs$type == "stop sign" & cs$aadt < 10000)` of the `r sum(cs$type == "stop sign")` stop-sign cameras sit on roads with fewer than 10,000 vehicles a day, and only `r sum(cs$type == "stop sign" & cs$aadt > 30000)` on roads busier than 30,000, so the steep right end of that panel — and its wide interval — is the model extending the stop-sign effect onto arterials where DC has very few stop-sign cameras. Red-light cameras are the reverse: none sits on a road with fewer than `r scales::comma(min(cs$aadt[cs$type == "red light"]), 100)` vehicles a day.
+
+@fig-cam-inc is the "neighborhood" story — the income gradient — computed as average predictions: each camera stays at its own type, speed limit, traffic, crashes, and % Black; I set its tract's median income to each value in turn, predict tickets per month for every camera, and average.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-cam-inc
+#| fig-height: 3.6
+#| fig-cap: "Average expected tickets per month across tract median household income. Every camera held at its observed values on the other variables. 95% delta-method intervals. Ticks along the bottom mark the observed cameras."
+#| fig-alt: !expr 'sprintf("Average expected tickets per camera per month plotted against tract median household income from $25,000 to $225,000, with a 95 percent interval. The line falls steadily, from about %d tickets per month at $25,000 to about %d at $225,000. A rug along the bottom shows the cameras: only %d sit in tracts below $40,000, and most are between $60,000 and $150,000.", round(inc_avg$estimate[1]), round(inc_avg$estimate[nrow(inc_avg)]), sum(cs$medinc < 40))'
+
+inc_grid <- seq(25, 225, by = 10)          # $ thousands
+
+inc_avg <- avg_predictions(c_nb, type = "response",
+                           newdata = mutate(cs, months = 1),
+                           variables = list(lninc = log(inc_grid))) %>%
+  as_tibble() %>%
+  mutate(medinc = exp(lninc))
+
+ggplot(inc_avg, aes(x = medinc, y = estimate)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = bu_greyfill, alpha = .4) +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_rug(data = cs, aes(x = medinc), inherit.aes = FALSE, sides = "b",
+           color = bu_grey, alpha = .6) +
+  scale_x_continuous(labels = scales::dollar_format(suffix = "k")) +
+  labs(x = "Tract median household income", y = "Average expected tickets per month") +
+  theme_bu()
+```
+
+The average camera in a $`r inc_grid[1]`k tract writes `r scales::comma(inc_avg$estimate[1])` tickets a month; the same camera in a $`r inc_grid[length(inc_grid)]`k tract writes `r scales::comma(inc_avg$estimate[nrow(inc_avg)])`. That's a big difference, and it's on top of the road. But notice how wide the interval is — the negative binomial is honest about how much camera-to-camera variation the model doesn't explain — and look at the rug. Only `r sum(cs$medinc < 40)` cameras sit in tracts with median incomes below \$40,000, and `r sum(cs$medinc < 25)` below \$25,000, so the steep left end of the curve is where the model has the least data, and where the interval is widest. The \$50k-to-\$150k comparison below sits where the data are.
+
+As in Part 1, here is what `avg_predictions` does, computed by hand at two incomes: set every camera's tract income to \$50,000, predict tickets per month for every camera (with $d_i = 1$), average; repeat at \$150,000.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-cam-avg-hand
+#| tbl-cap: "Average predicted tickets per camera per month, by hand and from marginaleffects."
+
+avg_inc <- function(inc) {
+  nd <- mutate(cs, lninc = log(inc), months = 1)
+  mean(predict(c_nb, newdata = nd, type = "response"))
+}
+
+tibble(`Tract median income` = c("$50,000", "$150,000"),
+       `By hand` = c(avg_inc(50), avg_inc(150)),
+       marginaleffects = c(avg_predictions(c_nb, newdata = mutate(cs, months = 1), type = "response",
+                                           variables = list(lninc = log(c(50, 150))))$estimate)) %>%
+  kbl(digits = 1) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The average-effects version of the \$50k-versus-\$150k comparison, with every camera at its own observed values:
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# contrast: each camera's prediction at ln(50) minus its prediction at ln(150), averaged
+c_cmp <- avg_comparisons(c_nb, newdata = mutate(cs, months = 1),
+                         variables = list(lninc = log(c(150, 50))))
+c_cmp_hand <- mean(predict(c_nb, newdata = mutate(cs, months = 1, lninc = log(50)), type = "response") -
+                   predict(c_nb, newdata = mutate(cs, months = 1, lninc = log(150)), type = "response"))
+```
+
+Moving every camera's tract from \$150k to \$50k median income adds an average of `r round(abs(c_cmp_hand))` tickets per camera per month (95% interval `r round(min(abs(c(c_cmp$conf.low, c_cmp$conf.high))))` to `r round(max(abs(c(c_cmp$conf.low, c_cmp$conf.high))))`). Across `r nrow(cs)` cameras and twelve months, that's on the order of `r scales::comma(abs(c_cmp_hand) * nrow(cs) * 12, accuracy = 10000)` tickets a year — the scale of the income gradient, if every camera in the city were moved from a rich tract to a poor one.
+
+## Is the income result fragile?
+
+A few checks on the camera model. The specification is the same throughout; only the sample or the fixed effects change.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-cam-robust
+
+r_speed <- glm.nb(update(cam_f, . ~ . - type), data = filter(cs, type == "speed"),
+                  control = glm.control(maxit = 100))
+r_near  <- glm.nb(cam_f, data = filter(cs, dist_aadt <= 25), control = glm.control(maxit = 100))
+r_full  <- glm.nb(cam_f, data = filter(cs, months == 12), control = glm.control(maxit = 100))
+r_ward  <- glm.nb(update(cam_f, . ~ . + ward), data = cs, control = glm.control(maxit = 100))
+
+robust_models <- list("Main" = c_nb, "Speed cameras" = r_speed,
+                      "Traffic count within 25 m" = r_near, "Live all 12 months" = r_full,
+                      "Ward fixed effects" = r_ward)
+robust_alpha <- alpha_rows(robust_models)
+attr(robust_alpha, "position") <- c(7, 8)
+
+modelsummary(robust_models,
+             stars = TRUE, add_rows = robust_alpha,
+             coef_map = c("pctblack" = "% Black", "lninc" = "ln(median income)",
+                          "lnaadt" = "ln(daily traffic)"),
+             gof_map = c("nobs"),
+             title = "Robustness of the camera model. All models include the full set of road covariates.",
+             notes = "Negative binomial; offset ln(months live).")
+```
+
+The income coefficient holds up among speed cameras alone (`r sprintf("%.3f", coef(r_speed)["lninc"])`), among the `r sum(cs$dist_aadt <= 25)` cameras whose traffic count segment is within 25 m (`r sprintf("%.3f", coef(r_near)["lninc"])`), and among cameras live the full year (`r sprintf("%.3f", coef(r_full)["lninc"])`). It is weakest with ward fixed effects (`r sprintf("%.3f", coef(r_ward)["lninc"])`, $p$ = `r sprintf("%.2f", coef(summary(r_ward))["lninc", 4])`), which use only the variation in income among cameras in the same ward. Wards account for `r round(100 * summary(lm(lninc ~ ward, data = cs))$r.squared)`% of the variance in log income across these cameras, so the fixed effects set aside about half of it. % Black stays near zero throughout; it is never positive and distinguishable from zero. I'd describe the income result as consistent but not overwhelming — which, given $\widehat\alpha$ of about `r round(1 / c_nb$theta, 1)`, is about what we should expect from `r nrow(cs)` cameras.
+
+# Putting the two stages together
+
+Tickets written in a tract are the number of cameras times the tickets each one writes. So which stage drives the difference between Black and white neighborhoods? @tbl-quintiles sorts all `r nrow(tracts)` tracts into fifths by % Black and shows each stage, plus the product, without any model.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-quintiles
+#| tbl-cap: "Cameras and tickets by fifth of tracts, sorted by percent Black. Tickets are annualized (a camera's tickets divided by its live months, times 12)."
+
+quint <- tracts %>%
+  mutate(fifth = ntile(pctblack, 5)) %>%
+  group_by(fifth) %>%
+  summarise(Tracts = n(),
+            `Mean % Black` = mean(pctblack),
+            `Median income ($000)` = median(medinc, na.rm = TRUE),
+            `Share with a camera` = mean(ncams > 0),
+            `Cameras per tract` = mean(ncams),
+            `Tickets per camera per month` = sum(tickets) / sum(ncams) / 12,
+            `Tickets per tract per year` = mean(tickets))
+
+quint %>%
+  mutate(fifth = c("Least Black", "2", "3", "4", "Most Black")) %>%
+  rename(`Fifth of tracts` = fifth) %>%
+  kbl(digits = c(0, 0, 1, 0, 2, 2, 0, 0), format.args = list(big.mark = ",")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The answer is placement. The share of tracts with any camera climbs from `r round(100 * quint[[5]][1])`% in the least-Black fifth to `r round(100 * quint[[5]][5])`% in the most-Black fifth, and cameras per tract from `r round(quint[[6]][1], 2)` to `r round(quint[[6]][5], 2)`. Tickets per camera barely move across the fifths — if anything, the least-Black fifth's cameras write the most, which runs opposite to the income gradient in Part 2, since the least-Black tracts are also the richest. That has to come from the roads those cameras sit on, which this table, unlike the model, doesn't hold constant. So the most-Black fifth of tracts absorbs `r round(quint[[8]][5] / quint[[8]][1], 1)` times as many tickets per tract as the least-Black fifth, and almost all of that comes from having more cameras, not from cameras that write more.
+
+That's a descriptive decomposition. Now let's do it properly, in one model.
+
+## A hurdle model for tickets per tract
+
+The outcome is now the number of tickets written in tract $i$ in a year — each camera's tickets divided by its live months, times twelve, summed over the cameras in the tract, and rounded to a whole number. A tract with no camera has zero tickets, and `r sum(round(tr$tickets) == 0)` of the `r nrow(tr)` tracts in the estimation sample have none. A tract with a camera has thousands: the median among tracts with any tickets is `r format(round(median(tr$tickets[tr$tickets > 0])), big.mark = ",")`.
+
+That's two different processes producing one variable. Something decides whether a tract gets any camera at all, and so whether it gets any tickets. Something else decides how many tickets it gets once it has a camera. A Poisson or negative binomial treats the zeros as just the low end of the same distribution that produces the 20,000s, and it can't produce both the pile of zeros and the long right tail. The **hurdle model** splits the outcome at zero: a binary model for whether the tract clears the hurdle, and a count model, truncated at zero, for how many tickets it gets given that it has.
+
+### The likelihood
+
+Same recipe as before.
+
+**The PMF.** Let $\pi_i$ be the probability tract $i$ clears the hurdle (has any tickets), and let $f_{NB}(y_i \mid \lambda_i, \alpha)$ be the negative binomial PMF from Part 2. Then
+
+$$
+f(y_i \mid \pi_i, \lambda_i, \alpha) =
+\begin{cases}
+1 - \pi_i & \text{if } y_i = 0 \\[8pt]
+\pi_i \, \dfrac{f_{NB}(y_i \mid \lambda_i, \alpha)}{1 - f_{NB}(0 \mid \lambda_i, \alpha)} & \text{if } y_i > 0
+\end{cases}
+$$
+
+The first line is the probability of a zero. The second is the probability of clearing the hurdle times the probability of $y_i$ tickets *given* that the count is positive. That's why the negative binomial is divided by $1 - f_{NB}(0)$: the count part only describes $y = 1, 2, 3, \ldots$, and dividing by the probability of being positive makes those probabilities sum to one. This is a **zero-truncated** negative binomial. From Part 1, the negative binomial probability of a zero is
+
+$$
+f_{NB}(0 \mid \lambda_i, \alpha) = \left(\frac{\alpha^{-1}}{\alpha^{-1} + \lambda_i}\right)^{\alpha^{-1}} = (1 + \alpha\lambda_i)^{-1/\alpha}
+$$
+
+**The joint probability.** Assuming the tracts are independent, the zeros contribute $1 - \pi_i$ and the positives contribute the second line:
+
+$$
+L(\pi, \lambda, \alpha \mid y) = \prod_{y_i = 0} (1 - \pi_i) \prod_{y_i > 0} \pi_i \, \frac{f_{NB}(y_i \mid \lambda_i, \alpha)}{1 - (1 + \alpha\lambda_i)^{-1/\alpha}}
+$$
+
+**Take logs.** Write $I_i = 1$ if $y_i > 0$ and $I_i = 0$ otherwise. The log of the product is
+
+$$
+\ln L(\pi, \lambda, \alpha \mid y) = \underbrace{\sum_{i=1}^{n} \Big[ (1 - I_i)\ln(1 - \pi_i) + I_i \ln \pi_i \Big]}_{\text{the hurdle}} \;+\; \underbrace{\sum_{i=1}^{n} I_i \Big[ \ln f_{NB}(y_i \mid \lambda_i, \alpha) - \ln\big(1 - (1 + \alpha\lambda_i)^{-1/\alpha}\big) \Big]}_{\text{the count, given } y_i > 0}
+$$
+
+Look at the first sum. It is exactly the binary log-likelihood from [the likelihood notes](likelihood26.html) — the ones and the zeros, mirror images, with $I_i$ doing the switching — where the "ones" are tracts with any tickets. The second sum is the negative binomial log-likelihood from Part 2, over the positive tracts only, minus the log of the truncation term. $\ln f_{NB}$ is the expression we derived there:
+
+$$
+\ln f_{NB}(y_i \mid \lambda_i, \alpha) = \ln\Gamma(y_i + \alpha^{-1}) - \ln\Gamma(\alpha^{-1}) - \ln(y_i!) + y_i\ln\alpha + y_i\ln\lambda_i - (y_i + \alpha^{-1})\ln(1 + \alpha\lambda_i)
+$$
+
+**Parameterize.** Each part gets its own link and its own coefficients. The hurdle is a logit, and the count is log-linear:
+
+$$
+\pi_i = \Lambda(z_i\gamma) = \frac{1}{1 + e^{-z_i\gamma}}, \qquad \lambda_i = e^{x_i\beta}
+$$
+
+$z_i$ and $x_i$ can be different variables; here they are the same four (% Black, crashes, major road, income), so we can compare how each one works in each part.
+
+**Separability.** Here is the convenient thing. $\gamma$ appears only in the first sum, and $\beta$ and $\alpha$ appear only in the second. So maximizing the whole log-likelihood is the same as maximizing each sum on its own: a logit of $I_i$ on $z_i$ across all tracts, and a zero-truncated negative binomial of $y_i$ on $x_i$ across the tracts with $y_i > 0$. The hurdle model's log-likelihood is the sum of the two.
+
+**The gradient for the count part.** The truncation term adds a piece to each of the negative binomial scores from Part 2. Writing $f_{0i} = (1 + \alpha\lambda_i)^{-1/\alpha}$, the derivative of $-\ln(1 - f_{0i})$ with respect to $\beta$ is $-\frac{f_{0i}}{1 - f_{0i}}\frac{\lambda_i}{1 + \alpha\lambda_i}x_i'$, so
+
+$$
+\frac{\partial \ln L}{\partial \beta} = \sum_{y_i > 0} \left[ \frac{y_i - \lambda_i}{1 + \alpha\lambda_i} - \frac{f_{0i}}{1 - f_{0i}}\,\frac{\lambda_i}{1 + \alpha\lambda_i} \right] x_i'
+$$
+
+and the score for $\alpha$ is the negative binomial's plus $\frac{f_{0i}}{1 - f_{0i}}\left[\alpha^{-2}\ln(1 + \alpha\lambda_i) - \frac{\lambda_i}{\alpha(1 + \alpha\lambda_i)}\right]$ for each positive tract.
+
+### Estimation
+
+`pscl::hurdle()` fits this model, but `pscl` isn't in the course library, and since the two parts separate, we don't need it: `glm` for the hurdle, and our own optimizer for the truncated count.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-hurdle
+#| tbl-cap: "Hurdle model of tickets per tract per year. Left: logit for any tickets (all tracts). Right: zero-truncated negative binomial for the number of tickets (tracts with any)."
+
+trh <- tr %>% mutate(y = round(tickets), any = as.integer(y > 0))
+
+# the hurdle: logit of any tickets, all tracts
+h_bin <- glm(any ~ pctblack + lncrashes + lnmajorkm + lninc, data = trh, family = binomial)
+
+# the count: zero-truncated NB, tracts with any tickets
+pos <- filter(trh, y > 0)
+Zc <- model.matrix(~ pctblack + lncrashes + lnmajorkm + lninc, pos)
+yc <- pos$y
+kc <- ncol(Zc)
+
+# log-likelihood; par = (beta_1, ..., beta_k, ln alpha)
+tnb_ll <- function(par) {
+  b <- par[1:kc]
+  a <- exp(par[kc + 1])
+  lambda <- as.vector(exp(Zc %*% b))
+  f0 <- (1 + a * lambda)^(-1 / a)
+  sum(lgamma(yc + 1 / a) - lgamma(1 / a) - lgamma(yc + 1) + yc * log(a) + yc * log(lambda) -
+        (yc + 1 / a) * log(1 + a * lambda) - log(1 - f0))
+}
+
+# gradient: NB scores plus the truncation pieces; last element is for ln alpha
+tnb_gr <- function(par) {
+  b <- par[1:kc]
+  a <- exp(par[kc + 1])
+  lambda <- as.vector(exp(Zc %*% b))
+  f0 <- (1 + a * lambda)^(-1 / a)
+  g_b <- colSums(Zc * ((yc - lambda) / (1 + a * lambda) -
+                         f0 / (1 - f0) * lambda / (1 + a * lambda)))
+  g_a_nb <- sum(-a^-2 * (digamma(yc + 1 / a) - digamma(1 / a) - log(1 + a * lambda)) +
+                  (yc - lambda) / (a * (1 + a * lambda)))
+  g_a_tr <- sum(f0 / (1 - f0) * (a^-2 * log(1 + a * lambda) - lambda / (a * (1 + a * lambda))))
+  c(g_b, a * (g_a_nb + g_a_tr))
+}
+
+# start from an untruncated NB on the positive tracts
+nb_start <- glm.nb(y ~ pctblack + lncrashes + lnmajorkm + lninc, data = pos)
+h_cnt <- optim(c(coef(nb_start), log(1 / nb_start$theta)), tnb_ll, tnb_gr, method = "BFGS",
+               control = list(fnscale = -1, maxit = 10000, reltol = 1e-14))
+H_cnt <- optimHess(h_cnt$par, tnb_ll, tnb_gr)
+V_cnt <- solve(-H_cnt)
+se_cnt <- sqrt(diag(V_cnt))
+
+h_alpha <- exp(h_cnt$par[kc + 1])
+h_alpha_se <- h_alpha * se_cnt[kc + 1]
+h_ll <- as.numeric(logLik(h_bin)) + h_cnt$value
+
+stars <- function(z) case_when(abs(z) > 3.29 ~ "***", abs(z) > 2.58 ~ "**",
+                               abs(z) > 1.96 ~ "*", abs(z) > 1.645 ~ "+", TRUE ~ "")
+cell <- function(b, se) sprintf("%.3f%s (%.3f)", b, stars(b / se), se)
+
+tibble(Variable = c(tract_labels[names(coef(h_bin))[-1]], "Constant", "alpha"),
+       `Hurdle: any tickets (logit)` = c(cell(coef(h_bin), sqrt(diag(vcov(h_bin))))[c(2:5, 1)], ""),
+       `Count: tickets, given any (truncated NB)` = c(cell(h_cnt$par[1:kc], se_cnt[1:kc])[c(2:5, 1)],
+                                                     sprintf("%.3f (%.3f)", h_alpha, h_alpha_se))) %>%
+  bind_rows(tibble(Variable = c("Num.Obs.", "Log.Lik."),
+                   `Hurdle: any tickets (logit)` = c(as.character(nobs(h_bin)),
+                                                     sprintf("%.3f", logLik(h_bin))),
+                   `Count: tickets, given any (truncated NB)` = c(as.character(nrow(pos)),
+                                                                  sprintf("%.3f", h_cnt$value)))) %>%
+  kbl(align = "lcc") %>%
+  kable_styling(full_width = FALSE) %>%
+  footnote(general = "Standard errors in parentheses. + p < 0.1, * p < 0.05, ** p < 0.01, *** p < 0.001. alpha's standard error by the delta method from ln alpha; no stars, since alpha = 0 is on the boundary (use the likelihood ratio test).")
+```
+
+The hurdle model's log-likelihood is the sum of the two parts: `r sprintf("%.3f", logLik(h_bin))` + (`r sprintf("%.3f", h_cnt$value)`) = `r sprintf("%.3f", h_ll)`.
+
+Read the two columns side by side, because that's the point of the model.
+
+**The hurdle.** Whether a tract has any camera — and so any tickets — depends on crashes, road, and race. Each ten points of % Black multiplies the odds of having a camera by `r round(exp(10 * coef(h_bin)["pctblack"]), 2)` ($z$ = `r round(coef(summary(h_bin))["pctblack", 3], 2)`), holding crashes, road, and income constant. Income does nothing here (`r sprintf("%.3f", coef(h_bin)["lninc"])`, $z$ = `r round(coef(summary(h_bin))["lninc", 3], 2)`).
+
+**The count.** Among tracts that have a camera, more road means more tickets — more road means room for more cameras — and % Black still points up (`r sprintf("%.4f", h_cnt$par[2])`, $z$ = `r round(h_cnt$par[2] / se_cnt[2], 2)`), less precisely. That coefficient mixes two things: tracts with more Black residents that have *a* camera tend to have *more* cameras (the intensive side of placement), while, from Part 2, cameras in poorer tracts write more tickets each. Income's coefficient (`r sprintf("%.3f", h_cnt$par[5])`, $z$ = `r round(h_cnt$par[5] / se_cnt[5], 2)`) is negative here, as it was for yield, but imprecise. The hurdle model splits the outcome at zero; it can't, by itself, separate the number of cameras from the tickets each one writes. That's what the camera-level model in Part 2 is for.
+
+**The truncation.** $\widehat\alpha$ = `r round(h_alpha, 3)`. With counts in the thousands, the negative binomial probability of a zero is tiny — the largest $f_{NB}(0 \mid \widehat\lambda_i, \widehat\alpha)$ among the positive tracts is `r format(signif(max((1 + h_alpha * exp(Zc %*% h_cnt$par[1:kc]))^(-1 / h_alpha)), 2), scientific = TRUE)` — so dividing by $1 - f_{NB}(0)$ changes almost nothing, and the truncated estimates are essentially those of an ordinary negative binomial on the positive tracts (log-likelihood `r sprintf("%.3f", logLik(nb_start))` against `r sprintf("%.3f", h_cnt$value)`). That won't be true with small counts, where the truncation term does real work.
+
+### Putting it back together: expected tickets
+
+The hurdle model's expected count combines the two parts. The probability of clearing the hurdle times the expected count given that it's cleared:
+
+$$
+\begin{aligned}
+E[y_i \mid z_i, x_i] &= Pr(y_i > 0) \times E[y_i \mid y_i > 0] \\[6pt]
+&= \pi_i \times \frac{\lambda_i}{1 - (1 + \alpha\lambda_i)^{-1/\alpha}}
+\end{aligned}
+$$
+
+The second factor is the mean of a zero-truncated negative binomial: the untruncated mean, $\lambda_i$, scaled up by one over the probability of being positive. Because the expected count is a product, its log is a sum, $\ln E[y_i] = \ln \pi_i + \ln E[y_i \mid y_i > 0]$, and the difference between two tracts splits exactly into a hurdle part and a count part.
+
+For uncertainty, I simulate. The two parts are estimated separately, so their estimates are independent: draw 1,000 $\widetilde\gamma$ from $MVN(\widehat\gamma, \widehat V_\gamma)$ and 1,000 $(\widetilde\beta, \widetilde{\ln\alpha})$ from $MVN$ with the inverse negative Hessian of the count part, compute all three quantities for each draw, and take percentiles.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-hurdle
+#| fig-height: 3.6
+#| fig-cap: "Hurdle model quantities across percent Black: the probability a tract has any tickets, expected tickets given any, and expected tickets overall. Crashes, road, and income at their medians. 95% simulation intervals. Ticks along the bottom mark the observed tracts."
+#| fig-alt: !expr 'sprintf("Three panels against percent Black from 0 to 100, each with a 95 percent interval and a rug of observed tracts along the bottom. Left, the probability a tract has any tickets rises from %.2f to %.2f. Middle, expected tickets per year given any rises from about %s to %s, with a wide interval. Right, expected tickets per tract per year rises from about %s to %s.", hq$pi[1], hq$pi[101], scales::comma(hq$cond[1], 100), scales::comma(hq$cond[101], 100), scales::comma(hq$ey[1], 100), scales::comma(hq$ey[101], 100))'
+
+Xh <- model.matrix(~ pctblack + lncrashes + lnmajorkm + lninc,
+                   tibble(pctblack = 0:100,
+                          lncrashes = median(trh$lncrashes),
+                          lnmajorkm = median(trh$lnmajorkm),
+                          lninc = median(trh$lninc)))
+
+# the three quantities at a given gamma, beta, alpha
+hurdle_q <- function(g, b, a) {
+  pi <- plogis(as.vector(Xh %*% g))
+  lambda <- as.vector(exp(Xh %*% b))
+  cond <- lambda / (1 - (1 + a * lambda)^(-1 / a))
+  tibble(pctblack = 0:100, pi = pi, cond = cond, ey = pi * cond)
+}
+
+hq <- hurdle_q(coef(h_bin), h_cnt$par[1:kc], h_alpha)
+
+g_sim <- mvrnorm(1000, coef(h_bin), vcov(h_bin))
+c_sim <- mvrnorm(1000, h_cnt$par, V_cnt)
+hq_sim <- map_dfr(1:1000, ~ hurdle_q(g_sim[.x, ], c_sim[.x, 1:kc], exp(c_sim[.x, kc + 1])),
+                  .id = "draw")
+
+hq_long <- hq_sim %>%
+  pivot_longer(c(pi, cond, ey), names_to = "quantity") %>%
+  group_by(pctblack, quantity) %>%
+  summarise(lb = quantile(value, .025), ub = quantile(value, .975), .groups = "drop") %>%
+  left_join(pivot_longer(hq, c(pi, cond, ey), names_to = "quantity", values_to = "est"),
+            by = c("pctblack", "quantity")) %>%
+  mutate(quantity = factor(quantity, levels = c("pi", "cond", "ey"),
+                           labels = c("Pr(any tickets)", "E[tickets | any]", "E[tickets]")))
+
+ggplot(hq_long, aes(x = pctblack, y = est)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_greyfill, alpha = .4) +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_rug(data = trh, aes(x = pctblack), inherit.aes = FALSE, sides = "b",
+           color = bu_grey, alpha = .6) +
+  facet_wrap(~ quantity, scales = "free_y") +
+  scale_y_continuous(labels = scales::label_comma(accuracy = .01, drop0trailing = TRUE)) +
+  labs(x = "% Black", y = NULL) +
+  theme_bu()
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-hurdle-decomp
+#| tbl-cap: "Expected tickets per tract per year from the hurdle model, at 10% and 90% Black (other variables at their medians), and how the difference divides between the two parts."
+
+h_10 <- filter(hq, pctblack == 10)
+h_90 <- filter(hq, pctblack == 90)
+ey_diff_sim <- hq_sim %>%
+  filter(pctblack %in% c(10, 90)) %>%
+  select(draw, pctblack, ey) %>%
+  pivot_wider(names_from = pctblack, values_from = ey, names_prefix = "b") %>%
+  mutate(diff = b90 - b10)
+
+log_ratio <- c(pi = log(h_90$pi / h_10$pi), cond = log(h_90$cond / h_10$cond))
+
+tibble(Quantity = c("Pr(any tickets)", "E[tickets | any]", "E[tickets]"),
+       `10% Black` = c(h_10$pi, h_10$cond, h_10$ey),
+       `90% Black` = c(h_90$pi, h_90$cond, h_90$ey),
+       `Ratio, 90 / 10` = c(h_90$pi / h_10$pi, h_90$cond / h_10$cond, h_90$ey / h_10$ey),
+       `Share of the log ratio` = c(log_ratio / sum(log_ratio), 1)) %>%
+  kbl(digits = c(0, 2, 2, 2, 2), format.args = list(big.mark = ",")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+A tract with median crashes, road, and income that is 10% Black is expected to have `r scales::comma(h_10$ey, 1)` tickets a year; the same tract 90% Black, `r scales::comma(h_90$ey, 1)` — `r round(h_90$ey / h_10$ey, 1)` times as many, a difference of `r scales::comma(h_90$ey - h_10$ey, 1)` (95% simulation interval `r scales::comma(quantile(ey_diff_sim$diff, .025), 1)` to `r scales::comma(quantile(ey_diff_sim$diff, .975), 1)`). The decomposition says where it comes from. The 90% Black tract is `r round(h_90$pi / h_10$pi, 2)` times as likely to have any camera, and, given that it has one, expects `r round(h_90$cond / h_10$cond, 2)` times as many tickets. On the log scale, `r round(100 * log_ratio["pi"] / sum(log_ratio))`% of the gap is the hurdle — whether the tract has a camera at all — and `r round(100 * log_ratio["cond"] / sum(log_ratio))`% is the count, which from the descriptive table and Part 2 is mostly the number of cameras rather than tickets per camera.
+
+So the model and the descriptive table agree: the difference in enforcement between Black and white neighborhoods in DC is a placement story, at both the extensive margin (whether a tract has a camera) and the intensive one (how many it has). The rug is a reminder of where to believe it. The 10% and 90% comparisons sit where the tracts are; the middle of each curve rests on the few mixed tracts DC has.
+
+# What this does and doesn't show
+
+Putting these together, the evidence says DC's cameras are more densely placed in Black neighborhoods than crashes, road length, and income can account for, and that once a camera is placed, it writes more tickets in poorer neighborhoods than its road and traffic can account for. The hurdle model puts the two together and says the first of these dominates: most of the difference in tickets per tract between Black and white neighborhoods comes from whether, and how many, cameras are there. The placement result replicates @farrell2018dcpc with newer data and more controls.
+
+There are several things it does not show:
+
+- **Who gets the tickets.** Tract demographics describe the residents of the tract where a camera stands, not the drivers it tickets. The twelve cameras on Southern Avenue and Eastern Avenue sit on the Maryland line, and many of the drivers they ticket presumably live in Maryland. DDOT does not publish ticket-level driver residence, so "enforcement lands in Black neighborhoods" is a claim about where cameras are, not about who pays.
+- **Intent.** The placement model is conditional on crashes and roads, but DDOT also places cameras in response to resident complaints, school zones, and pedestrian deaths that a four-year crash count may not capture. An omitted "need" variable correlated with % Black would bias the race coefficient up.
+- **Danger.** A camera that writes a lot of tickets is a camera where a lot of people speed. The yield result might mean drivers in poorer neighborhoods speed more on comparable roads — which could be because those roads are designed for speed in ways AADT and the speed limit don't measure. Cameras might be doing exactly the job they were placed to do.
+- **Novelty.** Drivers learn where cameras are. The offset handles the number of months a camera was live, but not where those months fall in the camera's life, and that matters — see @fig-novelty below.
+
+DDOT's monthly counts go back to September 2022, so we can look at what happens to a camera's tickets after it is switched on. @fig-novelty takes every camera whose first live month came after January 2023 and that has at least 18 live months, divides each month's tickets by that camera's average over its months 13 through 18, and plots the median ratio by month since the camera went live.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-novelty
+#| fig-height: 3.4
+#| fig-cap: "Tickets in each month since a camera went live, relative to the same camera's average in months 13-18. Median across cameras first live after January 2023 with at least 18 live months."
+#| fig-alt: !expr 'sprintf("Median ratio of monthly tickets to the camera average in months 13 to 18, plotted for months 1 through 18 after a camera goes live, across %d cameras. Month 1 is low, at %.2f, because it is usually a partial month. Month 2 is the peak, at %.2f. The ratio then falls steadily, reaching about 1 by month %d and staying there.", n_distinct(nov$id), nov_curve$ratio[1], nov_curve$ratio[2], min(nov_curve$k[nov_curve$k > 2 & nov_curve$ratio <= 1.06]))'
+
+monthly <- read_csv(here::here("data", "dccameras-monthly.csv"), show_col_types = FALSE)
+
+# months since the camera's first live month, counting that month as 1
+nov <- monthly %>%
+  group_by(id) %>%
+  mutate(first = min(month),
+         k = 12 * (as.numeric(format(month, "%Y")) - as.numeric(format(first, "%Y"))) +
+             as.numeric(format(month, "%m")) - as.numeric(format(first, "%m")) + 1,
+         nlive = n()) %>%
+  filter(first > as.Date("2023-01-01"), nlive >= 18) %>%
+  mutate(ratio = tickets / mean(tickets[k %in% 13:18])) %>%
+  ungroup() %>%
+  filter(k <= 18)
+
+nov_curve <- nov %>% group_by(k) %>% summarise(ratio = median(ratio), n = n())
+
+ggplot(nov_curve, aes(x = k, y = ratio)) +
+  geom_hline(yintercept = 1, color = bu_grey, linetype = "dashed") +
+  geom_line(color = bu_green, linewidth = 1) +
+  geom_point(color = bu_green, size = 2) +
+  scale_x_continuous(breaks = 1:18) +
+  labs(x = "Month since the camera went live",
+       y = "Tickets relative to months 13-18") +
+  theme_bu()
+```
+
+The first month is usually partial, so ignore it. In its second month, the median camera writes `r round(nov_curve$ratio[2], 1)` times as many tickets as it will in its second year, and the excess fades over the rest of the first year. For the cross-section, that means a camera installed in 2026 is observed in its high-ticket phase, while one installed in 2023 is observed at its steady state. If newer cameras are disproportionately in some kinds of neighborhoods, the yield model will pick that up as a neighborhood effect. Restricting to cameras live all twelve months (the robustness table) removes the very newest cameras and leaves the income coefficient where it was, which is reassuring but not a fix. The fix is to model the panel — camera-months, with time since installation in the model — rather than the cross-section.
+

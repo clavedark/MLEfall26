@@ -125,6 +125,13 @@ def build(qmd_path, out_path, title, howto=None):
 build("binaryextensions126.qmd", "binaryextensions126.R", "Diagnostics, Classification, and Fit")
 build("prediction26.qmd", "prediction26.R", "Prediction Methods for MLE Models")
 build("discretehazards26.qmd", "discretehazards26.R", "Discrete-Time Hazards")
+build("countA26.qmd", "countA26.R", "Count Models I",
+      howto=["# HOW TO RUN: open MLEfall26.Rproj FIRST, then this script, so here::here()",
+             "# resolves. Needs data/H_S_JPR_491.dta (Hendrix and Salehyan), and for the",
+             "# counts-and-hazards section data/leaderyears.csv, data/p5v2018.csv, and",
+             "# data/dp.dta. Run block [01] first -- packages and data -- then any block;",
+             "# later blocks reuse objects made by earlier ones. The whole script runs in",
+             "# well under a minute; the coverage simulation (2,000 fits) is the slowest block."])
 build("causallens26.qmd", "causallens26.R", "A Causal Lens on the Binomial Model",
       howto=["# HOW TO RUN: open MLEfall26.Rproj FIRST, then this script, so here::here()",
              "# resolves. Needs data/ces.csv. The bootstrap block refits both logits 200",
