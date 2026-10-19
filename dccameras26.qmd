@@ -180,9 +180,17 @@ cams_map <- cams_sf %>%
 
 pal <- colorNumeric(c("#EDEDED", bu_green), domain = c(0, 100))
 
+# one marker color per camera type (none green, so the markers stand out on the
+# green tract shading); each type is its own layer, labeled in the layer control
+# with a dot in its color
+cam_types <- tibble(type = c("speed", "red light", "stop sign"),
+                    color = c("#1F5AA6", "#B03A2E", bu_black),
+                    group = sprintf("<span style='color:%s'>&#9679;</span> %s cameras",
+                                    color, c("Speed", "Red-light", "Stop-sign")))
+
 # explicit starting view: the tab is hidden when the page loads, so leaflet
 # can't fit the bounds to a map it can't measure
-leaflet(tracts_map, height = 650) %>%
+cam_map <- leaflet(tracts_map, height = 650) %>%
   setView(lng = -77.015, lat = 38.895, zoom = 12) %>%
   addProviderTiles(providers$OpenStreetMap, group = "Streets") %>%
   addProviderTiles(providers$Esri.WorldGrayCanvas, group = "Light grey") %>%
@@ -192,22 +200,32 @@ leaflet(tracts_map, height = 650) %>%
               highlightOptions = highlightOptions(weight = 3, color = bu_black,
                                                   bringToFront = FALSE),
               group = "Census tracts (% Black)") %>%
-  addCircleMarkers(data = cams_map, radius = ~ 1.5 + sqrt(tpm) / 12,
-                   fillColor = bu_black, fillOpacity = .8, color = "white", weight = 1,
-                   label = ~ location, popup = ~ popup, group = "Cameras") %>%
-  addLegend(pal = pal, values = c(0, 100), title = "% Black", position = "bottomright") %>%
+  addLegend(pal = pal, values = c(0, 100), title = "% Black", position = "bottomright")
+
+# add each camera type as its own layer
+for (k in seq_len(nrow(cam_types))) {
+  cam_map <- cam_map %>%
+    addCircleMarkers(data = filter(cams_map, type == cam_types$type[k]),
+                     radius = ~ 1.5 + sqrt(tpm) / 12,
+                     fillColor = cam_types$color[k], fillOpacity = .85,
+                     color = "white", weight = 1,
+                     label = ~ location, popup = ~ popup, group = cam_types$group[k])
+}
+
+cam_map %>%
   addLayersControl(baseGroups = c("Streets", "Light grey"),
-                   overlayGroups = c("Census tracts (% Black)", "Cameras"),
+                   overlayGroups = c("Census tracts (% Black)", cam_types$group),
                    options = layersControlOptions(collapsed = FALSE)) %>%
   htmlwidgets::onRender(sprintf(
     "function(el) { el.setAttribute('role', 'region'); el.setAttribute('aria-label', '%s'); }",
     paste("Interactive map of Washington DC, zoomable, with the same content as the static map:",
           nrow(tracts_map), "census tracts shaded by percent Black, with boundaries outlined,",
-          "and", nrow(cams_map), "cameras as points sized by tickets per month,",
+          "and", nrow(cams_map), "cameras as points sized by tickets per month and colored by type",
+          "(speed, red-light, stop-sign), each type a layer that can be turned on or off,",
           "over a street map that shows the rivers. Click a tract or a camera for its values.")))
 ```
 
-Hover over a tract for its number, and click it for its population, racial composition, income, crashes, road, and cameras; click a camera for its location, type, and tickets. The layer control in the corner switches the street map and turns the tracts or the cameras off. (The street tiles load from the web, so this tab needs an internet connection; the tracts and cameras are in the page itself.)
+Hover over a tract for its number, and click it for its population, racial composition, income, crashes, road, and cameras; click a camera for its location, type, and tickets. The layer control in the corner switches the street map and turns the tracts, or each type of camera, on and off — speed cameras in blue, red-light in red, stop-sign in black. (The street tiles load from the web, so this tab needs an internet connection; the tracts and cameras are in the page itself.)
 
 :::
 
