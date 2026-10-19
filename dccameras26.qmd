@@ -167,14 +167,16 @@ tracts_map <- tracts_sf %>%
                          ifelse(is.na(medinc), "not reported", scales::dollar(medinc * 1000)),
                          scales::comma(crashes), majorkm, as.integer(ncams)))
 
+# tickets over the twelve-month window, and the average per live month, rounded
+# to whole tickets
 cams_map <- cams_sf %>%
   mutate(popup = sprintf(paste0("<b>%s</b><br>",
                                 "%s camera, %d mph<br>",
-                                "Tickets per month: %s<br>",
-                                "Months live: %d<br>",
-                                "Average daily traffic: %s"),
-                         location, type, speedlimit, scales::comma(tpm), months,
-                         scales::comma(aadt)))
+                                "Tickets, Sept. 2025 to Aug. 2026: %s<br>",
+                                "Live %d of 12 months, so about %s tickets a month<br>",
+                                "Average daily traffic: %s vehicles"),
+                         location, type, speedlimit, scales::comma(tickets), months,
+                         scales::comma(tpm, accuracy = 1), scales::comma(aadt)))
 
 pal <- colorNumeric(c("#EDEDED", bu_green), domain = c(0, 100))
 
