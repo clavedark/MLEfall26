@@ -164,3 +164,8 @@ build("ex6B2026answers.qmd", "ex6B2026answers.R", "Racial Resentment and Beliefs
       howto=["# HOW TO RUN: open MLEfall26.Rproj FIRST, then this script, so here::here()",
              "# resolves. Needs data/anes_pilot_2016.csv. Run the blocks in order: Part I",
              "# builds `anes_d`, and every model after it depends on that object."])
+build("ex72026answers.qmd", "ex72026answers.R", "Civil War and Violence on the Pitch -- ANSWER KEY",
+      howto=["# HOW TO RUN: open MLEfall26.Rproj FIRST, then this script, so here::here()",
+             "# resolves. Needs data/soccer_data.dta from the authors' Soccer_Replication.zip.",
+             "# Run the blocks in order: Part I builds `soccer`, and every model after it",
+             "# depends on that object. Block [01] sources _common.R."])

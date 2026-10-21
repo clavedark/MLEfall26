@@ -159,6 +159,9 @@ docs/*
 # draft (ex62026) was staged for release on 2026-09-29, replaced before it went out, and
 # stays unpublished.
 !docs/ex6B2026.html
+# released EXERCISE: only the rendered page. `ex72026.qmd` stays ignored above, and the key
+# stays ignored entirely. Students download the data from the authors' replication files.
+!docs/ex72026.html
 # released ANSWER KEYS, each after its exercise was submitted. Only the rendered
 # page -- the `*answers.qmd` sources stay ignored above. Release a key only once
 # the exercise it answers is in.
@@ -235,6 +238,8 @@ ex52026answers.R
 ex62026answers.R
 # Same reason: the continuous-run script extracted from ex6B2026answers.qmd.
 ex6B2026answers.R
+# Same reason: the continuous-run script extracted from ex72026answers.qmd.
+ex72026answers.R
 # The builder for data/leaderyears.csv. It documents a coding error planted in
 # the file students receive for exercise #4; publishing it hands them the answer.
 make-leaderyears.R
