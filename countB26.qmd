@@ -1,0 +1,1328 @@
+---
+title: "Count Models II"
+author: "Dave Clark"
+institute: "Binghamton University"
+date: today
+bibliography: refs606.bib
+title-block-banner: TRUE
+format:
+  html: default
+editor: source
+embed-resources: true
+cache: true
+filters:
+  - parse-latex
+---
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE, cache=FALSE}
+#| cache.extra: !expr tools::md5sum("_common.R")
+options(htmltools.dir.version = FALSE)
+
+# cache.extra above: knitr keys the cache on the chunk's own code, not on files
+# it sources, so a palette edit in _common.R would otherwise leave cached figures
+# drawing the old colors.
+
+# R starts in the C locale here, which cannot encode non-ASCII characters. Any
+# Greek letter, minus sign, or +/- typed into a ggplot title, subtitle, axis
+# label, or annotation gets drawn as the literal text <U+03B1>. Setting a UTF-8
+# ctype fixes it for the whole document.
+Sys.setlocale("LC_CTYPE", "en_US.UTF-8")
+
+knitr::opts_chunk$set(fig.retina = 2, fig.align = "center",
+                      warning = FALSE, error = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+library(haven)
+library(patchwork)
+library(modelsummary)
+library(kableExtra)
+library(MASS)             # glm.nb, mvrnorm
+library(pscl)             # zeroinfl, hurdle
+library(peacesciencer)    # all dyad-years, MIDs, contiguity, distance, capabilities, Polity
+library(sf)               # spatial data frames, for the maps
+library(rnaturalearth)    # country shapes
+library(countrycode)      # COW codes to ISO codes
+
+source("_common.R")   # Binghamton palette + theme_bu()
+
+# MASS masks dplyr::select
+select <- dplyr::select
+
+set.seed(20261025)
+```
+
+<style>
+table, th, td { font-size: 18px; }
+tr:nth-child(odd) { background-color: #f2f2f2; }
+</style>
+
+# Goals
+
+How many militarized disputes does a pair of states have? For most pairs, none — and there are two very different reasons a pair might have none. Some pairs could fight and don't. Others never had the chance: Paraguay and Mongolia were not going to have a militarized dispute in 1970, whatever either government wanted. Two processes, one observed outcome. This week:
+
+- **Mixtures**: the negative binomial was one; zero-inflated and hurdle models are another kind.
+- The **zero-inflated** Poisson and negative binomial: the PMF, the likelihood, and estimation.
+- The **hurdle** model, and the fact that the Poisson is already a hurdle model with its two parts tied together.
+- Choosing between them, interpreting two equations at once, and estimating which zeros are which.
+- What identifies the split between the two processes — and a look back at a zero-inflated model published twenty years ago.
+
+## The process
+
+::: {.callout-note title="Building a maximum likelihood model"}
+1.  **Observe** $y$; consider its distribution; write down its PMF. This week, the distribution is a **mixture** of two distributions — a binary one and a count.
+2.  **Write the joint probability of the data** under that distribution.
+3.  **Rewrite the joint probability as a likelihood.**
+4.  **Simplify** — take logs.
+5.  **Parameterize** — and now there are *two* parameters to parameterize: the probability that governs the binary part, and the rate, $\lambda$, that governs the count. Each gets its own covariates.
+6.  **Choose link functions** — a logit (or probit, or cloglog) for the probability, the exponential for the rate.
+:::
+
+The punchline up front: every model in these notes is a binary model and a count model glued together. In the **hurdle** model, every zero comes from the binary model. In the **zero-inflated** model, zeros come from *both* parts — a group that can only ever be zero, and the count process, which can produce a zero by chance. That one difference determines the likelihood, how the model is estimated, and what the binary part's coefficients mean.
+
+# Opportunity and willingness
+
+Let's motivate this by thinking about how militarized conflict comes about and between whom. @mostandstarr1989 argue that conflict requires both **opportunity** — the ability to reach and interact with another state — and **willingness** — the choice to fight. Opportunity is hard to measure, and the usual fix is to throw out the pairs that seem to lack it. The common rule in the interstate conflict literature keeps **politically relevant dyads**: pairs that are contiguous or include a major power [@lemkereed2001]. The democratic peace data we've used all semester (`dp.dta`) contain relevant dyads only. This practice imposes by rule  a binary model of opportunity - dyads that are relevant have opportunity and stay in the model. The models this week *estimate* opportunity instead of using the (poor) proxy of political relevance [@clarkregan2003]. It turns out that there are disputes in "irrelevant" dyads, and surely there are "relevant" dyads that don't have disputes because they structurally cannot. The goal is to estimate those differences.
+
+## All dyads
+
+To start, we need all pairs of states, not just the relevant ones. `peacesciencer` [@miller2022peacesciencer] builds every dyad-year in the Correlates of War state system and attaches the variables we need, including the Gibler–Miller–Little dispute data [@gibler2016mid]. I keep the democratic peace data's window, 1951–1985, and collapse to one row per dyad: the $y$ variable is the number of MID onsets each year, with the number of years both states existed as the exposure.
+
+```{r dyad-data}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# every pair of states in the COW system, 1951-1985, one row per dyad-year, with
+# MID onsets, contiguity, capital distance, major powers, capabilities, Polity
+dyad_years <- create_dyadyears(system = "cow", directed = FALSE, subset_years = 1951:1985) %>%
+  add_gml_mids(keep = NULL) %>%
+  add_contiguity() %>%
+  add_capital_distance() %>%
+  add_cow_majors() %>%
+  add_nmc() %>%
+  add_democracy()
+
+# one row per dyad: MID onsets over the period, years both states existed
+# (the exposure), and covariates averaged (or, for the indicators, maxed)
+dy <- dyad_years %>%
+  mutate(contig = as.integer(conttype %in% 1:5),          # land or water <= 400 miles
+         major = as.integer(cowmaj1 == 1 | cowmaj2 == 1),
+         lcapratio = log(pmax(cinc1, cinc2) / pmin(cinc1, cinc2)),
+         demmin = pmin(polity21, polity22)) %>%
+  group_by(ccode1, ccode2) %>%
+  summarize(mids = sum(gmlmidonset, na.rm = TRUE), years = n(),
+            contig = max(contig), major = max(major),
+            lcapdist = log(mean(capdist) + 1),
+            lcapratio = mean(lcapratio[is.finite(lcapratio)]),
+            demmin = mean(demmin, na.rm = TRUE), .groups = "drop") %>%
+  drop_na() %>%
+  filter(is.finite(lcapratio)) %>%
+  mutate(lyears = log(years),
+         relevant = as.integer(contig == 1 | major == 1))
+
+n_all_dyads <- nrow(distinct(dyad_years, ccode1, ccode2))
+
+dy_labels <- c("demmin" = "Democracy (lower Polity score)",
+               "lcapratio" = "ln(capability ratio)",
+               "contig" = "Contiguous",
+               "lcapdist" = "ln(capital distance)",
+               "major" = "Major power in dyad",
+               "(Intercept)" = "Constant")
+
+# share of dyads with any MID by fifths of capital distance, relevant and not
+look_dist <- dy %>%
+  mutate(dist_fifth = ntile(lcapdist, 5),
+         group = if_else(relevant == 1, "Politically relevant", "Other dyads")) %>%
+  group_by(group, dist_fifth) %>%
+  summarize(share = mean(mids > 0), .groups = "drop")
+```
+
+That's `r scales::comma(nrow(dyad_years))` dyad-years and `r scales::comma(nrow(dy))` dyads (`r scales::comma(n_all_dyads - nrow(dy))` more drop out for lack of Polity scores). Only `r scales::comma(sum(dy$relevant))` are politically relevant. `r round(100 * mean(dy$mids == 0), 1)`% of dyads have no MIDs at all; the most active dyad has `r max(dy$mids)` (the US-USSR dyad).
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-dyad-look
+#| fig-height: 3.6
+#| fig-cap: "Left: MID onsets per dyad, 1951-1985 (counts above 10 not shown). Right: share of dyads with any MID, by capital distance (fifths of the distribution), for politically relevant and other dyads."
+#| fig-alt: !expr 'sprintf("Two panels. Left: a bar chart of MIDs per dyad; the bar at zero holds %s dyads and every other bar is tiny by comparison. Right: the share of dyads with any MID across fifths of capital distance, one line for politically relevant dyads, highest at %.2f, and one for other dyads, which stays near zero, never above %.2f.", scales::comma(sum(dy$mids == 0)), max(look_dist$share[look_dist$group == "Politically relevant"]), max(look_dist$share[look_dist$group == "Other dyads"]))'
+
+p_hist <- dy %>% filter(mids <= 10) %>%
+  ggplot(aes(x = mids)) +
+  geom_bar(fill = bu_green, width = .75) +
+  scale_x_continuous(breaks = 0:10) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(x = "MIDs per dyad", y = "Dyads") +
+  theme_bu()
+
+p_dist <- ggplot(look_dist, aes(x = dist_fifth, y = share, color = group, linetype = group, shape = group)) +
+  geom_line(linewidth = .8) +
+  geom_point(size = 2.4) +
+  scale_color_manual(values = c(bu_lightgreen, bu_green)) +
+  labs(x = "Capital distance (fifths, near to far)", y = "Share with any MID",
+       color = NULL, linetype = NULL, shape = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+
+p_hist + p_dist
+```
+
+The zeros swamp everything, and the dyads with any MID are concentrated among the relevant pairs. Is a distant pair with no MIDs a low-rate version of a near pair, or a pair that was never in the game?
+
+## Rootograms
+
+A **hanging rootogram** [@kleiber2016rootograms; the idea goes back to Tukey] plots the *square root* of the frequencies, so misses away from the zero bar stay visible, and *hangs* each observed bar from the model's expected frequency. Read it along the zero line: a bar that stops above the line is a count the model over-predicts; a bar that dips below is one it under-predicts.
+
+```{r rootogram-helpers}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# expected frequency of each count 0..maxj: the sum over observations of each
+# observation's predicted probability of that count
+expected_freq <- function(pmat) colSums(pmat)
+
+# predicted-probability matrices, one row per observation, one column per count
+pmat_pois <- function(lambda, maxj) outer(lambda, 0:maxj, function(l, j) dpois(j, l))
+pmat_nb   <- function(lambda, alpha, maxj) outer(lambda, 0:maxj, function(l, j) dnbinom(j, mu = l, size = 1 / alpha))
+
+# rootogram data: observed and expected frequencies on the square-root scale;
+# each observed bar hangs from the expected value
+root_data <- function(y, pmat, maxj) {
+  tibble(j = 0:maxj,
+         observed = map_dbl(0:maxj, ~ sum(y == .x)),
+         expected = expected_freq(pmat)) %>%
+    mutate(top = sqrt(expected), bottom = sqrt(expected) - sqrt(observed))
+}
+
+hanging_root <- function(rd) {
+  ggplot(rd, aes(x = j)) +
+    geom_rect(aes(xmin = j - .4, xmax = j + .4, ymin = bottom, ymax = top),
+              fill = bu_palegreen, color = bu_green, linewidth = .3) +
+    geom_line(aes(y = top), color = bu_black, linewidth = .8) +
+    geom_point(aes(y = top), color = bu_black, size = 1.6) +
+    geom_hline(yintercept = 0, color = bu_grey, linewidth = .6) +
+    labs(x = "Count, j", y = "sqrt(frequency)") +
+    theme_bu()
+}
+
+# count equation: willingness and opportunity both; exposure is years in the system
+dy_f <- mids ~ demmin + lcapratio + contig + lcapdist + major + offset(lyears)
+
+dy_p  <- glm(dy_f, data = dy, family = poisson(link = "log"))
+dy_nb <- glm.nb(dy_f, data = dy)
+alpha_dy <- 1 / dy_nb$theta
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-root-p-nb
+#| fig-height: 3.6
+#| fig-cap: "Hanging rootograms, MIDs per dyad, counts 0 to 10. Bars are observed frequencies hanging from the model's expected frequencies (the line); both on the square-root scale. Left: Poisson. Right: negative binomial."
+#| fig-alt: !expr 'sprintf("Two hanging rootograms for counts 0 to 10. Left, the Poisson: the zero bar hangs below the line (%s dyads with no MIDs, %s expected), the bars for one and two stop well above it, and the bars from four up hang below it. Right, the negative binomial: every bar ends close to the zero line.", scales::comma(sum(dy$mids == 0)), scales::comma(round(sum(dpois(0, fitted(dy_p))))))'
+
+rd_p  <- root_data(dy$mids, pmat_pois(fitted(dy_p), 10), 10)
+rd_nb <- root_data(dy$mids, pmat_nb(fitted(dy_nb), alpha_dy, 10), 10)
+
+(hanging_root(rd_p) + labs(title = "Poisson")) +
+  (hanging_root(rd_nb) + labs(title = "Negative binomial"))
+```
+
+The Poisson over-estimates the single event dyads. The negative binomial fits the counts, zeros included: it predicts `r scales::comma(round(sum(dnbinom(0, mu = fitted(dy_nb), size = dy_nb$theta))))` zeros against `r scales::comma(sum(dy$mids == 0))` observed. If the only question were whether a model can fit the zeros, we could stop here.
+
+But look at *how* the negative binomial fits them. Its $\widehat\alpha$ is `r sprintf("%.2f", alpha_dy)` — very large — because the zeros and the handful of very active dyads sit at opposite ends of one distribution, and $\alpha$ stretches that distribution until both ends fit. The zeros are treated as noise around a single rate for each dyad, and their cost is absorbed by a nuisance parameter. Every dyad still gets a positive rate of conflict; Paraguay and Mongolia just get a very small one.
+
+The theory says something different: some dyads have *no* opportunity, and which ones, and why, is a question we care about. Fitting the zeros is not the same as measuring where they come from. A zero-inflated model takes part of what $\alpha$ absorbs and gives it an equation of its own, with covariates and coefficients we can interpret — a theoretical part of the data generating process, measured, rather than a nuisance soaked up in $\alpha$. So don't expect a better rootogram from the models below. Expect estimates of opportunity.
+
+# Heterogeneity
+
+What do we mean exactly by heterogeneity?
+
+- events/periods are qualitatively different such that we cannot expect the same process to produce them all.
+- put differently, events are drawn from different distributions of events; different means, variances, or both.
+- if the means are different, $\beta$ blends the two processes and is biased; below, the negative binomial's coefficient on distance turns out to be mostly an opportunity effect.
+- if the variances are different, the model suffers something like heteroskedasticity.
+
+Some examples of events or periods from different distributions:
+
+- World War II, Vietnam, the Franco-Prussian War, the Football War — vary on magnitude, participants, rules, weaponry.
+- Relevant, irrelevant dyads — imperfect measurement; split outcomes; continuous latent variable.
+- Taylor Swift concerts attended — varies in times on tour, proximity to event.
+
+Different distributions imply different data generating processes and that we need to think about models with two parts, potentially two equations. This sort of thinking characterizes event count, hazard, censored, selection, and seemingly unrelated regression models. The focus here is on count models where the observed count is generated by multiple processes.
+
+# Where do the zeros come from?
+
+The common empirical indicator of multiple DGPs is excess zeros. But excess zeros do not guarantee two processes are at work, nor that we know what they are even if they do. Short version: use these if your theory indicates parallel processes at work, not merely because the data are dominated by zeros.
+
+## Split populations
+
+Suppose two processes generate the count. One decides whether a unit has *any* chance of events; the other decides *how many* it has. What the second process can produce is the difference between the two models below in @fig-machines.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-machines
+#| fig-height: 3.3
+#| fig-cap: "How each model produces a count. Shaded boxes are zeros."
+#| fig-alt: "Two tree diagrams. Left, zero-inflated: a dyad either has no opportunity, with probability psi, which leads to a zero called a structural zero, or has opportunity, with probability one minus psi, which leads either to a zero, called a sampling zero, or to a count of 1, 2, 3 and so on. Right, hurdle: a dyad either does not clear the hurdle, with probability one minus pi, which leads to a zero, or clears it, with probability pi, which leads to a truncated count of 1, 2, 3 and so on. The zero-inflated tree has two zero boxes; the hurdle tree has one."
+
+# boxes (centers, labels, whether the box is a zero) and arrows for each tree
+box <- function(x, y, label, zero = FALSE) tibble(x, y, label, zero)
+
+zi_boxes <- bind_rows(box(2.2, 4, "Dyad"),
+                      box(0.6, 2.4, "No opportunity\n(probability psi)"),
+                      box(3.8, 2.4, "Opportunity\n(probability 1 - psi)"),
+                      box(0.6, 0.8, "y = 0\nstructural zero", TRUE),
+                      box(2.75, 0.8, "y = 0\nsampling zero", TRUE),
+                      box(4.85, 0.8, "y = 1, 2, 3, ..."))
+zi_arrows <- tribble(~x, ~y, ~xend, ~yend,
+                     2.2, 3.6, 0.6, 2.8,   2.2, 3.6, 3.8, 2.8,
+                     0.6, 2.0, 0.6, 1.2,   3.8, 2.0, 2.75, 1.2,   3.8, 2.0, 4.85, 1.2)
+
+hu_boxes <- bind_rows(box(2.2, 4, "Dyad"),
+                      box(0.6, 2.4, "Doesn't clear hurdle\n(probability 1 - pi)"),
+                      box(3.8, 2.4, "Clears hurdle\n(probability pi)"),
+                      box(0.6, 0.8, "y = 0", TRUE),
+                      box(3.8, 0.8, "y = 1, 2, 3, ...\n(truncated count)"))
+hu_arrows <- tribble(~x, ~y, ~xend, ~yend,
+                     2.2, 3.6, 0.6, 2.8,   2.2, 3.6, 3.8, 2.8,
+                     0.6, 2.0, 0.6, 1.2,   3.8, 2.0, 3.8, 1.2)
+
+tree <- function(boxes, arrows, title) {
+  ggplot() +
+    geom_segment(data = arrows, aes(x = x, y = y, xend = xend, yend = yend),
+                 arrow = arrow(length = unit(.18, "cm")), color = bu_grey) +
+    geom_tile(data = boxes, aes(x = x, y = y, fill = zero), width = 2.05, height = .8,
+              color = bu_black, linewidth = .4) +
+    geom_text(data = boxes, aes(x = x, y = y, label = label), size = 2.7, color = bu_black, lineheight = .9) +
+    scale_fill_manual(values = c(`FALSE` = "white", `TRUE` = bu_palegreen), guide = "none") +
+    coord_cartesian(xlim = c(-0.5, 5.9), ylim = c(0.3, 4.5)) +
+    labs(title = title) +
+    theme_void() +
+    theme(plot.title = element_text(hjust = .5, face = "bold"))
+}
+
+tree(zi_boxes, zi_arrows, "Zero-inflated") + tree(hu_boxes, hu_arrows, "Hurdle")
+```
+
+In the **zero-inflated** model, a dyad with opportunity can still have no disputes, so there are two kinds of zero: **structural zeros** from dyads that never had the chance, and **sampling zeros** from dyads that had it and didn't fight. In the **hurdle** model, clearing the hurdle means at least one event, so every zero comes from the binary part. Either way, we can't look at a zero and see which branch it came from. The split is **latent**, like $y^*$ in the binary models.
+
+Opportunity and willingness is a zero-inflated story: a pair of neighbors can go thirty years without a dispute. So is fishing at a particular lake (from Greene via @zorn98, 372) — some people prefer other lakes, some hate fish. So are US uses of force, where potential targets can see when a president needs a rally and avoid giving the president one [@clarkstrategic]; we'll come back to that one at the end. @bagozzi2015forecasting argues civil conflict data are full of structural zeros; @casiraghi2024 use a zero-inflated negative binomial for terrorist groups' deadly activity; and @bagozzi2015ziop carry the idea to ordered outcomes, where a zero can mean two kinds of peace.
+
+## The two equations for dyads
+
+Opportunity is the ability to reach another state. I put two variables in the equation for it: **capital distance**, and whether the dyad includes a **major power**, whose reach is global. Willingness is the choice to fight, given the chance; the count equation gets **democracy** (the lower of the two Polity scores, the democratic peace) and the **capability ratio**, along with contiguity, distance, and major-power status.
+
+Two choices to notice. First, democracy and the capability ratio appear *only* in the count equation. Those exclusions are part of what lets the model tell the two processes apart — more on that at the end. Second, contiguity is in the count equation only. Neighbors have the opportunity by definition, and if contiguity goes in the inflation equation its coefficient runs off toward $-\infty$, because no contiguous dyad is ever estimated to lack opportunity. That's [separation](binaryextensions126.html#separation), from Week 4, in the binary part of a count model.
+
+# Seeing two regimes
+
+Which zeros are structural and which are sampling we never observe, so let's start with data where we *can* see it — a simulated zero-inflated Poisson with known parameters:
+
+$$
+\begin{aligned}
+\psi_i &= \Lambda(-0.5 + 1.2\,z_i) && \text{probability unit } i \text{ is an always-zero} \\[4pt]
+\lambda_i &= e^{0.8 + 0.5\,x_i} && \text{rate for an at-risk unit} \\[4pt]
+y_i &= \begin{cases} 0 & \text{with probability } \psi_i \\ \text{Poisson}(\lambda_i) & \text{with probability } 1 - \psi_i \end{cases}
+\end{aligned}
+$$
+
+```{r sim-zip-data}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+n_sim <- 3000
+gamma_true <- c(-0.5, 1.2)
+beta_true  <- c(0.8, 0.5)
+
+sim <- tibble(x = rnorm(n_sim), z = rnorm(n_sim)) %>%
+  mutate(psi = plogis(gamma_true[1] + gamma_true[2] * z),
+         lambda = exp(beta_true[1] + beta_true[2] * x),
+         at_risk = rbinom(n_sim, 1, 1 - psi),
+         y = at_risk * rpois(n_sim, lambda),
+         source = case_when(at_risk == 0 ~ "Structural zero",
+                            y == 0 ~ "Sampling zero",
+                            TRUE ~ "Positive count"),
+         source = factor(source, levels = c("Structural zero", "Sampling zero", "Positive count")))
+
+# a Poisson regression that ignores the two regimes
+sim_p <- glm(y ~ x + z, data = sim, family = poisson)
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-sim-zip
+#| fig-height: 3.8
+#| fig-cap: "Simulated zero-inflated Poisson data, 3,000 units. Left: what we observe, with the frequencies a Poisson regression on x and z predicts (points). Right: the same bars, split by where each count came from."
+#| fig-alt: !expr 'sprintf("Two bar charts of the same simulated counts from 0 to 12. Left: a single color, with %d zeros, %d ones, and a long right tail; points show a Poisson regression predicting only %.0f zeros and too many ones and twos. Right: the zero bar is split into %d structural zeros (black), from units that could only be zero, and %d sampling zeros (green), from at-risk units that happened to have no events; every bar above zero (grey) comes from at-risk units.", sum(sim$y == 0), sum(sim$y == 1), sum(dpois(0, fitted(sim_p))), sum(sim$source == "Structural zero"), sum(sim$source == "Sampling zero"))'
+
+sim_freq <- sim %>% count(y) %>% filter(y <= 12) %>%
+  mutate(poisson = colSums(pmat_pois(fitted(sim_p), 12))[y + 1])
+
+p_seen <- ggplot(sim_freq, aes(x = y)) +
+  geom_col(aes(y = n), fill = bu_green, width = .75) +
+  geom_point(aes(y = poisson), shape = 21, fill = "white", color = bu_black, size = 2.4, stroke = 1) +
+  scale_x_continuous(breaks = 0:12) +
+  labs(x = "y", y = "Units", title = "What we see") +
+  theme_bu()
+
+p_truth <- sim %>% filter(y <= 12) %>%
+  ggplot(aes(x = y, fill = source)) +
+  geom_bar(width = .75, color = "white", linewidth = .2) +
+  scale_fill_manual(values = c(bu_black, bu_lightgreen, bu_grey)) +
+  scale_x_continuous(breaks = 0:12) +
+  labs(x = "y", y = "Units", fill = NULL, title = "What generated it") +
+  guides(fill = guide_legend(nrow = 2)) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+
+p_seen + p_truth
+```
+
+As analysts, we get the left panel: `r sum(sim$y == 0)` zeros, of which a Poisson predicts `r round(sum(dpois(0, fitted(sim_p))))`. The right panel is the (unknown) truth: `r sum(sim$source == "Structural zero")` structural zeros and `r sum(sim$source == "Sampling zero")` sampling zeros. The model's job is to split that zero bar without seeing where the two groups fall. It can, because the two kinds of zero have different covariates behind them — structural zeros pile up where $z$ is high, sampling zeros where $x$ is low.
+
+## One distribution, two stories
+
+@fig-pmf-build builds each model's PMF from its parts, for a single unit with an at-risk rate of 2.5.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+lam_demo <- 2.5
+zero_share <- .4
+j <- 0:9
+
+# ZIP: choose psi so the probability of a zero is 0.4
+psi_demo <- (zero_share - exp(-lam_demo)) / (1 - exp(-lam_demo))
+
+# hurdle: probability pi of clearing the hurdle, then a truncated Poisson
+hurdle_pmf <- function(pi_clear) {
+  bind_rows(tibble(j, part = "Did not clear hurdle", p = (1 - pi_clear) * (j == 0)),
+            tibble(j, part = "From the count",
+                   p = ifelse(j == 0, 0, pi_clear * dpois(j, lam_demo) / (1 - exp(-lam_demo)))))
+}
+
+pmf_parts <- bind_rows(
+  `Zero-inflated Poisson, 40% zeros` =
+    bind_rows(tibble(j, part = "Structural zero", p = psi_demo * (j == 0)),
+              tibble(j, part = "From the count", p = (1 - psi_demo) * dpois(j, lam_demo))),
+  `Hurdle Poisson, 40% zeros` = hurdle_pmf(1 - zero_share),
+  `Hurdle Poisson, 3% zeros` = hurdle_pmf(.97), .id = "model") %>%
+  mutate(model = fct_inorder(model),
+         part = factor(part, levels = c("Structural zero", "Did not clear hurdle", "From the count")))
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-pmf-build
+#| fig-height: 3.8
+#| fig-cap: "PMFs built from their parts, at-risk rate 2.5. Bars are colored by the part of the model that produces them; points are the Poisson with rate 2.5. Left: zero-inflated Poisson with 40% zeros. Middle: hurdle Poisson with 40% zeros. Right: hurdle Poisson with 3% zeros."
+#| fig-alt: !expr 'sprintf("Three bar charts of probabilities for counts 0 to 9, each with points for a Poisson with rate 2.5, which puts %.2f on zero and peaks at 2. Left, zero-inflated Poisson: the zero bar is 0.40, made of a structural part of %.2f stacked on a part from the count, %.2f; the bars for 1 and up are lower than the Poisson points. Middle, hurdle Poisson with 40 percent zeros: the zero bar is 0.40, all from failing to clear the hurdle, and the bars for 1 and up are exactly the same heights as in the left panel. Right, hurdle Poisson with 3 percent zeros: the zero bar is below the Poisson point, and the bars for 1 to 4 are above the Poisson points.", dpois(0, 2.5), psi_demo, (1 - psi_demo) * dpois(0, 2.5))'
+
+ggplot(pmf_parts, aes(x = j, y = p)) +
+  geom_col(aes(fill = part), width = .75, color = "white", linewidth = .2) +
+  geom_point(data = tibble(j, poisson = dpois(j, lam_demo)), aes(y = poisson),
+             shape = 21, fill = "white", color = bu_black, size = 2, stroke = .9) +
+  facet_wrap(~ model, nrow = 1) +
+  scale_fill_manual(values = c(bu_black, bu_grey, bu_green)) +
+  scale_x_continuous(breaks = j) +
+  labs(x = "Count, j", y = "Pr(y = j)", fill = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+```
+
+Compare the left and middle panels. The bars are *identical*; only the colors differ. With the same at-risk rate and the same share of zeros, a zero-inflated Poisson and a hurdle Poisson are the same distribution. So for a single unit, the data can't tell the models apart. What separates them is the story and the covariates: which variables drive the zeros, and what the binary part means. The right panel is the one thing only the hurdle can do: put *less* probability on zero than the Poisson does. A zero-inflated model can only add zeros.
+
+# The zero-inflated Poisson
+
+## The setup
+
+Write the count as $y_{i} = p_{i}^{*}\, y_{i}^{*}$, where $p_{i}^{*}$ is a dichotomous variable for whether unit $i$ makes the transition into the at-risk state — the intuition of the binary models — and $y_{i}^{*}$ is the Poisson count for those who do. We never observe $p_i^*$, and we see $y_i^*$ only when $p_i^* = 1$. Each gets its own covariates and link. Let $\psi_i$ be the probability of being a structural zero (*not* making the transition):
+
+$$
+\psi_i = \Lambda(z_i\gamma) = \frac{e^{z_{i}\gamma}}{1+e^{z_{i}\gamma}} \;\; (\text{or } \Phi(z_i\gamma)), \qquad P(y_{i}^{*} = j) = \frac{e^{-\lambda_i} \lambda_i^{j}}{j!}, \quad \lambda_{i} = e^{x_{i} \beta}
+$$
+
+With exposure, as last week, $\lambda_i = e^{x_i\beta + \ln d_i}$, where $d_i$ is the number of years the dyad existed.
+
+## The PMF
+
+A zero happens two ways: the unit is a structural zero, or it's at risk and the Poisson produces a zero. A positive count happens one way. So
+
+$$
+\begin{aligned}
+P(y_{i}=0 \mid x_{i}, z_i) &= \psi_{i}+(1-\psi_{i})\,e^{-\lambda_{i}} \\[8pt]
+P(y_{i} = j \mid x_{i}, z_i) &= (1-\psi_{i})\,\frac{e^{-\lambda_{i}}\lambda_{i}^{j}}{j!} \qquad \text{for } j>0
+\end{aligned}
+$$
+
+This is the **zero-inflated Poisson (ZIP)** [@lambert1992] — the Lambert from last week, whose manufacturing equipment was either aligned (no defects, ever) or misaligned (defects at a Poisson rate). The two lines are the left panel of @fig-pmf-build: the black and green parts of the zero bar are $\psi_i$ and $(1-\psi_i)e^{-\lambda_i}$.
+
+## A discrete mixture: the mean and the variance
+
+Let $s_i = 1$ if unit $i$ is at risk (probability $1 - \psi_i$). Given $s_i = 1$, $y_i$ is Poisson with mean and variance $\lambda_i$; given $s_i = 0$, it's zero. The laws of total expectation and total variance, as last week:
+
+$$
+\begin{aligned}
+E[y_i] &= E\big[E[y_i \mid s_i]\big] = (1 - \psi_i)\,\lambda_i \\[6pt]
+var[y_i] &= E\big[var[y_i \mid s_i]\big] + var\big[E[y_i \mid s_i]\big] \\[4pt]
+&= (1 - \psi_i)\,\lambda_i + \lambda_i^2\,\psi_i(1 - \psi_i) \\[4pt]
+&= (1 - \psi_i)\,\lambda_i\,(1 + \psi_i\lambda_i)
+\end{aligned}
+$$
+
+Two things. First, $\lambda_i$ is no longer the expected count; it's the expected count *for an at-risk unit*. Second,
+
+$$
+\frac{var[y_i]}{E[y_i]} = 1 + \psi_i\lambda_i > 1 \text{ whenever } \psi_i > 0
+$$
+
+**Structural zeros produce overdispersion on their own**, even though the at-risk units are perfectly Poisson. A test for overdispersion can't tell unobserved heterogeneity in the rate from a second regime.
+
+Each model is an assumption about the rates of units that share the same $x$, rates we can't see. The Poisson gives every dyad one rate. The negative binomial spreads rates along a gamma, none exactly zero — Paraguay and Mongolia get a tiny rate, not no rate. The ZIP gives two rates, zero and $\lambda$. The ZINB puts a spike at zero and spreads the rest.
+
+## The likelihood
+
+With $I_i = 1$ if $y_i > 0$, the zeros contribute the first line of the PMF and the positives the second:
+
+$$
+\begin{aligned}
+\ln L(\gamma, \beta \mid y) = {} & \sum_{i=1}^{n} (1 - I_i)\ln\Big[\psi_i + (1 - \psi_i)e^{-\lambda_i}\Big] \\[4pt]
+& + \sum_{i=1}^{n} I_i\Big[\ln(1 - \psi_i) - \lambda_i + y_i\ln\lambda_i - \ln(y_i!)\Big]
+\end{aligned}
+$$
+
+with $\psi_i = \Lambda(z_i\gamma)$ and $\lambda_i = e^{x_i\beta + \ln d_i}$. Each positive count contributes last week's Poisson log-likelihood plus $\ln(1-\psi_i)$. Each zero contributes the log of a *sum*, which doesn't break apart: $\psi_i$ and $\lambda_i$ are tangled inside it, so the two equations have to be estimated together.
+
+::: {.callout-important title="Read the signs carefully"}
+$\psi_i$ is the probability of being a **structural zero**. A positive $\gamma_k$ makes a unit *more* likely to be an always-zero and *less* likely to be at risk — backwards from how we'd normally read a logit in a model of events. This is the default in `pscl` and Stata. A negative coefficient in the inflation equation means the variable makes events *possible*.
+:::
+
+The zeros' contributions to the score have both $\psi_i$ and $\lambda_i$ in them, so the Hessian's cross-partials aren't zero: the estimates of $\gamma$ and $\beta$ are correlated, another way of saying the two equations can't be estimated apart.
+
+## Estimating the ZIP
+
+`pscl::zeroinfl()` estimates it. The formula takes the count equation, then `|`, then the inflation equation.
+
+### Recovering a known truth
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+zip_sim <- zeroinfl(y ~ x | z, data = sim, dist = "poisson")
+b_sim <- coef(zip_sim, "count")
+g_sim <- coef(zip_sim, "zero")
+```
+
+On the simulated data the estimates come back close to the truth: $\widehat\beta$ = (`r sprintf("%.2f", b_sim[1])`, `r sprintf("%.2f", b_sim[2])`) against (0.8, 0.5), and $\widehat\gamma$ = (`r sprintf("%.2f", g_sim[1])`, `r sprintf("%.2f", g_sim[2])`) against (-0.5, 1.2). The estimated number of structural zeros, $\sum_i \widehat\psi_i$ = `r round(sum(predict(zip_sim, type = "zero")))`, is close to the true `r sum(sim$source == "Structural zero")`. The model split the zero bar without seeing the colors.
+
+### Disputes
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-zip-dy
+#| tbl-cap: "ZIP of MIDs per dyad, pscl::zeroinfl()."
+
+# the two equations' design matrices, used below for predictions
+X <- model.matrix(~ demmin + lcapratio + contig + lcapdist + major, dy)
+Z <- model.matrix(~ lcapdist + major, dy)
+kx <- ncol(X)
+kz <- ncol(Z)
+
+dy_zf <- mids ~ demmin + lcapratio + contig + lcapdist + major + offset(lyears) | lcapdist + major
+zip_pscl <- zeroinfl(dy_zf, data = dy, dist = "poisson")
+
+tibble(Equation = rep(c("Count", "Inflation"), c(kx, kz)),
+       Variable = c(dy_labels[colnames(X)], dy_labels[colnames(Z)]),
+       Estimate = c(coef(zip_pscl, "count"), coef(zip_pscl, "zero")),
+       `s.e.` = sqrt(diag(vcov(zip_pscl)))) %>%
+  kbl(digits = 4) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The ZIP's log-likelihood (`r sprintf("%.1f", logLik(zip_pscl))`) is far better than the Poisson's (`r sprintf("%.1f", logLik(dy_p))`) and far worse than the negative binomial's (`r sprintf("%.1f", logLik(dy_nb))`): structural zeros explain some of the overdispersion, not most. Even dyads with opportunity vary more in their rates than a Poisson allows. We need both kinds of mixture.
+
+## The zero-inflated negative binomial
+
+Swap the Poisson in the at-risk regime for the negative binomial, whose probability of a zero is $(1 + \alpha\lambda_i)^{-1/\alpha}$:
+
+$$
+\begin{aligned}
+\ln L(\gamma, \beta, \alpha \mid y) = {} & \sum_{i=1}^{n} (1 - I_i)\ln\Big[\psi_i + (1 - \psi_i)(1 + \alpha\lambda_i)^{-1/\alpha}\Big] \\[4pt]
+& + \sum_{i=1}^{n} I_i\Big[\ln(1 - \psi_i) + \ln f_{NB}(y_i \mid \lambda_i, \alpha)\Big]
+\end{aligned}
+$$
+
+where, as last week,
+
+$$
+\begin{aligned}
+\ln f_{NB}(y_i \mid \lambda_i, \alpha) = {} & \ln\Gamma(y_i + \alpha^{-1}) - \ln\Gamma(\alpha^{-1}) - \ln(y_i!) \\[4pt]
+& + y_i\ln\alpha + y_i\ln\lambda_i - (y_i + \alpha^{-1})\ln(1 + \alpha\lambda_i)
+\end{aligned}
+$$
+
+The mean is still $(1-\psi_i)\lambda_i$; the variance, $(1-\psi_i)\lambda_i(1 + \alpha\lambda_i + \psi_i\lambda_i)$, carries both sources of overdispersion. `pscl` estimates $\ln\theta$, with $\theta = 1/\alpha$, so the dispersion stays positive.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+zinb_pscl <- zeroinfl(dy_zf, data = dy, dist = "negbin")
+
+# estimates and covariance matrix for the simulations below. pscl's parameters
+# are (beta, gamma, ln theta); ln alpha = -ln theta, so the last row and column
+# of the covariance matrix change sign
+b_zinb <- coef(zinb_pscl, "count")
+g_zinb <- coef(zinb_pscl, "zero")
+alpha_zinb <- 1 / zinb_pscl$theta
+zinb_par <- c(b_zinb, g_zinb, log(alpha_zinb))
+J <- diag(c(rep(1, kx + kz), -1))
+V_zinb <- J %*% solve(-zinb_pscl$optim$hessian) %*% J
+```
+
+The ZINB's log-likelihood is `r sprintf("%.1f", logLik(zinb_pscl) - logLik(dy_nb))` better than the negative binomial's, for `r kz` more parameters. And $\widehat\alpha$ falls from `r sprintf("%.2f", alpha_dy)` to `r sprintf("%.2f", alpha_zinb)`: part of what the negative binomial treated as extra-Poisson noise is now measured, as opportunity.
+
+# The hurdle model
+
+The hurdle model [@mullahy1986; @zorn98] keeps the two parts apart. Its standard motivation comes from health economics, in doctor visits: the patient decides whether to see a doctor at all, and once the patient makes contact, the physician largely decides how many visits follow [@pohlmeierulrich1995]. Two decision-makers, two processes, and a zero means only that the patient never made contact. With $\pi_i$ the probability of clearing the hurdle and a Poisson count:
+
+$$
+f(y_i \mid \pi_i, \lambda_i) =
+\begin{cases}
+1 - \pi_i & \text{if } y_i = 0 \\[8pt]
+\pi_i \, \dfrac{e^{-\lambda_i}\lambda_i^{y_i} / y_i!}{1 - e^{-\lambda_i}} & \text{if } y_i > 0
+\end{cases}
+$$
+
+Every zero comes from failing to clear the hurdle. The count is a Poisson **truncated** at zero — divided by $1 - e^{-\lambda_i}$ so its probabilities over $1, 2, 3, \ldots$ sum to one. Those are the middle and right panels of @fig-pmf-build. The expected count is $E[y_i] = \pi_i\,\lambda_i/(1 - e^{-\lambda_i})$, and the log-likelihood is
+
+$$
+\begin{aligned}
+\ln L(\gamma, \beta \mid y) = {} & \underbrace{\sum_{i=1}^{n} \Big[ (1 - I_i)\ln(1 - \pi_i) + I_i \ln \pi_i \Big]}_{\text{the hurdle: a binary model}} \\[6pt]
+& + \underbrace{\sum_{i=1}^{n} I_i \Big[ y_i\ln\lambda_i - \lambda_i - \ln(y_i!) - \ln\big(1 - e^{-\lambda_i}\big) \Big]}_{\text{the count, given } y_i > 0}
+\end{aligned}
+$$
+
+**Nothing is shared between the two sums.** $\gamma$ (in $\pi_i$) appears only in the first and $\beta$ only in the second, so the hurdle's likelihood separates: estimate a binary model on everything and a truncated count on the positives, separately. The ZIP's doesn't.
+
+## The Poisson is a hurdle model with its hands tied
+
+Under the Poisson, $Pr(y_i > 0) = 1 - e^{-\lambda_i} = 1 - \exp(-e^{x_i\beta + \ln d_i})$. That's the complementary log-log from [last week](countA26.html#the-logit-the-cloglog-and-the-poisson) and [Week 4](binaryextensions126.html), with the exposure as an offset. And given $y_i > 0$, the Poisson is the truncated Poisson with the same $\lambda_i$. So the Poisson *is* a hurdle model: cloglog hurdle, truncated Poisson count, one $\beta$ for both. Give the cloglog its own $\gamma$ and the Poisson becomes the special case $\gamma = \beta$ — $k$ restrictions, testable with a likelihood ratio test.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-hurdle-lr
+#| tbl-cap: "The Poisson against the hurdle model it is a special case of: log-likelihoods and the likelihood ratio test of gamma = beta."
+
+# the hurdle: cloglog of any MIDs, all dyads, exposure as an offset
+dy_cl <- glm(I(mids > 0) ~ demmin + lcapratio + contig + lcapdist + major + offset(lyears),
+             data = dy, family = binomial(link = "cloglog"))
+
+# the whole hurdle from pscl: zero.dist = "poisson" makes the binary part a
+# cloglog, and the count part is a zero-truncated Poisson. Its binary part
+# matches dy_cl, because the likelihood separates
+hp_cl_pscl <- hurdle(dy_f, data = dy, dist = "poisson", zero.dist = "poisson")
+tp_b  <- coef(hp_cl_pscl, "count")
+tp_se <- sqrt(diag(vcov(hp_cl_pscl)))[paste0("count_", names(tp_b))]
+
+lr_hurdle <- 2 * (as.numeric(logLik(hp_cl_pscl)) - as.numeric(logLik(dy_p)))
+
+tibble(Model = c("Poisson", "Hurdle: cloglog + truncated Poisson"),
+       `ln L` = c(as.numeric(logLik(dy_p)), as.numeric(logLik(hp_cl_pscl))),
+       Parameters = c(kx, 2 * kx)) %>%
+  kbl(digits = 2) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The likelihood ratio statistic is `r sprintf("%.1f", lr_hurdle)` on `r kx` degrees of freedom. Whether a dyad has any disputes and how many it has are not governed by the same coefficients. @fig-hurdle-coefs shows how.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-hurdle-coefs
+#| fig-height: 4.6
+#| fig-cap: "Coefficients and 95% intervals from the two parts of the hurdle model and from the Poisson, which forces them to be equal. Each panel has its own scale."
+#| fig-alt: !expr 'sprintf("Five small panels, one per variable, each with three estimates and intervals: whether any MIDs (cloglog), how many given any (truncated Poisson), and the Poisson. Democracy is %.3f for whether any and %.3f for how many, an interval centered on zero; the Poisson gives %.3f. Capital distance is %.3f for whether any and %.3f for how many; the Poisson gives %.3f. Major power is %.2f for whether any and %.2f for how many. Contiguity is %.2f for whether any and %.2f for how many.", coef(dy_cl)["demmin"], tp_b["demmin"], coef(dy_p)["demmin"], coef(dy_cl)["lcapdist"], tp_b["lcapdist"], coef(dy_p)["lcapdist"], coef(dy_cl)["major"], tp_b["major"], coef(dy_cl)["contig"], tp_b["contig"])'
+
+parts <- c("Whether any MIDs (cloglog)", "How many, given any (truncated Poisson)", "Poisson: one set for both")
+
+coefs3 <- bind_rows(
+  tibble(term = names(coef(dy_cl)), est = coef(dy_cl), se = sqrt(diag(vcov(dy_cl))), part = parts[1]),
+  tibble(term = names(tp_b), est = tp_b, se = tp_se, part = parts[2]),
+  tibble(term = names(coef(dy_p)), est = coef(dy_p), se = sqrt(diag(vcov(dy_p))), part = parts[3])) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(term = factor(dy_labels[term], levels = dy_labels),
+         part = factor(part, levels = rev(parts)))
+
+ggplot(coefs3, aes(x = est, y = part, color = part, shape = part)) +
+  geom_vline(xintercept = 0, color = bu_grey) +
+  geom_errorbar(aes(xmin = est - 1.96 * se, xmax = est + 1.96 * se), width = .25, orientation = "y") +
+  geom_point(size = 2.2) +
+  facet_wrap(~ term, scales = "free_x", ncol = 3, labeller = label_wrap_gen(28)) +
+  scale_color_manual(values = c(bu_grey, bu_green, bu_lightgreen), breaks = parts) +
+  scale_shape_manual(values = c(17, 16, 15), breaks = parts) +
+  labs(x = "Coefficient", y = NULL, color = NULL, shape = NULL) +
+  guides(color = guide_legend(ncol = 1), shape = guide_legend(ncol = 1)) +
+  theme_bu(base_size = 10) +
+  theme(axis.text.y = element_blank(), legend.position = "bottom", panel.spacing.x = unit(1, "lines"))
+```
+
+**Democracy** is the striking row. It lowers the chance that a dyad has *any* dispute (`r sprintf("%.3f", coef(dy_cl)["demmin"])`), and has nothing to do with how many disputes a dyad has once it has one (`r sprintf("%.3f", tp_b["demmin"])`). The democratic peace, in these data, is about whether pairs of states fight at all. **Distance** works the same way: it governs whether (`r sprintf("%.3f", coef(dy_cl)["lcapdist"])`), not how many (`r sprintf("%.3f", tp_b["lcapdist"])`). The Poisson's single coefficient on each blends the two and would have us conclude democracy and distance shape both. One coefficient asked to describe two processes describes neither — the lesson of competing risks in Week 5.
+
+## The logit hurdle
+
+In practice the hurdle is usually a logit, and then the Poisson isn't a special case. The likelihood still separates, so the hurdle part is an ordinary logit of "any MIDs" that could be estimated on its own. Below we fit two logit hurdles, one with a truncated Poisson count and one with a truncated negative binomial, and compare them with the zero-inflated models.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# logit hurdles: a logit for any MIDs, a truncated NB (or Poisson) for how many,
+# the full set of covariates in both parts; pscl applies the exposure offset to both
+hnb_pscl <- hurdle(dy_f, data = dy, dist = "negbin")
+hp_pscl  <- hurdle(dy_f, data = dy, dist = "poisson")
+```
+
+# Zero-inflated or hurdle?
+
+|  | Zero-inflated | Hurdle |
+|:---|:---|:---|
+| Where zeros come from | Both parts: structural zeros from the binary part, sampling zeros from the count | The binary part only |
+| What the binary part models | $\psi$, the probability of being a structural zero — never at risk | $\pi$, the probability of clearing the hurdle — any events |
+| The count part | Poisson or NB, over $0, 1, 2, \ldots$ | Poisson or NB truncated at zero, over $1, 2, \ldots$ |
+| Fewer zeros than the count distribution implies? | No — it can only add zeros | Yes |
+| The likelihood | Doesn't separate; estimate both parts together | Separates; the parts can be estimated one at a time |
+| Is the Poisson a special case? | Only at $\psi = 0$, the edge of the parameter space | Yes, with a cloglog hurdle and $\gamma = \beta$ |
+
+: Zero-inflated and hurdle models compared
+
+@fig-pmf-build showed that the data alone often can't choose. The theory has to, and the question is: **can a unit that is at risk still have a zero?** Opportunity and willingness says yes — a dyad with opportunity may never be willing — so it's a zero-inflated story. A hurdle story says crossing the threshold means at least one event. And the two binary parts answer different questions: *which dyads lack the opportunity to fight?* versus *which dyads have any disputes?* Their coefficients aren't estimates of the same thing.
+
+# Back to the dyads
+
+## The estimates
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-three-models
+
+# the same label for a variable in the NB, in the count part ("count_"), and in
+# the binary part ("zero_") of the two-part models
+three_map <- c(setNames(dy_labels, names(dy_labels)),
+               setNames(dy_labels, paste0("count_", names(dy_labels))),
+               setNames(paste("Binary:", dy_labels), paste0("zero_", names(dy_labels))))
+three_map <- three_map[!duplicated(names(three_map))]
+three_map <- three_map[order(grepl("^zero_", names(three_map)))]
+
+extra_rows <- data.frame(term = c("ln L", "alpha"),
+                         NB = sprintf("%.1f", c(logLik(dy_nb), alpha_dy)),
+                         ZINB = sprintf("%.1f", c(logLik(zinb_pscl), 0)),
+                         `Hurdle NB` = sprintf("%.1f", c(logLik(hnb_pscl), 0)),
+                         check.names = FALSE)
+extra_rows[2, 2:4] <- sprintf("%.3f", c(alpha_dy, 1 / zinb_pscl$theta, 1 / hnb_pscl$theta))
+
+modelsummary(list("NB" = dy_nb, "ZINB" = zinb_pscl, "Hurdle NB" = hnb_pscl),
+             coef_map = three_map, stars = TRUE,
+             gof_map = c("nobs", "aic", "bic"), add_rows = extra_rows,
+             title = "MID onsets per dyad, 1951-1985: negative binomial, zero-inflated negative binomial, and hurdle negative binomial. All three use years in the system as exposure.",
+             notes = c("Rows labeled Binary are the binary part of each two-part model. For the ZINB, it is a logit of the probability of a structural zero (no opportunity); for the hurdle, a logit of the probability of any MIDs. Their signs run in opposite directions.",
+                       "alpha is the negative binomial dispersion parameter; pscl estimates theta = 1/alpha."))
+```
+
+@fig-migrate puts the coefficients on distance, major-power status, and democracy side by side across the negative binomial and the two equations of the ZINB.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-migrate
+#| fig-height: 3.6
+#| fig-cap: "Coefficients and 95% intervals for distance, major-power status, and democracy: the negative binomial, the ZINB's count (willingness) equation, and the ZINB's inflation (no opportunity) equation. Democracy is not in the inflation equation."
+#| fig-alt: !expr 'sprintf("Three panels. Capital distance: %.2f in the negative binomial, %.2f in the ZINB count equation, an interval around zero, and %.2f in the inflation equation. Major power: %.2f in the negative binomial, %.2f in the count equation, %.2f in the inflation equation. Democracy: %.3f in the negative binomial and %.3f in the count equation, nearly identical.", coef(dy_nb)["lcapdist"], b_zinb["lcapdist"], g_zinb["lcapdist"], coef(dy_nb)["major"], b_zinb["major"], g_zinb["major"], coef(dy_nb)["demmin"], b_zinb["demmin"])'
+
+se_zinb <- sqrt(diag(V_zinb))
+eqs <- c("Negative binomial", "ZINB: count (willingness)", "ZINB: inflation (no opportunity)")
+
+migrate <- bind_rows(
+  tibble(term = names(coef(dy_nb)), est = coef(dy_nb), se = sqrt(diag(vcov(dy_nb))), eq = eqs[1]),
+  tibble(term = colnames(X), est = b_zinb, se = se_zinb[1:kx], eq = eqs[2]),
+  tibble(term = colnames(Z), est = g_zinb, se = se_zinb[kx + 1:kz], eq = eqs[3])) %>%
+  filter(term %in% c("lcapdist", "major", "demmin")) %>%
+  mutate(term = factor(dy_labels[term], levels = dy_labels[c("lcapdist", "major", "demmin")]),
+         eq = factor(eq, levels = rev(eqs)))
+
+ggplot(migrate, aes(x = est, y = eq, color = eq, shape = eq)) +
+  geom_vline(xintercept = 0, color = bu_grey) +
+  geom_errorbar(aes(xmin = est - 1.96 * se, xmax = est + 1.96 * se), width = .25, orientation = "y") +
+  geom_point(size = 2.4) +
+  facet_wrap(~ term, scales = "free_x") +
+  scale_color_manual(values = c(bu_teal, bu_green, bu_grey), breaks = eqs) +
+  scale_shape_manual(values = c(15, 16, 17), breaks = eqs) +
+  labs(x = "Coefficient", y = NULL, color = NULL, shape = NULL) +
+  guides(color = guide_legend(ncol = 1), shape = guide_legend(ncol = 1)) +
+  theme_bu(base_size = 10) +
+  theme(axis.text.y = element_blank(), legend.position = "bottom")
+```
+
+In the negative binomial, distance lowers the rate of disputes (`r sprintf("%.2f", coef(dy_nb)["lcapdist"])`). In the ZINB, that effect moves into the inflation equation (`r sprintf("%.2f", g_zinb["lcapdist"])`: distant dyads are much more likely to lack opportunity) and out of the count equation (`r sprintf("%.2f", b_zinb["lcapdist"])`). Distance is about opportunity, not willingness — once a dyad has the chance, distance tells us little about how often it fights. Major-power status does both: it makes opportunity likely (`r sprintf("%.2f", g_zinb["major"])` in the inflation equation; remember the sign) and raises the rate, more modestly than the negative binomial suggests. Democracy, which is only in the count equation, barely moves. The willingness equation is where the democratic peace lives.
+
+## Choosing among the models
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-fit
+#| tbl-cap: "Fit of six count models of MIDs per dyad. Zero-inflated models: distance and major power in the inflation equation. Hurdle models: a logit hurdle with the full set of covariates."
+
+fit_row <- function(m, name) {
+  tibble(Model = name, Parameters = attr(logLik(m), "df"), `ln L` = as.numeric(logLik(m)),
+         AIC = AIC(m), BIC = BIC(m))
+}
+
+bind_rows(fit_row(dy_p, "Poisson"), fit_row(dy_nb, "Negative binomial"),
+          fit_row(zip_pscl, "Zero-inflated Poisson"), fit_row(zinb_pscl, "Zero-inflated NB"),
+          fit_row(hp_pscl, "Hurdle Poisson"), fit_row(hnb_pscl, "Hurdle NB")) %>%
+  kbl(digits = 1) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The ZINB is `r sprintf("%.1f", AIC(dy_nb) - AIC(zinb_pscl))` AIC points and `r sprintf("%.1f", BIC(dy_nb) - BIC(zinb_pscl))` BIC points better than the negative binomial. We can't *test* the ZINB against the negative binomial with a likelihood ratio test, because the negative binomial is the ZINB with the inflation constant at $-\infty$, the edge of the parameter space. Published work often uses the **Vuong test** [@vuong1989] here, but @wilson2015vuong shows that's a misuse: the Vuong test is for non-nested models, and these are nested. Fit statistics and theory have to carry the choice.
+
+# Quantities of interest
+
+- $\psi_i = \Lambda(z_i\gamma)$ — the probability of being a **structural zero**; $1 - \psi_i$ is the probability of **opportunity**.
+- $\lambda_i = e^{x_i\beta + \ln d_i}$ — the **expected count for a dyad with opportunity**.
+- $E[y_i] = (1 - \psi_i)\lambda_i$ — the **expected count**, over both regimes.
+- $Pr(y_i = 0) = \psi_i + (1 - \psi_i)f(0 \mid \lambda_i)$ — structural plus sampling zeros.
+
+## A variable in both equations
+
+Distance is in both equations. Differentiating $E[y_i] = (1 - \psi_i)\lambda_i$:
+
+$$
+\begin{aligned}
+\frac{\partial E[y_i]}{\partial x_k} &= (1 - \psi_i)\lambda_i\beta_k - \lambda_i\psi_i(1 - \psi_i)\gamma_k \\[6pt]
+&= E[y_i]\,\big(\beta_k - \psi_i\gamma_k\big)
+\end{aligned}
+$$
+
+Two channels: $\beta_k$, how many disputes a dyad with opportunity has, and $-\psi_i\gamma_k$, whether it has opportunity at all. The second is weighted by $\psi_i$, so its size depends on where the dyad is — like [compression in interactions](interactions26.html#compression-the-model-is-already-inherently-interactive). No single coefficient is the effect.
+
+## Simulating the quantities
+
+The endpoint transformation needs one linear predictor; $E[y_i] = (1 - \Lambda(z_i\gamma))\,e^{x_i\beta + \ln d_i}$ has two. So [simulate](prediction26.html#simulation): draw $\beta$, $\gamma$, and $\ln\alpha$ together from their estimated sampling distribution — the draws carry the correlation between $\gamma$ and $\beta$ — compute the quantity for each draw, and take quantiles. @fig-qi-dist takes a non-contiguous dyad with no major power, democracy and capability ratio at their medians, over the full 35 years, and varies the distance between capitals.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+med <- function(v) median(dy[[v]])
+dist_km <- exp(seq(log(500), log(15000), length.out = 60))
+off35 <- log(35)
+
+# covariate rows in the order of the count and inflation equations: not
+# contiguous, no major power, democracy and capability ratio at their medians
+Xg <- cbind(1, med("demmin"), med("lcapratio"), 0, log(dist_km + 1), 0)
+Zg <- cbind(1, log(dist_km + 1), 0)
+
+# the ZINB quantities, one column per parameter vector
+zinb_q <- function(B, G, A, Xm = Xg, Zm = Zg) {
+  lambda <- exp(Xm %*% t(B) + off35)
+  psi <- plogis(Zm %*% t(G))
+  f0 <- (1 + rep(A, each = nrow(Xm)) * lambda)^(-1 / rep(A, each = nrow(Xm)))
+  list(psi = psi, opportunity = 1 - psi, lambda = lambda, ey = (1 - psi) * lambda,
+       sampling0 = (1 - psi) * f0, any = 1 - psi - (1 - psi) * f0)
+}
+
+# the hurdle NB's probability of a zero at the same covariate values, from its
+# logit part
+hurdle_p0 <- 1 - plogis(as.vector(Xg %*% coef(hnb_pscl, "zero") + off35))
+
+draws <- mvrnorm(1000, zinb_par, V_zinb)
+q_sim <- zinb_q(draws[, 1:kx], draws[, kx + 1:kz], exp(draws[, kx + kz + 1]))
+q_est <- zinb_q(t(b_zinb), t(g_zinb), alpha_zinb)
+
+summ <- function(q, name) {
+  tibble(km = dist_km, quantity = name, est = as.vector(q_est[[q]]),
+         lb = apply(q_sim[[q]], 1, quantile, .025), ub = apply(q_sim[[q]], 1, quantile, .975))
+}
+
+qi_dist <- bind_rows(summ("opportunity", "Pr(opportunity)"),
+                     summ("lambda", "E[MIDs | opportunity]"),
+                     summ("ey", "E[MIDs]")) %>%
+  mutate(quantity = factor(quantity, levels = c("Pr(opportunity)", "E[MIDs | opportunity]", "E[MIDs]")))
+
+# the negative binomial's expected count at the same values, endpoint transformation
+nb_link <- as.vector(Xg %*% coef(dy_nb) + off35)
+nb_se <- sqrt(diag(Xg %*% vcov(dy_nb) %*% t(Xg)))
+nb_dist <- tibble(km = dist_km, quantity = factor("E[MIDs]", levels = levels(qi_dist$quantity)),
+                  est = exp(nb_link), lb = exp(nb_link - 1.96 * nb_se), ub = exp(nb_link + 1.96 * nb_se))
+
+qa <- function(q, km) { i <- which.min(abs(dist_km - km)); qi_dist$est[qi_dist$quantity == q][i] }
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-qi-dist
+#| fig-height: 3.8
+#| fig-cap: "ZINB quantities across the distance between capitals, for a non-contiguous dyad with no major power, democracy and capability ratio at their medians, over 35 years. 95% simulation intervals. Right panel: the ZINB's expected count (solid) and the negative binomial's (dashed). Distance on a log scale."
+#| fig-alt: !expr 'sprintf("Three panels against capital distance from 500 to 15,000 kilometers on a log scale. Left: the probability the dyad has the opportunity to fight falls from %.2f at 500 km to %.2f at 2,000 km and %.3f at 8,000 km. Middle: the expected number of MIDs for a dyad with opportunity is nearly flat, about %.2f, with a wide interval. Right: the expected number of MIDs falls from %.2f at 500 km toward zero, tracking the left panel; the negative binomial dashed line starts at %.2f.", qa("Pr(opportunity)", 500), qa("Pr(opportunity)", 2000), qa("Pr(opportunity)", 8000), qa("E[MIDs | opportunity]", 2000), qa("E[MIDs]", 500), nb_dist$est[1])'
+
+ggplot(qi_dist, aes(x = km, y = est)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = bu_palegreen, alpha = .7) +
+  geom_line(aes(color = "ZINB", linetype = "ZINB"), linewidth = 1) +
+  geom_line(data = nb_dist, aes(color = "Negative binomial", linetype = "Negative binomial"), linewidth = .8) +
+  facet_wrap(~ quantity, scales = "free_y") +
+  scale_color_manual(values = c("ZINB" = bu_green, "Negative binomial" = bu_black)) +
+  scale_linetype_manual(values = c("ZINB" = "solid", "Negative binomial" = "22")) +
+  scale_x_log10(breaks = c(500, 2000, 8000), labels = scales::comma) +
+  labs(x = "Distance between capitals (km, log scale)", y = NULL, color = NULL, linetype = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+```
+
+The left panel does the work: the probability of opportunity falls from `r sprintf("%.2f", qa("Pr(opportunity)", 500))` for capitals 500 km apart to `r sprintf("%.2f", qa("Pr(opportunity)", 2000))` at 2,000 km and `r sprintf("%.3f", qa("Pr(opportunity)", 8000))` at 8,000. A dyad that does have opportunity expects about the same number of disputes near or far (middle panel). The expected count (right) is the left panel scaled by the middle one — mostly a picture of opportunity.
+
+## Where the zeros come from
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-zero-sources
+#| fig-height: 3.8
+#| fig-cap: "The probability of a structural zero (no opportunity), of a sampling zero (opportunity but no MIDs), and of any MIDs, across capital distance, from the ZINB, with the hurdle NB's probability of a zero (dashed). Same dyad as above. Distance on a log scale."
+#| fig-alt: !expr 'sprintf("A stacked area chart against capital distance from 500 to 15,000 km on a log scale, three bands summing to one. At 500 km: structural zero %.2f at the bottom, sampling zero %.2f, any MIDs %.2f at the top. With distance, the structural band grows to fill nearly everything. A dashed line for the hurdle model probability of a zero starts at %.2f at 500 km and rises toward one.", q_est$psi[1], q_est$sampling0[1], q_est$any[1], hurdle_p0[1])'
+
+tibble(km = dist_km,
+       `No opportunity (structural zero)` = as.vector(q_est$psi),
+       `Opportunity, no MIDs (sampling zero)` = as.vector(q_est$sampling0),
+       `Any MIDs` = as.vector(q_est$any)) %>%
+  pivot_longer(-km, names_to = "outcome", values_to = "p") %>%
+  mutate(outcome = factor(outcome, levels = c("Any MIDs", "Opportunity, no MIDs (sampling zero)",
+                                              "No opportunity (structural zero)"))) %>%
+  ggplot(aes(x = km, y = p)) +
+  geom_area(aes(fill = outcome), color = "white", linewidth = .4) +
+  geom_line(data = tibble(km = dist_km, p = hurdle_p0), color = bu_black, linetype = "22", linewidth = .9) +
+  scale_fill_manual(values = c(bu_palegreen, bu_lightgreen, bu_green)) +
+  scale_x_log10(breaks = c(500, 2000, 8000), labels = scales::comma) +
+  labs(x = "Distance between capitals (km, log scale)", y = "Probability", fill = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom") +
+  guides(fill = guide_legend(nrow = 2))
+```
+
+Near dyads mostly have opportunity, and their zeros are sampling zeros: they could have fought and didn't. With distance, nearly every zero becomes structural. The hurdle's probability of a zero (dashed) runs just above the ZINB's two zero bands combined, but it's a single band: it can't say which kind of zero it is.
+
+## Democracy, near and far
+
+Democracy is only in the count equation, so its effect on the expected count is scaled by the probability of opportunity. @fig-qi-dem shows it for two dyads that differ only in distance.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+dem_grid <- seq(-10, 10, by = .5)
+dem_q <- map_dfr(c(800, 2500), function(km) {
+  Xd <- cbind(1, dem_grid, med("lcapratio"), 0, log(km + 1), 0)
+  Zd <- cbind(1, log(km + 1), 0)[rep(1, length(dem_grid)), , drop = FALSE]
+  sim_ey <- zinb_q(draws[, 1:kx], draws[, kx + 1:kz], exp(draws[, kx + kz + 1]), Xd, Zd)$ey
+  tibble(demmin = dem_grid, dyad = sprintf("Capitals %s km apart", scales::comma(km)),
+         est = as.vector(zinb_q(t(b_zinb), t(g_zinb), alpha_zinb, Xd, Zd)$ey),
+         lb = apply(sim_ey, 1, quantile, .025), ub = apply(sim_ey, 1, quantile, .975))
+})
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-qi-dem
+#| fig-height: 3.6
+#| fig-cap: "Expected MIDs over 35 years across the lower Polity score in the dyad, ZINB, for two non-contiguous, non-major-power dyads that differ only in capital distance. 95% simulation intervals."
+#| fig-alt: !expr 'with(dem_q, sprintf("Two declining curves of expected MIDs against the lower Polity score from minus 10 to 10. For capitals 800 km apart, expected MIDs fall from %.2f for two autocracies to %.2f for two democracies. For capitals 2,500 km apart, the curve is lower, falling from %.2f to %.2f.", est[dyad == "Capitals 800 km apart" & demmin == -10], est[dyad == "Capitals 800 km apart" & demmin == 10], est[dyad == "Capitals 2,500 km apart" & demmin == -10], est[dyad == "Capitals 2,500 km apart" & demmin == 10]))'
+
+ggplot(dem_q, aes(x = demmin, y = est, color = dyad, fill = dyad, linetype = dyad)) +
+  geom_ribbon(aes(ymin = lb, ymax = ub), alpha = .3, color = NA) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = c(bu_black, bu_green)) +
+  scale_fill_manual(values = c(bu_greyfill, bu_palegreen)) +
+  scale_linetype_manual(values = c("22", "solid")) +
+  labs(x = "Democracy (lower Polity score in the dyad)", y = "Expected MIDs, 35 years",
+       color = NULL, fill = NULL, linetype = NULL) +
+  theme_bu() +
+  theme(legend.position = "bottom")
+```
+
+The democratic peace is a willingness effect, and willingness only matters where there's opportunity. For the near dyad, moving from two autocracies to two democracies cuts expected disputes from `r sprintf("%.2f", with(dem_q, est[dyad == "Capitals 800 km apart" & demmin == -10]))` to `r sprintf("%.2f", with(dem_q, est[dyad == "Capitals 800 km apart" & demmin == 10]))`. For the far dyad, there's less to cut, because it's less likely to have the opportunity in the first place.
+
+# Which dyads have opportunity?
+
+For a dyad with no MIDs, Bayes' rule gives the probability that it's a structural zero — that it never had the opportunity:
+
+$$
+Pr(\text{structural} \mid y_i = 0) = \frac{\psi_i}{\psi_i + (1 - \psi_i)f(0 \mid \lambda_i)}
+$$
+
+A dyad with any MID had opportunity, so its probability is zero. The estimated probability of opportunity, $1 - \psi_i$, is the model's answer to the question the politically relevant dyads rule answers by hand. @fig-relevance compares them.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+lambda_zinb <- as.vector(exp(X %*% b_zinb + dy$lyears))
+psi_zinb    <- as.vector(plogis(Z %*% g_zinb))
+f0_zinb     <- (1 + alpha_zinb * lambda_zinb)^(-1 / alpha_zinb)
+
+dy_post <- dy %>%
+  mutate(opportunity = 1 - psi_zinb,
+         post_structural = if_else(mids == 0, psi_zinb / (psi_zinb + (1 - psi_zinb) * f0_zinb), 0),
+         rule = if_else(relevant == 1, "Politically relevant", "Not relevant"),
+         dyad_type = factor(case_when(major == 1 ~ "Includes a major power",
+                                      contig == 1 ~ "Contiguous, no major power",
+                                      TRUE ~ "Neither"),
+                            levels = c("Includes a major power", "Contiguous, no major power", "Neither")),
+         any_mid = factor(if_else(mids > 0, "Any MIDs", "No MIDs"), levels = c("No MIDs", "Any MIDs")))
+
+rel_counts <- dy_post %>%
+  summarize(irrel_high = sum(relevant == 0 & opportunity > .5),
+            rel_low = sum(relevant == 1 & opportunity < .5),
+            mids_irrel = sum(mids[relevant == 0]), mids_all = sum(mids),
+            dyads_irrel_mid = sum(relevant == 0 & mids > 0),
+            structural = sum(post_structural), zeros = sum(mids == 0))
+```
+
+Summed over the `r scales::comma(rel_counts$zeros)` dyads with no MIDs, the model estimates about `r scales::comma(round(rel_counts$structural))` (`r round(100 * rel_counts$structural / rel_counts$zeros)`%) never had the opportunity.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-relevance
+#| fig-height: 4
+#| fig-cap: "Estimated probability of opportunity, ZINB, for dyads the politically relevant dyads rule drops (left) and keeps (right), split by whether the dyad had any MIDs (bottom) or none (top). Each row has its own count scale. Dashed line: probability 0.5."
+#| fig-alt: !expr 'sprintf("Four histograms of the estimated probability of opportunity. Top left, dyads the rule drops with no MIDs: most are piled near zero, with a long tail toward one. Bottom left, dropped dyads that had MIDs anyway: %d dyads, spread across the whole range, many near zero. Top right, relevant dyads with no MIDs: most near one. Bottom right, relevant dyads with MIDs: piled near one. Overall, %s dyads the rule drops have a probability above 0.5, and %d dyads the rule keeps fall below it.", rel_counts$dyads_irrel_mid, scales::comma(rel_counts$irrel_high), rel_counts$rel_low)'
+
+# one histogram per cell: the rule's verdict (columns) by whether the dyad had
+# any MIDs (rows); each row has its own count scale
+ggplot(dy_post, aes(x = opportunity, fill = any_mid)) +
+  geom_histogram(binwidth = .05, boundary = 0, color = "white", linewidth = .2) +
+  geom_vline(xintercept = .5, color = bu_black, linetype = "22") +
+  facet_grid(any_mid ~ rule, scales = "free_y") +
+  scale_fill_manual(values = c("No MIDs" = bu_grey, "Any MIDs" = bu_green), guide = "none") +
+  scale_y_continuous(labels = scales::comma) +
+  labs(x = "Estimated probability of opportunity", y = "Dyads") +
+  theme_bu()
+```
+
+The rule and the model mostly agree, but not at the edges. `r scales::comma(rel_counts$irrel_high)` dyads the rule throws away have an estimated probability of opportunity above one half — pairs of states in the same neighborhood whose capitals are close but who aren't contiguous. `r rel_counts$dyads_irrel_mid` dropped dyads had MIDs anyway, `r rel_counts$mids_irrel` of the `r rel_counts$mids_all` in the data (`r round(100 * rel_counts$mids_irrel / rel_counts$mids_all)`%), and many of them sit at a low estimated probability of opportunity — distant pairs that found a way to fight. Those are the dyads that tell us distance and major-power status don't capture all of opportunity. The rule is a binary model of opportunity estimated by assumption; the ZINB estimates it from the data, and treats it as a probability rather than a yes or no.
+
+@fig-opp-maps maps the estimated probability of opportunity between two states and every other state: a major power and a regional one.
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+world <- ne_countries(scale = "small", returnclass = "sf") %>% filter(continent != "Antarctica")
+
+# each partner's estimated probability of opportunity with a given state
+partners <- function(code) {
+  dy_post %>%
+    filter(ccode1 == code | ccode2 == code) %>%
+    transmute(partner = if_else(ccode1 == code, ccode2, ccode1), opportunity) %>%
+    mutate(iso3c = countrycode(partner, origin = "cown", destination = "iso3c", warn = FALSE))
+}
+
+opp_map <- function(code, name) {
+  home <- countrycode(code, origin = "cown", destination = "iso3c")
+  world %>%
+    left_join(partners(code), by = c("iso_a3_eh" = "iso3c")) %>%
+    ggplot() +
+    geom_sf(aes(fill = opportunity), color = "white", linewidth = .1) +
+    geom_sf(data = filter(world, iso_a3_eh == home), fill = bu_black, color = "white", linewidth = .1) +
+    scale_fill_gradient(low = "#E8F5E9", high = bu_green, limits = c(0, 1), na.value = "grey85",
+                        name = "Pr(opportunity)") +
+    labs(title = name) +
+    theme_void() +
+    theme(legend.position = "bottom")
+}
+
+egypt_opp <- partners(651)
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-opp-maps
+#| fig-height: 6.5
+#| fig-cap: "Estimated probability of opportunity between each state and every other state, 1951-1985, ZINB. The state itself is black; grey states have no estimate (not in the system then, or no Polity score). Top: the United States. Bottom: Egypt."
+#| fig-alt: !expr 'sprintf("Two world maps. Top, the United States in black: nearly every other state is dark green, because a major power has opportunity with almost everyone. Bottom, Egypt in black: dark green in its own region and for the major powers, including the Soviet Union, the United States, Britain, France, and China, and pale green elsewhere, fading with distance; %d of its %d partners have a probability of opportunity above 0.5.", sum(egypt_opp$opportunity > .5), nrow(egypt_opp))'
+
+wrap_plots(opp_map(2, "United States"), opp_map(651, "Egypt"), ncol = 1)
+```
+
+The US, a major power, has opportunity with nearly everyone. Egypt's is regional — its neighbors, plus the major powers, whose reach extends to Egypt. That's the same contrast the relevant dyads rule draws by hand, but here it comes out of the data, with degrees in between.
+
+# Opportunity, twenty years on
+
+One of the last papers I published out of my dissertation [@clarkstrategic] used a zero-inflated Poisson to model US uses of force. The argument extends @fordhamjcr: presidents facing economic trouble have incentives to use force abroad, but potential targets can see that, and the smart ones make themselves scarce. So the opportunity to use force is not constant, but is determined by strategic behavior; it shrinks exactly when a president most wants it. Opportunity was measured in the inflation equation — approval, Vietnam, unemployment and partisanship, the election cycle — and Fordham's model was the count equation. Readers liked it because the model represented the data generating process: the Poisson has nowhere to put "no opportunity," and the ZIP does. That argument still holds. But it's worth looking at the model again with what we've covered this week, because it raises the question this deck has been circling: what, in the data, tells the two processes apart?
+
+Fordham's data aren't posted on the course site, so the code in this section shows how the models are estimated but won't run on your machine.
+
+```{r fordham-data}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# Fordham's quarterly data: US uses of force per quarter, 184 quarters
+fordham <- read_dta(here::here("data", "fordham98jcr.dta")) %>% zap_labels()
+
+Xf <- model.matrix(~ unemp + cpi + war + wecycle + pecycle + demunemp + demcpi, fordham)
+Zf <- model.matrix(~ unemp + war + wecycle + pecycle + demunemp + approval + vietsynd, fordham)
+yf <- fordham$force
+zero_f <- yf == 0
+
+# ZIP with a probit inflation equation, as in the paper; written on the log scale
+# so it stays finite far out on the likelihood surface
+zipp_ll <- function(par) {
+  lambda <- as.vector(exp(Xf %*% par[1:8]))
+  zi <- as.vector(Zf %*% par[9:16])
+  l_psi <- pnorm(zi, log.p = TRUE)
+  l_risk <- pnorm(-zi, log.p = TRUE)
+  sum(ifelse(zero_f, log(exp(l_psi) + exp(l_risk - lambda)), l_risk + dpois(yf, lambda, log = TRUE)))
+}
+
+# Model 3 as published (Clark 2003, Table 1)
+published <- c(-1.26, .22, -.08, -.61, .88, .00, -.04, .13,
+               -9.83, 1.29, -.94, .04, -2.24, .87, -.09, 1.36)
+fit_pub <- optim(published, zipp_ll, method = "BFGS",
+                 control = list(fnscale = -1, maxit = 5000, reltol = 1e-12))
+
+# the same model in pscl
+m3_f <- force ~ unemp + cpi + war + wecycle + pecycle + demunemp + demcpi |
+  unemp + war + wecycle + pecycle + demunemp + approval + vietsynd
+
+# probit, started at the published values
+m3_pub_start <- zeroinfl(m3_f, data = fordham, dist = "poisson", link = "probit",
+                         start = list(count = published[1:8], zero = published[9:16]))
+
+# logit, pscl's default starting values (the version in the 2024 notes), for comparison
+m3_logit <- zeroinfl(m3_f, data = fordham, dist = "poisson", link = "logit")
+
+# probit, pscl's default starting values
+m3_pscl <- zeroinfl(m3_f, data = fordham, dist = "poisson", link = "probit")
+par_pscl <- c(coef(m3_pscl, "count"), coef(m3_pscl, "zero"))
+agree_psi_pscl <- as.vector(pnorm(Zf %*% par_pscl[9:16]))
+
+pois_f <- glm(force ~ unemp + cpi + war + wecycle + pecycle + demunemp + demcpi, data = fordham, family = poisson)
+
+f_labels <- c("Constant", "Unemployment", "Inflation", "Ongoing war", "Wartime election",
+              "Peacetime election", "Unemployment (Democrats)", "Inflation (Democrats)",
+              "Constant", "Unemployment", "Ongoing war", "Wartime election", "Peacetime election",
+              "Unemployment (Democrats)", "Approval", "Vietnam syndrome")
+```
+
+## Two answers, one likelihood
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-two-answers
+#| tbl-cap: "Model 3 of Clark (2003): the published Stata estimates and the same model estimated with pscl from its default starting values. Opportunity-stage coefficients are probits of the probability of no opportunity. Last row: the log-likelihood each set of estimates reaches on these data."
+
+tibble(Stage = rep(c("Use of force (count)", "Opportunity (inflation)"), c(8, 8)),
+       Variable = f_labels,
+       `Published (Stata)` = published,
+       pscl = par_pscl) %>%
+  bind_rows(tibble(Stage = "", Variable = "ln L",
+                   `Published (Stata)` = zipp_ll(published), pscl = zipp_ll(par_pscl))) %>%
+  kbl(digits = 2) %>%
+  kable_styling(full_width = FALSE)
+```
+
+The two are close on the use of force and disagree completely about opportunity. `pscl`'s answer has a log-likelihood `r sprintf("%.2f", zipp_ll(par_pscl) - zipp_ll(published))` *higher* than the published one, with opportunity-stage coefficients one or two orders of magnitude larger — approval at `r sprintf("%.2f", par_pscl[15])` instead of `r sprintf("%.2f", published[15])`, a constant of `r sprintf("%.0f", par_pscl[9])`. Coefficients that large are a warning about possible separation, and here it is: `pscl`'s answer puts the probability of no opportunity at essentially 0 or 1, and `r sum(agree_psi_pscl > .01 & agree_psi_pscl < .99)` of the `r length(yf)` quarters fall between 0.01 and 0.99. That's [separation](binaryextensions126.html#separation) in the opportunity equation — the probit is sorting quarters perfectly.
+
+Is the published answer wrong, then? No. Well, all models are wrong, so yes, but no more wrong than any other. Start `pscl` at the published values and it returns them, with the same log-likelihood (`r sprintf("%.2f", logLik(m3_pub_start))`): they're a local maximum of the same likelihood, and no coefficient moves by more than `r sprintf("%.3f", max(abs(fit_pub$par - published)))`. (In fact, estimate the inflation equation as a logit rather than a probit, as in the 2024 notes, and `pscl`'s default starting values land near the published answer. The use-of-force estimates are the same, and apart from the two war terms the opportunity coefficients are about 1.6 times the probit's, the usual logit-to-probit scale; approval is `r sprintf("%.2f", coef(m3_logit, "zero")["approval"])`.) So this isn't Stata against R. The same program finds different answers depending on where it starts, because the likelihood has more than one place worth stopping. @fig-profile draws it with a profile likelihood.
+
+::: {.callout-note title="What is a profile likelihood?"}
+The log-likelihood here is a function of 16 parameters at once, so we can't draw it. A **profile likelihood** draws it for one parameter at a time. Pick a value for the parameter we care about — here, the coefficient on approval — and hold it fixed. Maximize the log-likelihood over all the *other* parameters, and record that maximum. Then move to the next value and do it again. The result is a curve: for each value of the one parameter, the best the model can do when that parameter is forced to take that value and everything else is free to adjust.
+
+Read it the way we read the log-likelihood curves in [the likelihood notes](likelihood26.html). The peak is the maximum likelihood estimate. The shape says how much the data tell us. A sharp peak means values away from the estimate fit much worse, so the parameter is well identified. A flat stretch means the data can't tell those values apart, because the other parameters shift to compensate. The curve also gives a confidence interval without assuming the estimate's sampling distribution is normal: the values whose profile log-likelihood is within 1.92 of the peak (half of 3.84, the 95% critical value of a $\chi^2$ with one degree of freedom) form a 95% interval. That's the profile-likelihood interval Firth's method reported in [Week 4](binaryextensions126.html#separation).
+
+Each point is its own maximization over 15 parameters, and on a surface this irregular a single starting value can stall below the top. So each point is fit from several starting values, including its neighbors' solutions, and the best is kept. The light line through the points shows they trace a single function.
+:::
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+
+# profile likelihood for the approval coefficient: fix it, maximize over the rest.
+# On a surface this irregular one start can stall below the top, so each point is
+# fit several ways -- from the published and separation solutions, sweeping the grid in
+# both directions with each fit starting where the last ended, then again from
+# each neighbor's best fit -- and the best value is kept
+k_app <- 15
+mean_app <- mean(fordham$approval)
+
+fit_at <- function(val, st) {
+  st[9] <- st[9] + (st[k_app] - val) * mean_app      # re-center the constant
+  st[k_app] <- val
+  fn <- function(p) zipp_ll(append(p, val, after = k_app - 1))
+  o <- optim(st[-k_app], fn, method = "BFGS", control = list(fnscale = -1, maxit = 5000, reltol = 1e-12))
+  o <- optim(o$par, fn, method = "Nelder-Mead", control = list(fnscale = -1, maxit = 20000))
+  o <- optim(o$par, fn, method = "BFGS", control = list(fnscale = -1, maxit = 5000, reltol = 1e-12))
+  list(ll = o$value, par = append(o$par, val, after = k_app - 1))
+}
+
+app_grid <- c(-10, -9, -8, -7, -6, -5, -4, -3.5, -3, -2.5, -2, -1.5, -1, -.75, -.5, -.4, -.3,
+              -.2, -.15, -.1, -.05, 0, .05)
+best_ll <- rep(-Inf, length(app_grid))
+best_par <- vector("list", length(app_grid))
+keep <- function(i, f) if (f$ll > best_ll[i]) { best_ll[i] <<- f$ll; best_par[[i]] <<- f$par }
+
+for (start in list(fit_pub$par, par_pscl)) {
+  for (ord in list(seq_along(app_grid), rev(seq_along(app_grid)))) {
+    st <- start
+    for (i in ord) { f <- fit_at(app_grid[i], st); keep(i, f); st <- f$par }
+  }
+}
+for (pass in 1:3) {
+  for (i in seq_along(app_grid)) {
+    for (nb in intersect(c(i - 1, i + 1), seq_along(app_grid))) keep(i, fit_at(app_grid[i], best_par[[nb]]))
+  }
+}
+
+prof <- tibble(approval = app_grid, ll = best_ll) %>%
+  mutate(rel = ll - max(ll))
+
+# where the profile peaks, and what the opportunity equation does there
+top <- which.max(best_ll)
+psi_top <- as.vector(pnorm(Zf %*% best_par[[top]][9:16]))
+valley <- min(prof$rel[prof$approval > -1 & prof$approval < -.1])
+```
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: fig-profile
+#| fig-height: 3.6
+#| fig-cap: "Profile log-likelihood for the approval coefficient in the opportunity equation: at each fixed value, the best log-likelihood found over all other parameters, relative to the highest value found. The light line connects the points to show they trace one function; each point is the best of several fits, and could still sit slightly below the true curve. Dashed line: 1.92 below the highest value found, the edge of a 95% profile interval. Vertical lines mark the published estimate and the probit fit from pscl's default starting values."
+#| fig-alt: !expr 'sprintf("Points joined by a light line for the profile log-likelihood against the approval coefficient from minus 10 to 0.05. From minus 10 to about minus 1.5 the curve is high and nearly flat, with the highest point found at %.1f; that is where the probit fit from the default pscl starting values, %.1f, sits. It falls into a valley about %.1f below that point near minus 0.3, rises to a separate, lower bump near minus 0.1, where the published estimate sits, %.1f below it, and then drops off: %.1f below it at zero.", app_grid[top], par_pscl[15], -valley, -prof$rel[prof$approval == -.1], -prof$rel[prof$approval == 0])'
+
+ggplot(prof, aes(x = approval, y = rel)) +
+  geom_hline(yintercept = -1.92, color = bu_black, linetype = "22") +
+  geom_vline(xintercept = c(published[15], par_pscl[15]), color = bu_grey) +
+  geom_line(color = bu_palegreen, linewidth = 1) +
+  geom_point(color = bu_green, size = 2.4) +
+  annotate("text", x = published[15], y = .3, label = "published", hjust = 1.05, size = 3.2, color = bu_black) +
+  annotate("text", x = par_pscl[15], y = .3, label = "probit, default start", hjust = -.05, size = 3.2, color = bu_black) +
+  labs(x = "Approval coefficient (opportunity equation)", y = "Profile ln L, relative to best") +
+  theme_bu()
+```
+
+The profile has two parts. Out at large negative values — where the default-start probit stopped — it is high and nearly flat. The highest value we found there, `r sprintf("%.2f", prof$ll[top])` at an approval coefficient of `r app_grid[top]`, beats either solution in @tbl-two-answers, but it isn't a peak, and there's no peak anywhere on the plateau (more on that next). Every point up there is a separation solution: the opportunity equation pushes nearly all the quarters to probabilities of 0 or 1 (`r sum(psi_top > .01 & psi_top < .99)` of `r length(yf)` in between at `r app_grid[top]`), declaring each quarter certain to have, or certain to lack, the opportunity to use force, which no one believes. Closer to zero there's a second, lower bump near −0.1, `r sprintf("%.1f", -prof$rel[prof$approval == -.1])` below the highest value found. That's the published estimate, an interior local maximum, separated from the plateau by a valley that falls `r sprintf("%.1f", -valley)` below it. Push the coefficient to zero or beyond and the fit falls off, `r sprintf("%.1f", -prof$rel[prof$approval == 0])` below it at zero.
+
+**Why doesn't an optimizer find that higher ground?** Because there's no top up there to find. Each point on the plateau sorts the quarters into "certainly no opportunity" and "at risk," and the log-likelihood keeps creeping up as the opportunity coefficients grow without bound, so the slope flattens out and the optimizer stops on it — [separation](binaryextensions126.html#separation) again. Getting from one sorting to another, or from the published solution across the valley, means going downhill first, which a hill climber won't do. "It converged" means the slope got small, not that we found the maximum.
+
+So the data identify the *sign* of approval's effect on opportunity, and not its size. Most of the range from −10 to about −1 clears the dashed line, and so does the bump around −0.1; the valley between them and everything at zero or above do not. The published estimate is the sensible interior answer, but the likelihood alone doesn't single it out — and the likelihood's highest ground is a set of degenerate ridges with no top.
+
+Why? Two reasons. First, there aren't many excess zeros to work with. A plain Poisson predicts `r round(100 * mean(dpois(0, fitted(pois_f))))`% zeros; the data have `r round(100 * mean(yf == 0))`%. The ZIP is splitting a small surplus of zeros across 184 quarters. Second, what identifies the split is mostly the **exclusion restrictions** — approval and Vietnam syndrome are in the opportunity equation but not the count equation — and the functional form. Take the exclusions away and only functional form is left. A reviewer asked me to do exactly that, and footnote 22 of the paper reports what happened: estimates and z-scores "reach extraordinarily large values in the splitting stage of the model."
+
+```{r}
+#| echo: true
+#| code-fold: true
+#| code-summary: "code"
+#| label: tbl-identical
+#| tbl-cap: "The opportunity stage with the same covariates in both equations (no exclusion restrictions), pscl, probit."
+
+m_same <- zeroinfl(force ~ unemp + cpi + war + wecycle + pecycle + demunemp + demcpi + approval + vietsynd |
+                     unemp + cpi + war + wecycle + pecycle + demunemp + demcpi + approval + vietsynd,
+                   data = fordham, dist = "poisson", link = "probit")
+
+tibble(Variable = names(coef(m_same, "zero")), `Opportunity-stage estimate` = coef(m_same, "zero")) %>%
+  kbl(digits = 1) %>%
+  kable_styling(full_width = FALSE)
+```
+
+## What I'd do differently now
+
+I'd still estimate the ZIP. The theory is about opportunities to use force abroad, and a model with a place for "no opportunity" represents it; the Poisson doesn't. Part of my motive was that I just don't buy most diversionary war claims, for several reasons, one being that I'm not persuaded diversion is as easy as the literature makes it out to be. The states that are likely to be convenient scapegoats know who they are and have incentives not to become actual targets. Things I'd change:
+
+- **Say what identifies the split, and tie it to the two processes.** The zeros and the counts come from related but different processes: whether potential targets make themselves available, and whether a president facing economic trouble uses force when they do. In these data the split is identified by the exclusion restrictions and functional form, not by a surplus of zeros. Approval and Vietnam belong in the opportunity equation and not the use-of-force equation because, in the argument, they shape how potential targets read the president. That's the claim the identification rests on, and I'd defend it explicitly rather than leave it implicit.
+- **Explain the reviewer's model as an identification check.** Identical equations producing absurd estimates is evidence about what identifies the split, not a rival model. The risk is that readers who see those estimates conclude the model is broken, so the reason has to sit right next to them — today in an online appendix, which few journals offered then.
+- **Interpret the predictions, and be modest about the inflation coefficients.** Expected uses of force are fairly stable across solutions; the size of approval's effect on opportunity is not. Signs, yes; magnitudes, carefully.
+- **Don't lean on the Vuong test.** It was the standard advice when I wrote the paper: @greene1994 brought it to zero-inflated models, and Stata's `zip` command offered it as an option. Later work showed it's biased toward finding zero inflation [@desmarais2013vuong] and is the wrong test when one model is nested in the other [@wilson2015vuong]; Stata dropped the option in version 15. There's still no clean test of a ZIP against a Poisson when the inflation equation has covariates, so I'd make the case from theory, information criteria, and where the model puts the zeros.
+- **Check the answer more than one way.** Different starting values and links, and a profile likelihood for the coefficients the argument rests on. A model that converges quickly can still be sitting on one of several plausible stopping points. I didn't know how to do this back then.
+- **The constituent term.** Fordham's specification interacts unemployment and inflation with party but leaves out the party main effect ([interactions](interactions26.html)). In principle it belongs. Including it would have opened a debate about Fordham's specification that I didn't care much about, and drawn readers away from the argument about strategic behavior. That's a real tradeoff in writing a paper: which fights to have.
+
+There's a professionalization lesson to be had as well. When you write a paper, you know what you know. Be as careful as you can be, but recognize that you will learn things and change how you think, and the discipline will change. When I wrote this paper (2001–02), practically no one put confidence bands around predictions. @kingtomz2000 had just shown how to simulate them and released Clarify to do it, so the norm was going to change, but that took time. Replication materials usually included the models, not the figures (I don't have original code for the figures, but have re-created them in R). Interactions were routinely interpreted incorrectly, and omitting constituents was not uncommon. That left space for @brambor2006understanding to point out the interpretation problems and provide solutions.
+
+Anyhow, all models are wrong, but some are useful [@boxdraper1987, 424]. The goal is to generate research that's useful.
+
+
+# Split populations elsewhere
+
+- **Competing risks** (Week 5): one coefficient on "leaving office" averaged opposite effects on regular and irregular exits ([competing risks](discretehazards26.html#competing-risks)) — the hurdle coefficients' lesson.
+- **Split-population duration models** (Week 11): some units never fail; a binary equation for being at risk and a hazard for when at-risk units fail, the zero-inflated structure again [@clarkregan2003; @bagozzi2019splitpop].
+- **Ordered outcomes**: the zero-inflated ordered probit [@bagozzi2015ziop].
+- **Truncation and censoring**: the hurdle's count part is a truncated distribution, renormalized over what we can see.
+
+# A comment on software
+
+The zero-altered models are mainly estimable in R using either `pscl` or `glmmTMB`. The former is Simon Jackman's political science package; its `zeroinfl()` and `hurdle()` functions were written with Achim Zeileis and Christian Kleiber [@zeileis2008count]. The latter is a package aimed at multi-level estimation (e.g., random effects). Results from the two do not always correspond. Moreover, models that converge easily in Stata do not always converge in R — I'm making no judgment regarding what's right here. As the Fordham example shows, different answers — from different programs, links, or starting values — can be a symptom of a likelihood with more than one place to stop, rather than a bug in anything. Check which way the binary equation runs: `zeroinfl()` and Stata's `zinb` model a structural zero, `hurdle()` models clearing the hurdle.
+
+# Take away points
+
+- Zeros can come from more than one process. Opportunity and willingness is the classic political science case: some dyads never have the chance to fight.
+- The negative binomial is a continuous mixture; the zero-inflated Poisson a discrete one. Structural zeros alone produce overdispersion: $var/E = 1 + \psi\lambda$.
+- Zero-inflated: structural and sampling zeros; the likelihood doesn't separate; the binary equation's signs run backwards. Hurdle: one kind of zero, a truncated count, a likelihood that separates.
+- For a single unit, a ZIP and a hurdle Poisson can be the same distribution. Theory chooses: can an at-risk unit still have a zero?
+- The Poisson is a cloglog hurdle with one $\beta$ for both parts. In the dyads, democracy and distance govern whether pairs fight at all, not how often.
+- In the ZINB, distance moves into the opportunity equation; democracy stays in willingness. The relevant dyads rule is a hand-coded inflation equation; the model estimates it.
+- Two linear predictors, two channels: $\partial E[y]/\partial x_k = E[y](\beta_k - \psi\gamma_k)$. Simulate the quantities.
+- Ask what identifies the split: excess zeros, exclusion restrictions, or only functional form. Predictions can be well identified when the split isn't.
+
+# Coming up next
+
+Next week we go back to the connection between counts and hazards — the same events counted per period and timed between occurrences — and follow it toward the duration models of Week 11, where split populations return.
+
+# References
+
+::: {#refs}
+:::

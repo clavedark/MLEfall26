@@ -90,6 +90,8 @@ readings/*
 # released extended example: DC traffic cameras (placement, yield, hurdle). Its
 # data are built by make-dccameras.R, which stays local.
 !dccameras26.qmd
+# released deck: count models II (zero-inflated and hurdle models, Clark 2003 revisited)
+!countB26.qmd
 # released: codebook for the CES data used in exercise #1
 !cescodebook26.qmd
 # released IN-CLASS TEMPLATE, and the only exercise-family file published as
@@ -136,6 +138,8 @@ docs/*
 !docs/countA26.html
 # released extended example: DC traffic cameras
 !docs/dccameras26.html
+# released deck: count models II
+!docs/countB26.html
 # released: codebook for the CES data used in exercise #1
 !docs/cescodebook26.html
 # released EXERCISE: only the rendered page. `ex12026.qmd` stays ignored above --
@@ -259,6 +263,10 @@ ex5key.R
 # of the `dc` in the name, so match the family, not one spelling.
 ex5*key*.R
 ex5keydc.R
+
+# Personal, non-course output. A house-cost simulation once ran inside this project and
+# wrote its report to output/ (moved to ~/Documents/2026/house-cost on 2026-10-21). Never publish.
+output/
 
 # PLSC 501 materials parked here — they belong to the 501 course, not this site.
 Coding Challenges Sp 2026.pptx

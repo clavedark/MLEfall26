@@ -258,6 +258,11 @@
       ],
       "Hash": "2288423bb0f20a457800d7fc47f6aa54"
     },
+    "arm": {
+      "Package": "arm",
+      "Version": "1.14.4",
+      "Source": "Repository"
+    },
     "askpass": {
       "Package": "askpass",
       "Version": "1.2.0",
@@ -582,6 +587,11 @@
         "utils"
       ],
       "Hash": "0aaa05204035dc43ea0004b9c76611dd"
+    },
+    "coda": {
+      "Package": "coda",
+      "Version": "0.19.4.1",
+      "Source": "Repository"
     },
     "codetools": {
       "Package": "codetools",
@@ -1143,6 +1153,11 @@
       ],
       "Hash": "15e9634c0fcd294799e9b2e929ed1b86"
     },
+    "geosphere": {
+      "Package": "geosphere",
+      "Version": "1.5.18",
+      "Source": "Repository"
+    },
     "ggplot2": {
       "Package": "ggplot2",
       "Version": "4.0.3",
@@ -1578,6 +1593,11 @@
         "stats"
       ],
       "Hash": "b64ec208ac5bc1852b285f665d6368b3"
+    },
+    "labelled": {
+      "Package": "labelled",
+      "Version": "2.13.0",
+      "Source": "Repository"
     },
     "later": {
       "Package": "later",
@@ -2155,6 +2175,11 @@
       ],
       "Hash": "06d45ac538aca6271b255b4ffdca8ca1"
     },
+    "peacesciencer": {
+      "Package": "peacesciencer",
+      "Version": "1.1.0",
+      "Source": "Repository"
+    },
     "performance": {
       "Package": "performance",
       "Version": "0.13.0",
@@ -2392,6 +2417,11 @@
         "utils"
       ],
       "Hash": "dd2b9319ee0656c8acf45c7f40c59de7"
+    },
+    "pscl": {
+      "Package": "pscl",
+      "Version": "1.5.9",
+      "Source": "Repository"
     },
     "purrr": {
       "Package": "purrr",
@@ -2932,6 +2962,11 @@
         "utils"
       ],
       "Hash": "d313fa83180f3376229f98633813cd31"
+    },
+    "stevemisc": {
+      "Package": "stevemisc",
+      "Version": "1.8.0",
+      "Source": "Repository"
     },
     "stringi": {
       "Package": "stringi",
