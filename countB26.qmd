@@ -754,42 +754,54 @@ modelsummary(list("NB" = dy_nb, "ZINB" = zinb_pscl, "Hurdle NB" = hnb_pscl),
                        "alpha is the negative binomial dispersion parameter; pscl estimates theta = 1/alpha."))
 ```
 
-@fig-migrate puts the coefficients on distance, major-power status, and democracy side by side across the negative binomial and the two equations of the ZINB.
+@fig-migrate puts the coefficients on distance, major-power status, and democracy side by side across the negative binomial, the two equations of the ZINB, and the two parts of the hurdle negative binomial. Color marks the model; shape marks the count equation (circles) or the binary one (triangles).
 
 ```{r}
 #| echo: true
 #| code-fold: true
 #| code-summary: "code"
 #| label: fig-migrate
-#| fig-height: 3.6
-#| fig-cap: "Coefficients and 95% intervals for distance, major-power status, and democracy: the negative binomial, the ZINB's count (willingness) equation, and the ZINB's inflation (no opportunity) equation. Democracy is not in the inflation equation."
-#| fig-alt: !expr 'sprintf("Three panels. Capital distance: %.2f in the negative binomial, %.2f in the ZINB count equation, an interval around zero, and %.2f in the inflation equation. Major power: %.2f in the negative binomial, %.2f in the count equation, %.2f in the inflation equation. Democracy: %.3f in the negative binomial and %.3f in the count equation, nearly identical.", coef(dy_nb)["lcapdist"], b_zinb["lcapdist"], g_zinb["lcapdist"], coef(dy_nb)["major"], b_zinb["major"], g_zinb["major"], coef(dy_nb)["demmin"], b_zinb["demmin"])'
+#| fig-height: 4.8
+#| fig-cap: "Coefficients and 95% intervals for distance, major-power status, and democracy: the negative binomial, the ZINB's count (willingness) and inflation (no opportunity) equations, and the hurdle negative binomial's count and binary (any MIDs) parts. The two binary equations model different events, so their signs run in opposite directions. Democracy is not in the ZINB's inflation equation."
+#| fig-alt: !expr 'sprintf("Three panels, five estimates each. Capital distance: %.2f in the negative binomial; ZINB count %.2f and inflation %.2f; hurdle count %.2f and binary %.2f. Major power: %.2f in the negative binomial; ZINB count %.2f and inflation %.2f; hurdle count %.2f and binary %.2f. Democracy: %.3f in the negative binomial; ZINB count %.3f; hurdle count %.3f, centered on zero, and binary %.3f.", coef(dy_nb)["lcapdist"], b_zinb["lcapdist"], g_zinb["lcapdist"], coef(hnb_pscl, "count")["lcapdist"], coef(hnb_pscl, "zero")["lcapdist"], coef(dy_nb)["major"], b_zinb["major"], g_zinb["major"], coef(hnb_pscl, "count")["major"], coef(hnb_pscl, "zero")["major"], coef(dy_nb)["demmin"], b_zinb["demmin"], coef(hnb_pscl, "count")["demmin"], coef(hnb_pscl, "zero")["demmin"])'
 
 se_zinb <- sqrt(diag(V_zinb))
-eqs <- c("Negative binomial", "ZINB: count (willingness)", "ZINB: inflation (no opportunity)")
+se_hnb <- sqrt(diag(vcov(hnb_pscl)))
+eqs <- c("Negative binomial",
+         "ZINB: count (willingness)", "Hurdle NB: count, given any MIDs",
+         "ZINB: inflation (Pr no opportunity)", "Hurdle NB: binary (Pr any MIDs)")
 
 migrate <- bind_rows(
   tibble(term = names(coef(dy_nb)), est = coef(dy_nb), se = sqrt(diag(vcov(dy_nb))), eq = eqs[1]),
   tibble(term = colnames(X), est = b_zinb, se = se_zinb[1:kx], eq = eqs[2]),
-  tibble(term = colnames(Z), est = g_zinb, se = se_zinb[kx + 1:kz], eq = eqs[3])) %>%
+  tibble(term = names(coef(hnb_pscl, "count")), est = coef(hnb_pscl, "count"),
+         se = se_hnb[paste0("count_", names(coef(hnb_pscl, "count")))], eq = eqs[3]),
+  tibble(term = colnames(Z), est = g_zinb, se = se_zinb[kx + 1:kz], eq = eqs[4]),
+  tibble(term = names(coef(hnb_pscl, "zero")), est = coef(hnb_pscl, "zero"),
+         se = se_hnb[paste0("zero_", names(coef(hnb_pscl, "zero")))], eq = eqs[5])) %>%
   filter(term %in% c("lcapdist", "major", "demmin")) %>%
   mutate(term = factor(dy_labels[term], levels = dy_labels[c("lcapdist", "major", "demmin")]),
          eq = factor(eq, levels = rev(eqs)))
 
+# color is the model, shape is the equation: count (circle) or binary (triangle)
 ggplot(migrate, aes(x = est, y = eq, color = eq, shape = eq)) +
   geom_vline(xintercept = 0, color = bu_grey) +
   geom_errorbar(aes(xmin = est - 1.96 * se, xmax = est + 1.96 * se), width = .25, orientation = "y") +
   geom_point(size = 2.4) +
   facet_wrap(~ term, scales = "free_x") +
-  scale_color_manual(values = c(bu_teal, bu_green, bu_grey), breaks = eqs) +
-  scale_shape_manual(values = c(15, 16, 17), breaks = eqs) +
+  scale_color_manual(values = c(bu_black, bu_green, bu_lightgreen, bu_green, bu_lightgreen), breaks = eqs) +
+  scale_shape_manual(values = c(15, 16, 16, 17, 17), breaks = eqs) +
   labs(x = "Coefficient", y = NULL, color = NULL, shape = NULL) +
   guides(color = guide_legend(ncol = 1), shape = guide_legend(ncol = 1)) +
   theme_bu(base_size = 10) +
   theme(axis.text.y = element_blank(), legend.position = "bottom")
 ```
 
-In the negative binomial, distance lowers the rate of disputes (`r sprintf("%.2f", coef(dy_nb)["lcapdist"])`). In the ZINB, that effect moves into the inflation equation (`r sprintf("%.2f", g_zinb["lcapdist"])`: distant dyads are much more likely to lack opportunity) and out of the count equation (`r sprintf("%.2f", b_zinb["lcapdist"])`). Distance is about opportunity, not willingness — once a dyad has the chance, distance tells us little about how often it fights. Major-power status does both: it makes opportunity likely (`r sprintf("%.2f", g_zinb["major"])` in the inflation equation; remember the sign) and raises the rate, more modestly than the negative binomial suggests. Democracy, which is only in the count equation, barely moves. The willingness equation is where the democratic peace lives.
+In the negative binomial, distance lowers the rate of disputes (`r sprintf("%.2f", coef(dy_nb)["lcapdist"])`). In the ZINB, that effect moves into the inflation equation (`r sprintf("%.2f", g_zinb["lcapdist"])`: distant dyads are much more likely to lack opportunity) and out of the count equation (`r sprintf("%.2f", b_zinb["lcapdist"])`). The hurdle agrees: distance lowers the chance of any MIDs (`r sprintf("%.2f", coef(hnb_pscl, "zero")["lcapdist"])`) and does little to how many (`r sprintf("%.2f", coef(hnb_pscl, "count")["lcapdist"])`). Major-power status works through both equations in both models.
+
+Notice that distance's two binary coefficients have opposite signs. They aren't estimates of the same thing. The ZINB's inflation equation models the probability of a **structural zero** — no opportunity — and that's latent: we never see which dyads lacked it. The hurdle's binary part models the probability of **any MIDs**, which we do see, and which takes both opportunity and willingness. Same substantive story, farther means fewer disputes; different quantities, so different signs and sizes.
+
+Democracy shows why that matters. The ZINB puts the democratic peace in willingness: democracy lowers the rate among dyads with opportunity (`r sprintf("%.3f", b_zinb["demmin"])`, nearly the negative binomial's `r sprintf("%.3f", coef(dy_nb)["demmin"])`). The hurdle puts it in whether a dyad has any dispute (`r sprintf("%.3f", coef(hnb_pscl, "zero")["demmin"])`) and not in how many (`r sprintf("%.3f", coef(hnb_pscl, "count")["demmin"])`), as the cloglog hurdle did in @fig-hurdle-coefs. Each answer is partly built in. The ZINB keeps democracy out of the opportunity equation by assumption, so its effect can only appear as willingness. The hurdle's binary part blends opportunity and willingness, so a willingness effect that keeps dyads from ever fighting appears as "any MIDs." The data don't choose between these; the theory has to say which structure the democratic peace has.
 
 ## Choosing among the models
 
@@ -984,7 +996,7 @@ ggplot(dem_q, aes(x = demmin, y = est, color = dyad, fill = dyad, linetype = dya
   theme(legend.position = "bottom")
 ```
 
-The democratic peace is a willingness effect, and willingness only matters where there's opportunity. For the near dyad, moving from two autocracies to two democracies cuts expected disputes from `r sprintf("%.2f", with(dem_q, est[dyad == "Capitals 800 km apart" & demmin == -10]))` to `r sprintf("%.2f", with(dem_q, est[dyad == "Capitals 800 km apart" & demmin == 10]))`. For the far dyad, there's less to cut, because it's less likely to have the opportunity in the first place.
+In the ZINB, the democratic peace is a willingness effect, and willingness only matters where there's opportunity. For the near dyad, moving from two autocracies to two democracies cuts expected disputes from `r sprintf("%.2f", with(dem_q, est[dyad == "Capitals 800 km apart" & demmin == -10]))` to `r sprintf("%.2f", with(dem_q, est[dyad == "Capitals 800 km apart" & demmin == 10]))`. For the far dyad, there's less to cut, because it's less likely to have the opportunity in the first place.
 
 # Which dyads have opportunity?
 
@@ -1314,7 +1326,7 @@ The zero-altered models are mainly estimable in R using either `pscl` or `glmmTM
 - Zero-inflated: structural and sampling zeros; the likelihood doesn't separate; the binary equation's signs run backwards. Hurdle: one kind of zero, a truncated count, a likelihood that separates.
 - For a single unit, a ZIP and a hurdle Poisson can be the same distribution. Theory chooses: can an at-risk unit still have a zero?
 - The Poisson is a cloglog hurdle with one $\beta$ for both parts. In the dyads, democracy and distance govern whether pairs fight at all, not how often.
-- In the ZINB, distance moves into the opportunity equation; democracy stays in willingness. The relevant dyads rule is a hand-coded inflation equation; the model estimates it.
+- In the ZINB, distance moves into the opportunity equation; democracy stays in willingness, by the exclusion restriction. The hurdle puts democracy in whether dyads fight at all. The two binary equations estimate different quantities. The relevant dyads rule is a hand-coded inflation equation; the model estimates it.
 - Two linear predictors, two channels: $\partial E[y]/\partial x_k = E[y](\beta_k - \psi\gamma_k)$. Simulate the quantities.
 - Ask what identifies the split: excess zeros, exclusion restrictions, or only functional form. Predictions can be well identified when the split isn't.
 
