@@ -1100,7 +1100,7 @@ egypt_opp <- partners(651)
 #| code-summary: "code"
 #| label: fig-opp-maps
 #| fig-height: 6.5
-#| fig-cap: "Estimated probability of opportunity between each state and every other state, 1951-1985, ZINB. The state itself is black; grey states have no estimate (not in the system then, or no Polity score). Top: the United States. Bottom: Egypt."
+#| fig-cap: "Estimated probability of opportunity between each state and every other state, 1951-1985, ZINB. The state itself is black; grey states have no estimate (not in the system then, or no Polity score). French Guiana, on the northeast coast of South America, is part of France in the map data, so it shows France's value. Top: the United States. Bottom: Egypt."
 #| fig-alt: !expr 'sprintf("Two world maps. Top, the United States in black: nearly every other state is dark green, because a major power has opportunity with almost everyone. Bottom, Egypt in black: dark green in its own region and for the major powers, including the Soviet Union, the United States, Britain, France, and China, and pale green elsewhere, fading with distance; %d of its %d partners have a probability of opportunity above 0.5.", sum(egypt_opp$opportunity > .5), nrow(egypt_opp))'
 
 wrap_plots(opp_map(2, "United States"), opp_map(651, "Egypt"), ncol = 1)
