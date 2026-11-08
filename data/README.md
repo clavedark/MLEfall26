@@ -10,7 +10,13 @@ This folder holds the data files used in the course `.qmd` topic files. **Conten
 - **`dp.dta` (2026-08-28).** The Oneal and Russett (1997) dyad-year extract behind the binary models,
   likelihood, and maximization decks. 460 KB, and the decks are unusable without it.
 
-Those three are the whole `.gitignore` allowlist (`!data/ITT.csv`, `!data/ces.csv`, `!data/dp.dta`).
+- **`cabinets.csv` (2026-11-08).** Cabinet durations built by `make-cabinets.R` from the ParlGov 2024
+  release (Harvard Dataverse, CC0), for the continuous-time hazards deck. The raw ParlGov files are
+  cached in `data/parlgov-raw/`, which stays local.
+
+Files have been added to the allowlist since this list was first written (leader-years, Hendrix–Salehyan,
+the DC camera files, cabinets); the `!data/...` lines in `.gitignore` are the authoritative list, and each
+published file is credited on the Data page.
 
 Two reasons the *rest* stay untracked:
 

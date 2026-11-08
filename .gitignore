@@ -42,6 +42,10 @@ data/*
 !data/dctracts.gpkg
 !data/dcwater.gpkg
 !data/dccameras-monthly.csv
+# Published (2026-11-08), linked from the Data page. Cabinet durations built by
+# make-cabinets.R from the ParlGov 2024 release (Harvard Dataverse, CC0); used in
+# haz-cont26. The raw-pull cache, data/parlgov-raw/, stays local.
+!data/cabinets.csv
 
 # Reading PDFs — copyrighted, kept local. Citations are in refs606.bib.
 readings/*
@@ -92,6 +96,9 @@ readings/*
 !dccameras26.qmd
 # released deck: count models II (zero-inflated and hurdle models, Clark 2003 revisited)
 !countB26.qmd
+# released deck: continuous-time hazards (Weeks 10-11 combined; exponential, Weibull,
+# Cox, ties and PH, split populations, counts and hazards)
+!haz-cont26.qmd
 # released: codebook for the CES data used in exercise #1
 !cescodebook26.qmd
 # released IN-CLASS TEMPLATE, and the only exercise-family file published as
@@ -140,6 +147,8 @@ docs/*
 !docs/dccameras26.html
 # released deck: count models II
 !docs/countB26.html
+# released deck: continuous-time hazards
+!docs/haz-cont26.html
 # released: codebook for the CES data used in exercise #1
 !docs/cescodebook26.html
 # released EXERCISE: only the rendered page. `ex12026.qmd` stays ignored above --

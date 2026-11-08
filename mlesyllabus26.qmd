@@ -211,7 +211,7 @@ You should not use generative AI tools for writing in this course. Learning to e
 
 ## Course Schedule
 
-We meet Wednesdays. Two dates are dark: fall break (Oct 14) and Thanksgiving (Nov 25).
+We meet Wednesdays. Three dates are dark: fall break (Oct 14), Nov 4 (I'm away at a conference), and Thanksgiving (Nov 25).
 
 ### Part I — Foundations
 
@@ -347,19 +347,15 @@ Oct 14 -- *no class, fall break*
 -  @zorn98
 -  @bagozzi2015ziop
 
-**Week 10, Oct 28 -- Count $\leftrightarrow$ Hazard Equivalence: the same event as a count and as a duration**
+**Weeks 10--11, Nov 4 and Nov 11 -- Continuous-Time Hazards and the Count $\leftrightarrow$ Hazard Equivalence: exponential, Weibull, and Cox models, and each as a Poisson**
+
+*No meeting Nov 4 -- read the notes on your own; we discuss them Nov 11.*
 
 *Required*
 
--  Janet Box-Steffensmeier and Brad Jones. 2004. *Event History Modeling*. Chapters 1--2
+-  Janet Box-Steffensmeier and Brad Jones. 2004. *Event History Modeling*. Chapters 1--5
 -  @boxapsr
 -  @altkingsignorino2001
-
-**Week 11, Nov 4 -- Continuous-Time Hazards: parametric and semi-parametric duration models (exponential, Weibull, Cox)**
-
-*Required*
-
--  Box-Steffensmeier and Jones. 2004. Chapters 3--5
 -  @zorn2000
 
 *Recommended*
@@ -372,7 +368,7 @@ Oct 14 -- *no class, fall break*
 
 ### Part IV — Choice, and synthesis
 
-**Week 12, Nov 11 -- Choice I: multinomial and conditional logit, and prediction**
+**Week 12, Nov 18 -- Choice I: multinomial and conditional logit, and prediction**
 
 *Required*
 
@@ -386,7 +382,7 @@ Oct 14 -- *no class, fall break*
 -  @hainmueller2014conjoint
 -  @signorino2003
 
-**Week 13, Nov 18 -- Choice II: IIA --- assessing it, and how much to worry; alternatives (multivariate probit) and the conditional--fixed-effects equivalence**
+**Week 13, Dec 2 -- Choice II: IIA --- assessing it, and how much to worry; alternatives (multivariate probit) and the conditional--fixed-effects equivalence**
 
 *Required*
 
@@ -402,8 +398,6 @@ Oct 14 -- *no class, fall break*
 -  @abramson2022
 
 Nov 25 -- *no class, Thanksgiving*
-
-**Week 14, Dec 2 -- catch up**
 
 
 # References {.unnumbered}
